@@ -34,7 +34,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { products as catalogProducts, type Product } from "@/lib/catalog";
+import { allAssets as catalogAssets, products as catalogProducts, type Product } from "@/lib/catalog";
 import {
   analyzeCustomerMessage,
   buildFollowupMessage,
@@ -70,6 +70,7 @@ export type ReplyConfirmation = {
 export type SalesAssistantViewProps = {
   customers?: Customer[];
   products?: Product[];
+  assets?: CrmAsset[];
   initialCustomerId?: string;
   initialMessage?: string;
   onConfirmReply?: (confirmation: ReplyConfirmation) => void;
@@ -190,19 +191,19 @@ function CustomerSelect({ customers, value, onChange }: { customers: Customer[];
   return <label className={styles.selectField}><UserRound size={16} /><select value={value} onChange={(event) => onChange(event.target.value)} aria-label="选择客户">{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.company} · {customer.name}</option>)}</select><ChevronDown size={16} /></label>;
 }
 
-export function SalesAssistantView({ customers = crmCustomers, products = catalogProducts, initialCustomerId, initialMessage, onConfirmReply, onOpenCustomer, onOpenProduct, onToast }: SalesAssistantViewProps) {
+export function SalesAssistantView({ customers = crmCustomers, products = catalogProducts, assets = catalogAssets, initialCustomerId, initialMessage, onConfirmReply, onOpenCustomer, onOpenProduct, onToast }: SalesAssistantViewProps) {
   const initialCustomer = getCustomerById(initialCustomerId ?? "", customers) ?? customers[0] ?? fallbackCustomer;
   const initialInbound = getLatestInboundMessage(initialCustomer);
   const [customerId, setCustomerId] = useState(initialCustomer.id);
   const [message, setMessage] = useState(initialMessage ?? initialInbound?.content ?? "");
-  const [analysis, setAnalysis] = useState<CustomerMessageAnalysis>(() => analyzeCustomerMessage(initialMessage ?? initialInbound?.content ?? "", initialCustomer.name, products));
+  const [analysis, setAnalysis] = useState<CustomerMessageAnalysis>(() => analyzeCustomerMessage(initialMessage ?? initialInbound?.content ?? "", initialCustomer.name, products, assets));
   const [draft, setDraft] = useState(analysis.replyDraft);
   const [selectedAssets, setSelectedAssets] = useState<string[]>(analysis.recommendedAssets.slice(0, 4).map((asset) => asset.id));
   const [confirmed, setConfirmed] = useState(false);
   const customer = getCustomerById(customerId, customers) ?? initialCustomer;
 
   function updateAnalysis(nextMessage = message, nextCustomer = customer) {
-    const next = analyzeCustomerMessage(nextMessage, nextCustomer.name, products);
+    const next = analyzeCustomerMessage(nextMessage, nextCustomer.name, products, assets);
     setAnalysis(next);
     setDraft(next.replyDraft);
     setSelectedAssets(next.recommendedAssets.slice(0, 4).map((asset) => asset.id));

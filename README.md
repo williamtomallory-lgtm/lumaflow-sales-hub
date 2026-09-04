@@ -20,6 +20,7 @@
 ## 技术栈
 
 - Next.js 16 + React 19 + TypeScript
+- PostgreSQL（`pg` 连接池）+ JSONB 数据仓库
 - 原生 CSS 设计系统
 - Vitest 单元测试与浏览器端到端验收
 - ESLint + Next.js Core Web Vitals 规则
@@ -33,6 +34,31 @@ npm run dev
 
 打开 [http://localhost:3000](http://localhost:3000)。
 
+## 数据文件
+
+演示数据已经从组件和业务代码中分离到独立 JSON 文件：
+
+- `src/data/catalog.json`：产品、SKU、参数、库存、资料与产品知识
+- `src/data/business.json`：知识库、汇率、报价历史、用户、AI 日志与数据质量问题
+- `src/data/crm.json`：客户、联系人、会话、需求、历史报价与跟进任务
+
+业务函数只保留类型、查询和计算逻辑。没有配置数据库时，应用直接读取这些 JSON 文件，方便修改、审查和版本管理。
+
+## 连接 PostgreSQL
+
+1. 复制 `.env.example` 为 `.env.local`，填写真实的 `DATABASE_URL`。
+2. 确保目标 PostgreSQL 数据库已经创建。
+3. 初始化表结构并把 JSON 数据写入 PostgreSQL：
+
+```bash
+npm run db:setup
+npm run dev
+```
+
+应用启动后访问 [http://localhost:3000/api/data-source](http://localhost:3000/api/data-source)，`source` 为 `postgres` 表示页面正在读取 PostgreSQL；未配置连接时为 `json`。连接异常时默认安全回退为 `json-fallback`，生产环境可设置 `POSTGRES_REQUIRED=true` 禁止回退。
+
+数据库结构位于 `database/schema.sql`，初始化脚本位于 `scripts/seed-postgres.mjs`。连接串只应写入被 Git 忽略的 `.env.local`，不要提交真实密码。
+
 ## 验证命令
 
 ```bash
@@ -43,5 +69,6 @@ npm run build
 
 ## 当前数据边界
 
-当前目录内的产品、库存、客户、权限与报价均为可替换的演示数据；页面内新增和状态变更保存在当前组件会话中。问答、推荐和资料包共享同一份产品目录，避免不同模块出现互相矛盾的产品信息。
-进入生产使用前，应接入数据库、企业对象存储、身份认证、真实消息渠道、审批通知和财务汇率。销售助手的“确认并记录”不会自动向外部客户发送消息；图片/附件检索使用文件名与目录特征，不做未经验证的视觉诊断；正式报价不能直接依赖演示价格或固定汇率。
+当前目录内的数据仍是可替换的演示数据，但读取入口已经统一为“PostgreSQL 优先、JSON 兜底”的服务端数据仓库。页面内新增和状态变更目前仍只保存在当前组件会话中，不会写回 PostgreSQL；持久化写入 API、身份认证和权限校验应在正式上线前完成。
+
+进入生产使用前，还应接入企业对象存储、真实消息渠道、审批通知和财务汇率。销售助手的“确认并记录”不会自动向外部客户发送消息；图片/附件检索使用文件名与目录特征，不做未经验证的视觉诊断；正式报价不能直接依赖演示价格或固定汇率。

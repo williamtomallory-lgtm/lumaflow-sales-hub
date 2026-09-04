@@ -42,12 +42,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useRef, useState, type FormEvent } from "react";
-import { allAssets, products, type Asset, type Product } from "@/lib/catalog";
+import type { AppDataSnapshot } from "@/lib/data-snapshot";
+import { type Asset, type Product } from "@/lib/catalog";
 import { answerQuestion, buildSalesMessage, searchProducts } from "@/lib/search";
 import { CustomersView, FollowupView, SalesAssistantView } from "./crm-views";
 import { AdminView, KnowledgeBaseView, QuotationView } from "./operations-views";
 
 type View = "overview" | "products" | "assets" | "knowledge" | "assistant" | "kit" | "salesAssistant" | "customers" | "quotation" | "followup" | "admin";
+type CatalogAsset = Asset & { productId: string; productName: string };
 
 type NavItem = { id: View; label: string; icon: LucideIcon; badge?: string; phase?: string };
 
@@ -88,12 +90,14 @@ const quickQuestions = [
   "推荐一款低眩光的办公室筒灯",
 ];
 
-export function SalesHub() {
+export function SalesHub({ initialData }: { initialData: AppDataSnapshot }) {
+  const catalog = initialData.products;
+  const catalogAssets = catalog.flatMap((product) => product.assets.map((asset) => ({ ...asset, productId: product.id, productName: product.name })));
   const [view, setView] = useState<View>("overview");
   const [globalQuery, setGlobalQuery] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [kitProductId, setKitProductId] = useState(products[0].id);
+  const [kitProductId, setKitProductId] = useState(catalog[0].id);
   const [crmCustomerId, setCrmCustomerId] = useState<string>();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -177,22 +181,22 @@ export function SalesHub() {
             <div><span className="eyebrow">{meta.eyebrow}</span><h1>{meta.title}</h1><p>{meta.subtitle}</p></div>
           </div>
 
-          {view === "overview" && <Overview onNavigate={navigate} onProduct={setSelectedProduct} onAsk={(question) => { setGlobalQuery(question); navigate("assistant"); }} />}
-          {view === "products" && <ProductsView initialQuery={globalQuery} onProduct={setSelectedProduct} onToast={showToast} />}
-          {view === "assets" && <AssetsView onNavigate={navigate} onToast={showToast} />}
-          {view === "knowledge" && <KnowledgeBaseView onToast={showToast} />}
-          {view === "assistant" && <AssistantView initialQuestion={globalQuery} onProduct={setSelectedProduct} onToast={showToast} onAddToKit={(id) => { setKitProductId(id); navigate("kit"); }} />}
-          {view === "kit" && <SalesKitView initialProductId={kitProductId} onProduct={setSelectedProduct} onToast={showToast} />}
-          {view === "salesAssistant" && <SalesAssistantView initialCustomerId={crmCustomerId} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
-          {view === "customers" && <CustomersView initialCustomerId={crmCustomerId} onOpenCustomer={setCrmCustomerId} onAnalyzeCustomer={(customer) => { setCrmCustomerId(customer.id); navigate("salesAssistant"); }} onCreateQuote={() => navigate("quotation")} onToast={showToast} />}
-          {view === "quotation" && <QuotationView onToast={showToast} />}
-          {view === "followup" && <FollowupView onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
-          {view === "admin" && <AdminView onToast={showToast} />}
+          {view === "overview" && <Overview products={catalog} onNavigate={navigate} onProduct={setSelectedProduct} onAsk={(question) => { setGlobalQuery(question); navigate("assistant"); }} />}
+          {view === "products" && <ProductsView products={catalog} initialQuery={globalQuery} onProduct={setSelectedProduct} onToast={showToast} />}
+          {view === "assets" && <AssetsView assets={catalogAssets} onNavigate={navigate} onToast={showToast} />}
+          {view === "knowledge" && <KnowledgeBaseView initialEntries={initialData.knowledgeEntries} onToast={showToast} />}
+          {view === "assistant" && <AssistantView products={catalog} initialQuestion={globalQuery} onProduct={setSelectedProduct} onToast={showToast} onAddToKit={(id) => { setKitProductId(id); navigate("kit"); }} />}
+          {view === "kit" && <SalesKitView products={catalog} initialProductId={kitProductId} onProduct={setSelectedProduct} onToast={showToast} />}
+          {view === "salesAssistant" && <SalesAssistantView products={catalog} assets={catalogAssets} customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
+          {view === "customers" && <CustomersView customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenCustomer={setCrmCustomerId} onAnalyzeCustomer={(customer) => { setCrmCustomerId(customer.id); navigate("salesAssistant"); }} onCreateQuote={() => navigate("quotation")} onToast={showToast} />}
+          {view === "quotation" && <QuotationView products={catalog} initialHistory={initialData.quoteHistory} currencyRates={initialData.currencyRates} onToast={showToast} />}
+          {view === "followup" && <FollowupView customers={initialData.customers} tasks={initialData.followupTasks} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
+          {view === "admin" && <AdminView initialUsers={initialData.adminUsers} initialKnowledge={initialData.knowledgeEntries} initialLogs={initialData.aiLogs} initialIssues={initialData.qualityIssues} onToast={showToast} />}
         </section>
       </main>
 
       {notificationsOpen && <div className="notification-popover"><div><BellRing size={16} /><strong>3 条待处理</strong><button onClick={() => setNotificationsOpen(false)} aria-label="关闭通知"><X size={15} /></button></div><button onClick={() => { setNotificationsOpen(false); navigate("followup"); }}><span className="notification-dot urgent" /><p><strong>NOVA 服饰 3 天未回复</strong><small>建议今天 16:00 前跟进</small></p><ChevronRight size={14} /></button><button onClick={() => { setNotificationsOpen(false); navigate("admin"); }}><span className="notification-dot warn" /><p><strong>MOSS O8 证书即将过期</strong><small>剩余 21 天</small></p><ChevronRight size={14} /></button><button onClick={() => { setNotificationsOpen(false); navigate("quotation"); }}><span className="notification-dot" /><p><strong>1 份报价等待审批</strong><small>来自 Lin Chen</small></p><ChevronRight size={14} /></button></div>}
-      {selectedProduct && <ProductDrawer product={selectedProduct} onClose={() => setSelectedProduct(null)} onBuildKit={() => { setKitProductId(selectedProduct.id); setSelectedProduct(null); navigate("kit"); }} onAsk={() => { setGlobalQuery(`${selectedProduct.model} 有哪些参数和适用场景？`); setSelectedProduct(null); navigate("assistant"); }} />}
+      {selectedProduct && <ProductDrawer products={catalog} product={selectedProduct} onClose={() => setSelectedProduct(null)} onBuildKit={() => { setKitProductId(selectedProduct.id); setSelectedProduct(null); navigate("kit"); }} onAsk={() => { setGlobalQuery(`${selectedProduct.model} 有哪些参数和适用场景？`); setSelectedProduct(null); navigate("assistant"); }} />}
       <div className={`toast ${toast ? "toast-visible" : ""}`} role="status"><CheckCircle2 size={17} /> {toast}</div>
     </div>
   );
@@ -209,7 +213,7 @@ function NavButton({ item, active, onClick }: { item: NavItem; active: boolean; 
   );
 }
 
-function Overview({ onNavigate, onProduct, onAsk }: { onNavigate: (view: View) => void; onProduct: (product: Product) => void; onAsk: (question: string) => void }) {
+function Overview({ products, onNavigate, onProduct, onAsk }: { products: Product[]; onNavigate: (view: View) => void; onProduct: (product: Product) => void; onAsk: (question: string) => void }) {
   return (
     <div className="overview-grid">
       <section className="hero-card">
@@ -299,7 +303,7 @@ function Activity({ icon: Icon, tone, title, detail, time }: { icon: LucideIcon;
   return <div className="activity"><span className={`activity-icon ${tone}`}><Icon size={17} /></span><div><strong>{title}</strong><p>{detail}</p></div><time>{time}</time></div>;
 }
 
-function ProductsView({ initialQuery, onProduct, onToast }: { initialQuery: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
+function ProductsView({ products, initialQuery, onProduct, onToast }: { products: Product[]; initialQuery: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState("全部产品");
   const [catalog, setCatalog] = useState(products);
@@ -375,7 +379,7 @@ function ProductCreateModal({ onClose, onCreate }: { onClose: () => void; onCrea
   return <div className="form-modal-layer" role="dialog" aria-modal="true" aria-label="新增产品"><button className="form-modal-scrim" onClick={onClose} aria-label="关闭" /><form className="form-modal" onSubmit={submit}><div className="form-modal-head"><div><span>产品中心</span><h2>新增产品</h2></div><button type="button" onClick={onClose} aria-label="关闭"><X size={19} /></button></div><div className="form-grid"><label>产品名称<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：Nova 射灯" /></label><label>型号<input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="NOVA T20" /></label><label>SKU<input required value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} placeholder="LT-NOVA-T20-BK" /></label><label>品类<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>轨道灯</option><option>吊灯</option><option>磁吸灯</option><option>洗墙灯</option><option>户外灯</option><option>筒灯</option></select></label><label>功率<input value={form.power} onChange={(event) => setForm({ ...form, power: event.target.value })} /></label><label>材质<input value={form.material} onChange={(event) => setForm({ ...form, material: event.target.value })} /></label><label>尺寸<input value={form.dimensions} onChange={(event) => setForm({ ...form, dimensions: event.target.value })} placeholder="Ø62 × H138 mm" /></label><label>库存<input type="number" min="0" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} /></label><label>参考价格<input type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label></div><p className="form-note"><ShieldCheck size={14} /> 新产品会标记待补资料，发布前应完成参数与证书审核。</p><div className="form-modal-actions"><button type="button" className="outline-button" onClick={onClose}>取消</button><button className="primary-button" type="submit">保存产品</button></div></form></div>;
 }
 
-function AssetsView({ onNavigate, onToast }: { onNavigate: (view: View) => void; onToast: (message: string) => void }) {
+function AssetsView({ assets, onNavigate, onToast }: { assets: CatalogAsset[]; onNavigate: (view: View) => void; onToast: (message: string) => void }) {
   const [type, setType] = useState("全部资料");
   const [query, setQuery] = useState("");
   const [uploadedAssets, setUploadedAssets] = useState<Array<Asset & { productId: string; productName: string }>>([]);
@@ -383,7 +387,7 @@ function AssetsView({ onNavigate, onToast }: { onNavigate: (view: View) => void;
   const [versionAsset, setVersionAsset] = useState<(Asset & { productName: string }) | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const assetTypes = ["全部资料", "图片", "尺寸图", "参数表", "PDF", "证书", "案例", "视频", "说明书"];
-  const assetCatalog = [...uploadedAssets, ...allAssets];
+  const assetCatalog = [...uploadedAssets, ...assets];
   const results = assetCatalog.filter((asset) => (type === "全部资料" || asset.type === type) && `${asset.name}${asset.productName}`.toLowerCase().includes(query.toLowerCase()));
 
   function uploadAsset(file?: File) {
@@ -452,13 +456,13 @@ function formatAssetSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function AssistantView({ initialQuestion, onProduct, onToast, onAddToKit }: { initialQuestion: string; onProduct: (product: Product) => void; onToast: (message: string) => void; onAddToKit: (productId: string) => void }) {
+function AssistantView({ products, initialQuestion, onProduct, onToast, onAddToKit }: { products: Product[]; initialQuestion: string; onProduct: (product: Product) => void; onToast: (message: string) => void; onAddToKit: (productId: string) => void }) {
   const starter = initialQuestion && initialQuestion.length < 90 ? initialQuestion : quickQuestions[0];
   const [input, setInput] = useState(starter);
   const [question, setQuestion] = useState(starter);
   const [attachment, setAttachment] = useState("");
   const attachmentRef = useRef<HTMLInputElement>(null);
-  const result = useMemo(() => answerQuestion(question), [question]);
+  const result = useMemo(() => answerQuestion(question, products), [question, products]);
 
   async function copyAnswer() {
     await navigator.clipboard.writeText(result.answer);
@@ -516,7 +520,7 @@ function Source({ icon: Icon, title, meta }: { icon: LucideIcon; title: string; 
   return <div className="source-row"><span><Icon size={15} /></span><div><strong>{title}</strong><small>{meta}</small></div><CheckCircle2 size={14} /></div>;
 }
 
-function SalesKitView({ initialProductId, onProduct, onToast }: { initialProductId: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
+function SalesKitView({ products, initialProductId, onProduct, onToast }: { products: Product[]; initialProductId: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
   const [productId, setProductId] = useState(initialProductId);
   const product = products.find((item) => item.id === productId) ?? products[0];
   const [selectedAssets, setSelectedAssets] = useState<string[]>(product.assets.map((asset) => asset.id));
@@ -604,7 +608,7 @@ function SalesKitView({ initialProductId, onProduct, onToast }: { initialProduct
   );
 }
 
-function ProductDrawer({ product, onClose, onBuildKit, onAsk }: { product: Product; onClose: () => void; onBuildKit: () => void; onAsk: () => void }) {
+function ProductDrawer({ products, product, onClose, onBuildKit, onAsk }: { products: Product[]; product: Product; onClose: () => void; onBuildKit: () => void; onAsk: () => void }) {
   const related = products.filter((item) => item.id !== product.id && (item.family === product.family || item.category === product.category)).slice(0, 2);
   return (
     <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`${product.name} 产品详情`}>

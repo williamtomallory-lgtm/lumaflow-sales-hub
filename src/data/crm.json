@@ -1,0 +1,490 @@
+{
+  "customers": [
+    {
+      "id": "cust-nova",
+      "company": "NOVA 空间设计",
+      "name": "陈经理",
+      "role": "采购负责人",
+      "avatar": "陈",
+      "industry": "商业空间",
+      "location": "上海 · 静安",
+      "stage": "报价中",
+      "source": "展会线索",
+      "tags": [
+        "重点客户",
+        "服装店",
+        "设计公司"
+      ],
+      "email": "chen.manager@example.com",
+      "phone": "+86 138 0000 2188",
+      "owner": "Junjun Hu",
+      "estimatedValue": 48600,
+      "lastContactAt": "2026-09-04T13:48:00+08:00",
+      "lastContactLabel": "今天 13:48",
+      "unreadCount": 2,
+      "contacts": [
+        {
+          "id": "nova-chen",
+          "name": "陈经理",
+          "role": "采购负责人",
+          "email": "chen.manager@example.com",
+          "phone": "+86 138 0000 2188",
+          "preferredChannel": "微信",
+          "isPrimary": true
+        },
+        {
+          "id": "nova-li",
+          "name": "李工",
+          "role": "项目设计师",
+          "email": "li.design@example.com",
+          "phone": "+86 139 0000 1024",
+          "preferredChannel": "邮件"
+        }
+      ],
+      "conversations": [
+        {
+          "id": "nova-m4",
+          "direction": "inbound",
+          "author": "陈经理",
+          "content": "我们静安店下周要进场，想确认 18W 黑色轨道灯有没有现货，能不能今天发？另外把参数表和黑色场景图一起发我。",
+          "timestamp": "2026-09-04T13:48:00+08:00",
+          "channel": "微信",
+          "read": false
+        },
+        {
+          "id": "nova-m3",
+          "direction": "outbound",
+          "author": "Junjun Hu",
+          "content": "收到，我先帮您确认库存和最快交期，参数表、场景图也一并整理。",
+          "timestamp": "2026-09-04T13:36:00+08:00",
+          "channel": "微信",
+          "read": true
+        },
+        {
+          "id": "nova-m2",
+          "direction": "inbound",
+          "author": "陈经理",
+          "content": "上次提到的预算区间可以先按 40 套估算。",
+          "timestamp": "2026-09-03T16:21:00+08:00",
+          "channel": "微信",
+          "read": true
+        },
+        {
+          "id": "nova-m1",
+          "direction": "internal",
+          "author": "系统记录",
+          "content": "客户偏好：黑色、窄光束、显色指数高；项目节点紧，需先给可执行交期。",
+          "timestamp": "2026-09-03T16:30:00+08:00",
+          "channel": "系统记录",
+          "read": true
+        }
+      ],
+      "needs": [
+        {
+          "id": "nova-need-1",
+          "title": "确认 ARC T18 现货",
+          "detail": "约 40 套，黑色，静安门店下周进场",
+          "status": "已确认",
+          "priority": "高",
+          "updatedAt": "2026-09-04T13:48:00+08:00"
+        },
+        {
+          "id": "nova-need-2",
+          "title": "发送参数与场景资料",
+          "detail": "需要参数表和黑色服装店案例图",
+          "status": "待确认",
+          "priority": "中",
+          "updatedAt": "2026-09-04T13:48:00+08:00"
+        }
+      ],
+      "quotes": [
+        {
+          "id": "quote-nova-2",
+          "quoteNo": "QT-20260903-018",
+          "productIds": [
+            "arc-t18",
+            "beam-s30"
+          ],
+          "productNames": [
+            "Arc 轨道射灯",
+            "Beam 深防眩筒灯"
+          ],
+          "amount": 48600,
+          "currency": "CNY",
+          "status": "审批中",
+          "createdAt": "2026-09-03",
+          "validUntil": "2026-09-10"
+        },
+        {
+          "id": "quote-nova-1",
+          "quoteNo": "QT-20260828-011",
+          "productIds": [
+            "arc-t18"
+          ],
+          "productNames": [
+            "Arc 轨道射灯"
+          ],
+          "amount": 11560,
+          "currency": "CNY",
+          "status": "已过期",
+          "createdAt": "2026-08-28",
+          "validUntil": "2026-09-02"
+        }
+      ],
+      "contextMemory": [
+        "项目是 80㎡ 服装店，预计下周进场",
+        "陈经理更习惯微信沟通，上午 10:00–12:00 回复较快",
+        "预算按 40 套先估算，价格需走审批",
+        "优先关注黑色、显色和交期"
+      ]
+    },
+    {
+      "id": "cust-atelier",
+      "company": "Atelier 27 酒店",
+      "name": "王总监",
+      "role": "餐饮运营总监",
+      "avatar": "王",
+      "industry": "酒店餐饮",
+      "location": "杭州 · 西湖",
+      "stage": "跟进中",
+      "source": "官网咨询",
+      "tags": [
+        "酒店",
+        "餐厅",
+        "高客单"
+      ],
+      "email": "wang.ops@example.com",
+      "phone": "+86 137 0000 6681",
+      "owner": "Junjun Hu",
+      "estimatedValue": 32800,
+      "lastContactAt": "2026-09-03T10:15:00+08:00",
+      "lastContactLabel": "昨天 10:15",
+      "unreadCount": 0,
+      "contacts": [
+        {
+          "id": "atelier-wang",
+          "name": "王总监",
+          "role": "餐饮运营总监",
+          "email": "wang.ops@example.com",
+          "phone": "+86 137 0000 6681",
+          "preferredChannel": "邮件",
+          "isPrimary": true
+        }
+      ],
+      "conversations": [
+        {
+          "id": "atelier-m3",
+          "direction": "inbound",
+          "author": "王总监",
+          "content": "餐厅希望做暖一点的氛围，金色环形吊灯有现场效果图和规格书吗？",
+          "timestamp": "2026-09-03T10:15:00+08:00",
+          "channel": "邮件",
+          "read": true
+        },
+        {
+          "id": "atelier-m2",
+          "direction": "outbound",
+          "author": "Junjun Hu",
+          "content": "有的，我会把 HALO P36 的空间应用图和规格书整理给您，也可以按餐桌尺寸建议数量。",
+          "timestamp": "2026-09-03T10:32:00+08:00",
+          "channel": "邮件",
+          "read": true
+        },
+        {
+          "id": "atelier-m1",
+          "direction": "internal",
+          "author": "系统记录",
+          "content": "偏好暖色、香槟金，关注餐桌上方的眩光控制。",
+          "timestamp": "2026-09-03T10:40:00+08:00",
+          "channel": "系统记录",
+          "read": true
+        }
+      ],
+      "needs": [
+        {
+          "id": "atelier-need-1",
+          "title": "确认吊灯尺寸与数量",
+          "detail": "需收集餐桌长度、层高和安装点位",
+          "status": "待确认",
+          "priority": "中",
+          "updatedAt": "2026-09-03T10:15:00+08:00"
+        }
+      ],
+      "quotes": [
+        {
+          "id": "quote-atelier-1",
+          "quoteNo": "QT-20260901-006",
+          "productIds": [
+            "halo-p36"
+          ],
+          "productNames": [
+            "Halo 环形吊灯"
+          ],
+          "amount": 16182,
+          "currency": "CNY",
+          "status": "已发送",
+          "createdAt": "2026-09-01",
+          "validUntil": "2026-09-08"
+        }
+      ],
+      "contextMemory": [
+        "餐厅翻新计划 10 月开业",
+        "偏好暖色和香槟金，不希望灯具压低层高",
+        "下一步先确认餐桌尺寸，再给数量建议"
+      ]
+    },
+    {
+      "id": "cust-northstar",
+      "company": "Northstar 联合办公",
+      "name": "赵工",
+      "role": "工程采购",
+      "avatar": "赵",
+      "industry": "办公空间",
+      "location": "深圳 · 南山",
+      "stage": "新客",
+      "source": "老客转介绍",
+      "tags": [
+        "办公室",
+        "批量采购"
+      ],
+      "email": "zhao.engineering@example.com",
+      "phone": "+86 136 0000 9042",
+      "owner": "Junjun Hu",
+      "estimatedValue": 19200,
+      "lastContactAt": "2026-09-02T15:20:00+08:00",
+      "lastContactLabel": "9 月 2 日",
+      "unreadCount": 1,
+      "contacts": [
+        {
+          "id": "northstar-zhao",
+          "name": "赵工",
+          "role": "工程采购",
+          "email": "zhao.engineering@example.com",
+          "phone": "+86 136 0000 9042",
+          "preferredChannel": "电话",
+          "isPrimary": true
+        }
+      ],
+      "conversations": [
+        {
+          "id": "northstar-m2",
+          "direction": "inbound",
+          "author": "赵工",
+          "content": "办公室层高 2.8 米，想找低眩光筒灯，先给我两款参数和大概价格。",
+          "timestamp": "2026-09-02T15:20:00+08:00",
+          "channel": "电话",
+          "read": false
+        },
+        {
+          "id": "northstar-m1",
+          "direction": "internal",
+          "author": "系统记录",
+          "content": "待确认吊顶开孔尺寸、数量和色温。",
+          "timestamp": "2026-09-02T15:30:00+08:00",
+          "channel": "系统记录",
+          "read": true
+        }
+      ],
+      "needs": [
+        {
+          "id": "northstar-need-1",
+          "title": "收集项目参数",
+          "detail": "吊顶开孔、数量、色温和预计进场日期",
+          "status": "待确认",
+          "priority": "高",
+          "updatedAt": "2026-09-02T15:20:00+08:00"
+        }
+      ],
+      "quotes": [],
+      "contextMemory": [
+        "首次联系，来自老客户推荐",
+        "办公室层高 2.8 米，明确关注低眩光",
+        "需要先给两款可比较的选项"
+      ]
+    },
+    {
+      "id": "cust-moss",
+      "company": "Moss 民宿集团",
+      "name": "林女士",
+      "role": "品牌负责人",
+      "avatar": "林",
+      "industry": "文旅住宿",
+      "location": "大理 · 苍山",
+      "stage": "已成交",
+      "source": "案例内容",
+      "tags": [
+        "民宿",
+        "户外",
+        "复购机会"
+      ],
+      "email": "lin.brand@example.com",
+      "phone": "+86 135 0000 7719",
+      "owner": "Junjun Hu",
+      "estimatedValue": 8600,
+      "lastContactAt": "2026-08-30T11:02:00+08:00",
+      "lastContactLabel": "8 月 30 日",
+      "unreadCount": 0,
+      "contacts": [
+        {
+          "id": "moss-lin",
+          "name": "林女士",
+          "role": "品牌负责人",
+          "email": "lin.brand@example.com",
+          "phone": "+86 135 0000 7719",
+          "preferredChannel": "微信",
+          "isPrimary": true
+        }
+      ],
+      "conversations": [
+        {
+          "id": "moss-m2",
+          "direction": "inbound",
+          "author": "林女士",
+          "content": "上一批壁灯安装效果不错，秋季新店还需要 18 套，预计月底前到。",
+          "timestamp": "2026-08-30T11:02:00+08:00",
+          "channel": "微信",
+          "read": true
+        },
+        {
+          "id": "moss-m1",
+          "direction": "outbound",
+          "author": "Junjun Hu",
+          "content": "已为您记录复购需求，MOSS O8 目前是预售批次，我会在到仓后第一时间提醒。",
+          "timestamp": "2026-08-30T11:18:00+08:00",
+          "channel": "微信",
+          "read": true
+        }
+      ],
+      "needs": [
+        {
+          "id": "moss-need-1",
+          "title": "跟踪 MOSS O8 到仓",
+          "detail": "18 套，预计 9 月 18 日到仓",
+          "status": "已确认",
+          "priority": "中",
+          "updatedAt": "2026-08-30T11:18:00+08:00"
+        }
+      ],
+      "quotes": [
+        {
+          "id": "quote-moss-1",
+          "quoteNo": "QT-20260830-003",
+          "productIds": [
+            "moss-o8"
+          ],
+          "productNames": [
+            "Moss 户外壁灯"
+          ],
+          "amount": 5922,
+          "currency": "CNY",
+          "status": "已接受",
+          "createdAt": "2026-08-30",
+          "validUntil": "2026-09-06"
+        }
+      ],
+      "contextMemory": [
+        "已有一批 MOSS O8 成交，客户认可安装效果",
+        "秋季新店预计月底前到货",
+        "目前批次为预售，预计 9 月 18 日到仓"
+      ]
+    }
+  ],
+  "followupTasks": [
+    {
+      "id": "task-nova-reply",
+      "customerId": "cust-nova",
+      "customerName": "陈经理",
+      "company": "NOVA 空间设计",
+      "title": "回复库存与交期，并发送资料",
+      "description": "客户询问 ARC T18 黑色现货，需同时附参数表和黑色场景图。",
+      "type": "回复客户",
+      "priority": "高",
+      "status": "open",
+      "dueAt": "2026-09-04T14:15:00+08:00",
+      "dueLabel": "今天 14:15",
+      "createdAt": "2026-09-04T13:48:00+08:00",
+      "suggestedProductId": "arc-t18",
+      "suggestedAssetIds": [
+        "arc-image",
+        "arc-spec"
+      ]
+    },
+    {
+      "id": "task-northstar-need",
+      "customerId": "cust-northstar",
+      "customerName": "赵工",
+      "company": "Northstar 联合办公",
+      "title": "确认办公室项目参数",
+      "description": "补充吊顶开孔、数量、色温和预计进场日期。",
+      "type": "确认需求",
+      "priority": "高",
+      "status": "open",
+      "dueAt": "2026-09-04T17:00:00+08:00",
+      "dueLabel": "今天 17:00",
+      "createdAt": "2026-09-02T15:30:00+08:00"
+    },
+    {
+      "id": "task-atelier-assets",
+      "customerId": "cust-atelier",
+      "customerName": "王总监",
+      "company": "Atelier 27 酒店",
+      "title": "发送 HALO P36 应用资料",
+      "description": "发送空间应用图与规格书，并询问餐桌尺寸。",
+      "type": "发送资料",
+      "priority": "中",
+      "status": "open",
+      "dueAt": "2026-09-05T10:00:00+08:00",
+      "dueLabel": "明天 10:00",
+      "createdAt": "2026-09-03T10:40:00+08:00",
+      "suggestedProductId": "halo-p36",
+      "suggestedAssetIds": [
+        "halo-image",
+        "halo-spec"
+      ]
+    },
+    {
+      "id": "task-moss-stock",
+      "customerId": "cust-moss",
+      "customerName": "林女士",
+      "company": "Moss 民宿集团",
+      "title": "提醒 MOSS O8 到仓",
+      "description": "预售批次预计 9 月 18 日到仓，到仓后跟进 18 套复购。",
+      "type": "报价跟进",
+      "priority": "中",
+      "status": "open",
+      "dueAt": "2026-09-18T09:00:00+08:00",
+      "dueLabel": "9 月 18 日",
+      "createdAt": "2026-08-30T11:18:00+08:00",
+      "suggestedProductId": "moss-o8"
+    },
+    {
+      "id": "task-nova-quote",
+      "customerId": "cust-nova",
+      "customerName": "陈经理",
+      "company": "NOVA 空间设计",
+      "title": "跟进 QT-20260903-018 审批",
+      "description": "确认折扣审批结果，再给客户发送正式报价。",
+      "type": "内部任务",
+      "priority": "高",
+      "status": "open",
+      "dueAt": "2026-09-03T18:00:00+08:00",
+      "dueLabel": "已逾期 1 天",
+      "createdAt": "2026-09-03T16:30:00+08:00"
+    },
+    {
+      "id": "task-atelier-call",
+      "customerId": "cust-atelier",
+      "customerName": "王总监",
+      "company": "Atelier 27 酒店",
+      "title": "电话确认餐桌点位",
+      "description": "确认吊灯数量、层高与安装点位，便于出方案。",
+      "type": "电话沟通",
+      "priority": "低",
+      "status": "completed",
+      "dueAt": "2026-09-02T16:00:00+08:00",
+      "dueLabel": "已完成 · 9 月 2 日",
+      "createdAt": "2026-09-01T09:20:00+08:00",
+      "suggestedProductId": "halo-p36"
+    }
+  ]
+}

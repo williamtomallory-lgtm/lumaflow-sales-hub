@@ -1,3 +1,4 @@
+import businessSeed from "../data/business.json";
 import { products, type Product } from "./catalog";
 
 export type KnowledgeCategory = "FAQ" | "销售话术" | "产品知识" | "公司知识" | "政策" | "案例" | "文档解析";
@@ -15,60 +16,6 @@ export type KnowledgeEntry = {
   status: "已发布" | "待审核";
   reads: number;
 };
-
-export const knowledgeEntries: KnowledgeEntry[] = [
-  {
-    id: "kb-001", category: "FAQ", title: "客户询问当天发货时怎么回答？",
-    summary: "先核对实时库存与截单时间，再给出可承诺的时间范围。",
-    content: "先确认产品 SKU、数量和收货城市。库存大于需求数量时，可以回复“当前有现货，今天 16:00 前确认订单可在 24 小时内发出”。低库存或预售产品不得承诺当天发货，应说明预计到仓时间。",
-    tags: ["库存", "交期", "标准回复"], owner: "销售运营", version: "v2.1", updatedAt: "今天 14:20", status: "已发布", reads: 218,
-  },
-  {
-    id: "kb-002", category: "销售话术", title: "如何解释高显色灯具的价值？",
-    summary: "将 CRI 参数转化为服装、餐饮和展陈场景的直观价值。",
-    content: "不要只说 Ra>90。可以结合场景说明：高显色光源能更准确还原面料、菜品和展品的颜色，减少客户在自然光下看到的色差，尤其适合服装店、餐厅和画廊。",
-    tags: ["显色指数", "价值销售", "话术"], owner: "培训团队", version: "v3.0", updatedAt: "昨天", status: "已发布", reads: 186,
-  },
-  {
-    id: "kb-003", category: "产品知识", title: "轨道灯 24° 与 36° 光束角怎么选",
-    summary: "24° 适合重点照明，36° 更适合中等范围的均匀铺光。",
-    content: "24° 光束集中，适合橱窗、模特、挂画和重点商品；36° 覆盖更宽，适合货架和通道。实际选型还需结合安装高度、目标尺寸和环境基础照度。",
-    tags: ["轨道灯", "光束角", "选型"], owner: "产品经理", version: "v1.8", updatedAt: "9 月 2 日", status: "已发布", reads: 164,
-  },
-  {
-    id: "kb-004", category: "公司知识", title: "LumaFlow 商业项目服务流程",
-    summary: "从需求确认、选型、样品到交付和售后的完整协作流程。",
-    content: "商业项目分为需求澄清、初步选型、样品确认、正式报价、合同与排产、交付验收、售后回访七个阶段。每个阶段均由对应负责人记录关键结论。",
-    tags: ["服务流程", "公司介绍"], owner: "市场部", version: "v1.4", updatedAt: "8 月 28 日", status: "已发布", reads: 92,
-  },
-  {
-    id: "kb-005", category: "政策", title: "样品、退换与质保处理标准",
-    summary: "样品申请、非质量退换、质量问题和质保年限的处理边界。",
-    content: "样品需登记客户和项目用途。未安装且包装完整的标准品可在签收后 7 天内申请退换；定制品不支持非质量退换。质量问题需提供批次、故障照片和安装环境信息。",
-    tags: ["售后", "退换", "质保"], owner: "售后团队", version: "v2.3", updatedAt: "8 月 26 日", status: "已发布", reads: 143,
-  },
-  {
-    id: "kb-006", category: "案例", title: "NOVA 服装店重点照明改造",
-    summary: "使用 ARC T18 将重点陈列区照度提升 38%，同时降低眩光。",
-    content: "项目采用 3000K ARC T18，橱窗使用 24° 光束角，主货架使用 36°。完成后重点陈列区平均照度提升 38%，功率较原方案降低 21%。",
-    tags: ["服装店", "ARC T18", "案例"], owner: "项目团队", version: "v1.0", updatedAt: "8 月 22 日", status: "已发布", reads: 127,
-  },
-  {
-    id: "kb-007", category: "文档解析", title: "2026 商业照明产品册解析结果",
-    summary: "从 48 页 PDF 中识别 6 个产品系列、31 组参数和 12 个应用场景。",
-    content: "解析结果已与产品主数据比对。发现 VEIL W12 的库存交期在产品册中仍为旧版本，需由产品经理确认后发布。",
-    tags: ["PDF", "解析", "数据质量"], owner: "AI 文档助手", version: "v0.9", updatedAt: "今天 10:45", status: "待审核", reads: 34,
-  },
-];
-
-export function filterKnowledge(query: string, category: "全部" | KnowledgeCategory, source = knowledgeEntries) {
-  const normalized = query.trim().toLowerCase();
-  return source.filter((entry) => {
-    const categoryMatch = category === "全部" || entry.category === category;
-    if (!normalized) return categoryMatch;
-    return categoryMatch && `${entry.title}${entry.summary}${entry.content}${entry.tags.join("")}`.toLowerCase().includes(normalized);
-  });
-}
 
 export type Currency = "CNY" | "USD" | "CAD";
 
@@ -88,7 +35,59 @@ export type QuoteTotals = {
   currency: Currency;
 };
 
-export const demoCurrencyRates: Record<Currency, number> = { CNY: 1, USD: 0.138, CAD: 0.19 };
+export type QuoteHistoryRecord = {
+  id: string;
+  customer: string;
+  total: string;
+  status: string;
+  version: string;
+  updatedAt: string;
+};
+
+export type AdminUser = {
+  id: string;
+  name: string;
+  initials: string;
+  role: string;
+  department: string;
+  status: "活跃" | "已停用";
+  lastActive: string;
+};
+
+export type AiLog = {
+  id: string;
+  user: string;
+  action: string;
+  input: string;
+  result: string;
+  status: string;
+  time: string;
+};
+
+export type QualityIssue = {
+  id: string;
+  severity: "高" | "中" | "低";
+  field: string;
+  subject: string;
+  detail: string;
+  owner: string;
+};
+
+export const knowledgeEntries = businessSeed.knowledgeEntries as KnowledgeEntry[];
+export const demoCurrencyRates = businessSeed.demoCurrencyRates as Record<Currency, number>;
+export const quoteHistory = businessSeed.quoteHistory as QuoteHistoryRecord[];
+export const adminUsers = businessSeed.adminUsers as AdminUser[];
+export const aiLogs = businessSeed.aiLogs as AiLog[];
+export const qualityIssues = businessSeed.qualityIssues as QualityIssue[];
+
+export function filterKnowledge(query: string, category: "全部" | KnowledgeCategory, source = knowledgeEntries) {
+  const normalized = query.trim().toLowerCase();
+  return source.filter((entry) => {
+    const categoryMatch = category === "全部" || entry.category === category;
+    if (!normalized) return categoryMatch;
+    return categoryMatch && `${entry.title}${entry.summary}${entry.content}${entry.tags.join("")}`.toLowerCase().includes(normalized);
+  });
+}
 
 export function productListPrice(product: Product) {
   const numbers = product.priceRange.match(/\d+/g)?.map(Number) ?? [];
@@ -103,7 +102,7 @@ export function quantityFactor(quantity: number) {
   return 1;
 }
 
-export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog = products): QuoteTotals {
+export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog = products, currencyRates = demoCurrencyRates): QuoteTotals {
   let subtotal = 0;
   let afterTier = 0;
   let afterDiscount = 0;
@@ -124,7 +123,7 @@ export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog =
     tierSavings: subtotal - afterTier,
     discountSavings: afterTier - afterDiscount,
     totalCny: afterDiscount,
-    total: afterDiscount * demoCurrencyRates[currency],
+    total: afterDiscount * currencyRates[currency],
     currency,
   };
 }
@@ -132,31 +131,3 @@ export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog =
 export function quoteRequiresApproval(lines: QuoteLine[]) {
   return lines.some((line) => line.discount > 15);
 }
-
-export const quoteHistory = [
-  { id: "QT-2026-0904", customer: "NOVA 服饰 · 陈经理", total: "¥28,640", status: "待客户确认", version: "v3", updatedAt: "今天 14:32" },
-  { id: "QT-2026-0901", customer: "屿见酒店 · 林女士", total: "¥46,880", status: "已批准", version: "v2", updatedAt: "昨天 16:08" },
-  { id: "QT-2026-0828", customer: "北辰设计 · 周工", total: "¥12,490", status: "草稿", version: "v1", updatedAt: "8 月 28 日" },
-];
-
-export type AdminUser = { id: string; name: string; initials: string; role: string; department: string; status: "活跃" | "已停用"; lastActive: string };
-
-export const adminUsers: AdminUser[] = [
-  { id: "u1", name: "Junjun Hu", initials: "JH", role: "管理员", department: "销售运营", status: "活跃", lastActive: "正在使用" },
-  { id: "u2", name: "Lin Chen", initials: "LC", role: "销售经理", department: "华东销售", status: "活跃", lastActive: "12 分钟前" },
-  { id: "u3", name: "Mia Zhou", initials: "MZ", role: "产品编辑", department: "产品中心", status: "活跃", lastActive: "2 小时前" },
-  { id: "u4", name: "Kai Wang", initials: "KW", role: "销售顾问", department: "渠道销售", status: "已停用", lastActive: "8 月 16 日" },
-];
-
-export const aiLogs = [
-  { id: "log-1", user: "Junjun Hu", action: "产品问答", input: "18W 黑色轨道灯，服装店用", result: "ARC T18 · 92%", status: "成功", time: "14:26" },
-  { id: "log-2", user: "Lin Chen", action: "回复草稿", input: "酒店大堂吊灯询价", result: "HALO P36 · 待确认", status: "需审核", time: "13:48" },
-  { id: "log-3", user: "Mia Zhou", action: "文档解析", input: "2026 商业照明产品册.pdf", result: "识别 31 组参数", status: "成功", time: "10:45" },
-  { id: "log-4", user: "Junjun Hu", action: "附件搜索", input: "NOVA 店铺现场.jpg", result: "匹配 ARC T18", status: "成功", time: "09:18" },
-];
-
-export const qualityIssues = [
-  { id: "q1", severity: "高", field: "证书有效期", subject: "MOSS O8 IP65 检测报告", detail: "将在 21 天后过期", owner: "产品中心" },
-  { id: "q2", severity: "中", field: "交期冲突", subject: "VEIL W12", detail: "产品册与库存数据不一致", owner: "供应链" },
-  { id: "q3", severity: "低", field: "图片缺失", subject: "BEAM S30", detail: "缺少 4000K 场景图", owner: "市场部" },
-];

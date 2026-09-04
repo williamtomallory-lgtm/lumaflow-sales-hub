@@ -87,8 +87,8 @@ export function searchProducts(query: string, source: Product[] = products): Sea
     .sort((a, b) => b.score - a.score || b.product.stock - a.product.stock);
 }
 
-export function answerQuestion(query: string): { answer: string; product: Product | null; confidence: number } {
-  const results = searchProducts(query);
+export function answerQuestion(query: string, source: Product[] = products): { answer: string; product: Product | null; confidence: number } {
+  const results = searchProducts(query, source);
   const product = results[0]?.product ?? null;
   if (!product) {
     return {

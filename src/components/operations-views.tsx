@@ -26,32 +26,36 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
-  adminUsers,
-  aiLogs,
+  adminUsers as defaultAdminUsers,
+  aiLogs as defaultAiLogs,
   calculateQuote,
+  demoCurrencyRates,
   filterKnowledge,
-  knowledgeEntries,
-  qualityIssues,
-  quoteHistory,
+  knowledgeEntries as defaultKnowledgeEntries,
+  qualityIssues as defaultQualityIssues,
+  quoteHistory as defaultQuoteHistory,
   quoteRequiresApproval,
   type AdminUser,
+  type AiLog,
   type Currency,
   type KnowledgeCategory,
   type KnowledgeEntry,
+  type QualityIssue,
+  type QuoteHistoryRecord,
   type QuoteLine,
 } from "@/lib/business";
-import { products } from "@/lib/catalog";
+import { products as defaultProducts, type Product } from "@/lib/catalog";
 import styles from "./operations-views.module.css";
 
 type ToastFn = (message: string) => void;
 
 const knowledgeCategories: Array<"全部" | KnowledgeCategory> = ["全部", "FAQ", "销售话术", "产品知识", "公司知识", "政策", "案例", "文档解析"];
 
-export function KnowledgeBaseView({ onToast }: { onToast: ToastFn }) {
+export function KnowledgeBaseView({ initialEntries = defaultKnowledgeEntries, onToast }: { initialEntries?: KnowledgeEntry[]; onToast: ToastFn }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"全部" | KnowledgeCategory>("全部");
-  const [entries, setEntries] = useState(knowledgeEntries);
-  const [selectedId, setSelectedId] = useState(knowledgeEntries[0].id);
+  const [entries, setEntries] = useState(initialEntries);
+  const [selectedId, setSelectedId] = useState(initialEntries[0].id);
   const [showCreate, setShowCreate] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [draft, setDraft] = useState({ title: "", summary: "", category: "FAQ" as KnowledgeCategory });
@@ -187,18 +191,15 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function QuotationView({ onToast }: { onToast: ToastFn }) {
-  const [lines, setLines] = useState<QuoteLine[]>([
-    { id: "line-1", productId: "arc-t18", quantity: 20, discount: 5 },
-    { id: "line-2", productId: "line-l24", quantity: 12, discount: 0 },
-  ]);
+export function QuotationView({ products = defaultProducts, initialHistory = defaultQuoteHistory, currencyRates = demoCurrencyRates, onToast }: { products?: Product[]; initialHistory?: QuoteHistoryRecord[]; currencyRates?: Record<Currency, number>; onToast: ToastFn }) {
+  const [lines, setLines] = useState<QuoteLine[]>(() => products.slice(0, 2).map((product, index) => ({ id: `line-${index + 1}`, productId: product.id, quantity: index === 0 ? 20 : 12, discount: index === 0 ? 5 : 0 })));
   const [currency, setCurrency] = useState<Currency>("CNY");
   const [customer, setCustomer] = useState("NOVA 服饰 · 陈经理");
   const [status, setStatus] = useState<"草稿" | "待审批" | "已批准">("草稿");
   const [version, setVersion] = useState(1);
   const [newProductId, setNewProductId] = useState(products[0].id);
   const previewRef = useRef<HTMLDivElement>(null);
-  const totals = calculateQuote(lines, currency);
+  const totals = calculateQuote(lines, currency, products, currencyRates);
   const needsApproval = quoteRequiresApproval(lines);
   const symbols: Record<Currency, string> = { CNY: "¥", USD: "$", CAD: "C$" };
   const symbol = symbols[currency];
@@ -255,14 +256,14 @@ export function QuotationView({ onToast }: { onToast: ToastFn }) {
             <thead><tr><th>产品</th><th>单价</th><th>数量</th><th>阶梯</th><th>折扣</th><th>小计</th><th /></tr></thead>
             <tbody>{lines.map((line) => {
               const product = products.find((item) => item.id === line.productId)!;
-              const lineTotal = calculateQuote([line], currency).total;
-              return <tr key={line.id}><td><strong>{product.name}</strong><small>{product.model}</small></td><td>{symbol}{(calculateQuote([{ ...line, quantity: 1, discount: 0 }], currency).subtotal * (currency === "CNY" ? 1 : currency === "USD" ? .138 : .19)).toFixed(2)}</td><td><input aria-label={`${product.model} 数量`} type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.id, "quantity", Number(event.target.value))} /></td><td>{line.quantity >= 100 ? "-18%" : line.quantity >= 50 ? "-12%" : line.quantity >= 20 ? "-7%" : line.quantity >= 10 ? "-3%" : "—"}</td><td><div className={styles.percentInput}><input aria-label={`${product.model} 折扣`} type="number" min="0" max="100" value={line.discount} onChange={(event) => updateLine(line.id, "discount", Number(event.target.value))} /><span>%</span></div></td><td><strong>{symbol}{lineTotal.toFixed(2)}</strong></td><td><button aria-label={`删除 ${product.name}`} onClick={() => setLines((current) => current.filter((item) => item.id !== line.id))}><Trash2 size={15} /></button></td></tr>;
+              const lineTotal = calculateQuote([line], currency, products, currencyRates).total;
+              return <tr key={line.id}><td><strong>{product.name}</strong><small>{product.model}</small></td><td>{symbol}{calculateQuote([{ ...line, quantity: 1, discount: 0 }], currency, products, currencyRates).total.toFixed(2)}</td><td><input aria-label={`${product.model} 数量`} type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.id, "quantity", Number(event.target.value))} /></td><td>{line.quantity >= 100 ? "-18%" : line.quantity >= 50 ? "-12%" : line.quantity >= 20 ? "-7%" : line.quantity >= 10 ? "-3%" : "—"}</td><td><div className={styles.percentInput}><input aria-label={`${product.model} 折扣`} type="number" min="0" max="100" value={line.discount} onChange={(event) => updateLine(line.id, "discount", Number(event.target.value))} /><span>%</span></div></td><td><strong>{symbol}{lineTotal.toFixed(2)}</strong></td><td><button aria-label={`删除 ${product.name}`} onClick={() => setLines((current) => current.filter((item) => item.id !== line.id))}><Trash2 size={15} /></button></td></tr>;
             })}</tbody>
           </table>
         </div>
         <div className={styles.addLine}><select value={newProductId} onChange={(event) => setNewProductId(event.target.value)}>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.model}</option>)}</select><button className={styles.secondaryButton} onClick={addLine}><Plus size={15} /> 添加产品</button></div>
         {needsApproval && <div className={styles.approvalNotice}><AlertTriangle size={17} /><div><strong>需要经理审批</strong><span>至少一项手动折扣超过 15%，正式发送前必须批准。</span></div></div>}
-        <div className={styles.quoteTotals}><div><span>产品原价</span><strong>{symbol}{(totals.subtotal * (currency === "CNY" ? 1 : currency === "USD" ? .138 : .19)).toFixed(2)}</strong></div><div><span>数量阶梯优惠</span><strong>- {symbol}{(totals.tierSavings * (currency === "CNY" ? 1 : currency === "USD" ? .138 : .19)).toFixed(2)}</strong></div><div><span>手动折扣</span><strong>- {symbol}{(totals.discountSavings * (currency === "CNY" ? 1 : currency === "USD" ? .138 : .19)).toFixed(2)}</strong></div><div className={styles.grandTotal}><span>报价合计</span><strong>{symbol}{totals.total.toFixed(2)} <small>{currency}</small></strong></div></div>
+        <div className={styles.quoteTotals}><div><span>产品原价</span><strong>{symbol}{(totals.subtotal * currencyRates[currency]).toFixed(2)}</strong></div><div><span>数量阶梯优惠</span><strong>- {symbol}{(totals.tierSavings * currencyRates[currency]).toFixed(2)}</strong></div><div><span>手动折扣</span><strong>- {symbol}{(totals.discountSavings * currencyRates[currency]).toFixed(2)}</strong></div><div className={styles.grandTotal}><span>报价合计</span><strong>{symbol}{totals.total.toFixed(2)} <small>{currency}</small></strong></div></div>
         <p className={styles.rateNote}>币种换算使用演示固定汇率，正式报价需接入财务批准汇率。</p>
         <div className={styles.quoteActions}><button className={styles.secondaryButton} onClick={saveVersion}><History size={15} /> 保存新版本</button><button className={styles.secondaryButton} onClick={downloadPdf}><Download size={15} /> 下载 PDF</button><button className={styles.primaryButton} onClick={advanceApproval}><ShieldCheck size={15} /> {status === "待审批" ? "模拟批准" : needsApproval ? "提交审批" : "批准报价"}</button></div>
       </section>
@@ -273,7 +274,7 @@ export function QuotationView({ onToast }: { onToast: ToastFn }) {
           <div className={styles.quoteBrand}><div><span className={styles.brandMark}>➜</span><strong>LumaFlow</strong></div><span>QUOTATION</span></div>
           <div className={styles.quoteTitle}><div><span>报价单</span><strong>QT-2026-0904</strong></div><div><span>版本 / 日期</span><strong>v{version} · 2026-09-04</strong></div></div>
           <div className={styles.quoteParties}><div><span>报价给</span><strong>{customer}</strong><small>商业照明项目</small></div><div><span>报价方</span><strong>LumaFlow Lighting</strong><small>sales@lumaflow.example</small></div></div>
-          <table><thead><tr><th>产品</th><th>数量</th><th>折扣</th><th>金额</th></tr></thead><tbody>{lines.map((line) => { const product = products.find((item) => item.id === line.productId)!; return <tr key={line.id}><td><strong>{product.name}</strong><small>{product.model}</small></td><td>{line.quantity}</td><td>{line.discount}%</td><td>{symbol}{calculateQuote([line], currency).total.toFixed(2)}</td></tr>; })}</tbody></table>
+          <table><thead><tr><th>产品</th><th>数量</th><th>折扣</th><th>金额</th></tr></thead><tbody>{lines.map((line) => { const product = products.find((item) => item.id === line.productId)!; return <tr key={line.id}><td><strong>{product.name}</strong><small>{product.model}</small></td><td>{line.quantity}</td><td>{line.discount}%</td><td>{symbol}{calculateQuote([line], currency, products, currencyRates).total.toFixed(2)}</td></tr>; })}</tbody></table>
           <div className={styles.previewTotal}><span>合计（{currency}）</span><strong>{symbol}{totals.total.toFixed(2)}</strong></div>
           <div className={styles.quoteTerms}><strong>报价说明</strong><p>报价有效期 14 天；交期以订单确认时库存为准；正式折扣须完成内部审批。产品享受对应型号质保服务。</p></div>
         </div>
@@ -281,7 +282,7 @@ export function QuotationView({ onToast }: { onToast: ToastFn }) {
 
       <section className={styles.historyPanel}>
         <div className={styles.sectionHead}><div><span>版本与历史</span><h2>最近报价</h2></div><button onClick={() => onToast("已显示全部报价记录")}>查看全部 <ArrowRight size={14} /></button></div>
-        <div className={styles.historyRows}>{quoteHistory.map((quote) => <div key={quote.id}><span className={styles.historyIcon}><FileText size={16} /></span><p><strong>{quote.id}</strong><small>{quote.customer}</small></p><strong>{quote.total}</strong><i>{quote.version}</i><em>{quote.status}</em><time>{quote.updatedAt}</time><ChevronRight size={15} /></div>)}</div>
+        <div className={styles.historyRows}>{initialHistory.map((quote) => <div key={quote.id}><span className={styles.historyIcon}><FileText size={16} /></span><p><strong>{quote.id}</strong><small>{quote.customer}</small></p><strong>{quote.total}</strong><i>{quote.version}</i><em>{quote.status}</em><time>{quote.updatedAt}</time><ChevronRight size={15} /></div>)}</div>
       </section>
     </div>
   );
@@ -289,11 +290,11 @@ export function QuotationView({ onToast }: { onToast: ToastFn }) {
 
 type AdminTab = "总览" | "用户权限" | "知识管理" | "数据质量" | "AI 日志";
 
-export function AdminView({ onToast }: { onToast: ToastFn }) {
+export function AdminView({ initialUsers = defaultAdminUsers, initialKnowledge = defaultKnowledgeEntries, initialLogs = defaultAiLogs, initialIssues = defaultQualityIssues, onToast }: { initialUsers?: AdminUser[]; initialKnowledge?: KnowledgeEntry[]; initialLogs?: AiLog[]; initialIssues?: QualityIssue[]; onToast: ToastFn }) {
   const [tab, setTab] = useState<AdminTab>("总览");
-  const [users, setUsers] = useState(adminUsers);
-  const [managedKnowledge, setManagedKnowledge] = useState(knowledgeEntries);
-  const [issues, setIssues] = useState(qualityIssues);
+  const [users, setUsers] = useState(initialUsers);
+  const [managedKnowledge, setManagedKnowledge] = useState(initialKnowledge);
+  const [issues, setIssues] = useState(initialIssues);
   const [logQuery, setLogQuery] = useState("");
   const tabs: AdminTab[] = ["总览", "用户权限", "知识管理", "数据质量", "AI 日志"];
 
@@ -342,7 +343,7 @@ export function AdminView({ onToast }: { onToast: ToastFn }) {
       {tab === "AI 日志" && (
         <section className={styles.adminPanel}>
           <div className={styles.sectionHead}><div><span>可追溯性</span><h2>AI 操作日志</h2></div><div className={styles.miniSearch}><Search size={14} /><input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="筛选日志" /></div></div>
-          <div className={styles.logTableWrap}><table className={styles.logTable}><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>输入</th><th>结果</th><th>状态</th></tr></thead><tbody>{aiLogs.filter((log) => `${log.user}${log.action}${log.input}`.toLowerCase().includes(logQuery.toLowerCase())).map((log) => <tr key={log.id}><td>{log.time}</td><td>{log.user}</td><td>{log.action}</td><td>{log.input}</td><td>{log.result}</td><td><span className={log.status === "需审核" ? styles.pending : ""}>{log.status}</span></td></tr>)}</tbody></table></div>
+          <div className={styles.logTableWrap}><table className={styles.logTable}><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>输入</th><th>结果</th><th>状态</th></tr></thead><tbody>{initialLogs.filter((log) => `${log.user}${log.action}${log.input}`.toLowerCase().includes(logQuery.toLowerCase())).map((log) => <tr key={log.id}><td>{log.time}</td><td>{log.user}</td><td>{log.action}</td><td>{log.input}</td><td>{log.result}</td><td><span className={log.status === "需审核" ? styles.pending : ""}>{log.status}</span></td></tr>)}</tbody></table></div>
         </section>
       )}
     </div>
