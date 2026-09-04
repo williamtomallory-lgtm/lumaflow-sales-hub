@@ -1,8 +1,10 @@
 export type Asset = {
   id: string;
   name: string;
-  type: "图片" | "参数表" | "PDF" | "证书" | "案例";
+  type: "图片" | "尺寸图" | "参数表" | "PDF" | "证书" | "案例" | "视频" | "说明书";
   size: string;
+  version?: string;
+  updatedAt?: string;
 };
 
 export type Product = {
@@ -17,6 +19,7 @@ export type Product = {
   lumens: string;
   colorTemp: string;
   material: string;
+  dimensions: string;
   colors: string[];
   scenarios: string[];
   supplier: string;
@@ -45,6 +48,7 @@ export const products: Product[] = [
     lumens: "1,620 lm",
     colorTemp: "3000K / 4000K",
     material: "压铸铝",
+    dimensions: "Ø62 × H138 mm",
     colors: ["曜石黑", "珍珠白"],
     scenarios: ["服装店", "展厅", "画廊"],
     supplier: "朗曜光电",
@@ -58,10 +62,12 @@ export const products: Product[] = [
     gradient: "linear-gradient(145deg, #1f2937 0%, #111827 55%, #c9a96e 56%, #efddbd 100%)",
     accent: "#c89b52",
     assets: [
-      { id: "arc-image", name: "ARC T18 场景图（黑色）", type: "图片", size: "2.4 MB" },
-      { id: "arc-spec", name: "ARC T18 技术参数表", type: "参数表", size: "486 KB" },
-      { id: "arc-cert", name: "CCC & CE 证书", type: "证书", size: "1.1 MB" },
-      { id: "arc-case", name: "NOVA 服装店照明案例", type: "案例", size: "3.8 MB" },
+      { id: "arc-image", name: "ARC T18 场景图（黑色）", type: "图片", size: "2.4 MB", version: "v3.1", updatedAt: "今天" },
+      { id: "arc-spec", name: "ARC T18 技术参数表", type: "参数表", size: "486 KB", version: "v3.2", updatedAt: "今天" },
+      { id: "arc-size", name: "ARC T18 安装尺寸图", type: "尺寸图", size: "820 KB", version: "v2.0", updatedAt: "9 月 1 日" },
+      { id: "arc-cert", name: "CCC & CE 证书", type: "证书", size: "1.1 MB", version: "v2.1", updatedAt: "8 月 28 日" },
+      { id: "arc-case", name: "NOVA 服装店照明案例", type: "案例", size: "3.8 MB", version: "v1.0", updatedAt: "8 月 22 日" },
+      { id: "arc-video", name: "ARC T18 调焦演示", type: "视频", size: "18.2 MB", version: "v1.0", updatedAt: "8 月 20 日" },
     ],
   },
   {
@@ -76,6 +82,7 @@ export const products: Product[] = [
     lumens: "2,880 lm",
     colorTemp: "2700K–4000K",
     material: "铝合金 + 亚克力",
+    dimensions: "Ø600 × H80 mm / 吊线 1.5 m",
     colors: ["香槟金", "哑光黑"],
     scenarios: ["餐厅", "酒店", "办公区"],
     supplier: "璟华灯饰",
@@ -92,6 +99,7 @@ export const products: Product[] = [
       { id: "halo-image", name: "HALO P36 空间应用图", type: "图片", size: "3.1 MB" },
       { id: "halo-spec", name: "HALO P36 规格书", type: "参数表", size: "572 KB" },
       { id: "halo-pdf", name: "HALO 系列产品册", type: "PDF", size: "5.6 MB" },
+      { id: "halo-manual", name: "HALO P36 安装说明书", type: "说明书", size: "1.4 MB", version: "v1.3", updatedAt: "8 月 24 日" },
     ],
   },
   {
@@ -106,6 +114,7 @@ export const products: Product[] = [
     lumens: "2,160 lm",
     colorTemp: "3000K / 4000K",
     material: "6063 铝型材",
+    dimensions: "L600 × W22 × H45 mm",
     colors: ["曜石黑"],
     scenarios: ["办公室", "住宅", "精品店"],
     supplier: "朗曜光电",
@@ -122,6 +131,7 @@ export const products: Product[] = [
       { id: "line-image", name: "LINE L24 安装效果图", type: "图片", size: "2.8 MB" },
       { id: "line-spec", name: "LINE L24 参数表", type: "参数表", size: "441 KB" },
       { id: "line-cert", name: "CE / RoHS 证书", type: "证书", size: "968 KB" },
+      { id: "line-video", name: "LINE 磁吸系统安装视频", type: "视频", size: "24.6 MB", version: "v2.0", updatedAt: "8 月 30 日" },
     ],
   },
   {
@@ -136,6 +146,7 @@ export const products: Product[] = [
     lumens: "960 lm",
     colorTemp: "3000K",
     material: "压铸铝 + 光学玻璃",
+    dimensions: "L168 × W45 × H72 mm",
     colors: ["珍珠白", "曜石黑"],
     scenarios: ["博物馆", "画廊", "走廊"],
     supplier: "光域科技",
@@ -165,6 +176,7 @@ export const products: Product[] = [
     lumens: "640 lm",
     colorTemp: "3000K",
     material: "铝合金 + 钢化玻璃",
+    dimensions: "L180 × W92 × H55 mm",
     colors: ["苔藓绿", "深空灰"],
     scenarios: ["民宿", "庭院", "露台"],
     supplier: "北辰户外",
@@ -195,6 +207,7 @@ export const products: Product[] = [
     lumens: "2,700 lm",
     colorTemp: "3000K / 4000K / 5000K",
     material: "压铸铝 + PC",
+    dimensions: "Ø145 × H118 mm / 开孔 Ø125 mm",
     colors: ["珍珠白"],
     scenarios: ["商场", "办公室", "酒店"],
     supplier: "光域科技",
@@ -210,7 +223,7 @@ export const products: Product[] = [
     assets: [
       { id: "beam-image", name: "BEAM S30 产品图", type: "图片", size: "1.9 MB" },
       { id: "beam-spec", name: "BEAM S30 参数表", type: "参数表", size: "398 KB" },
-      { id: "beam-pdf", name: "BEAM 安装说明", type: "PDF", size: "1.2 MB" },
+      { id: "beam-pdf", name: "BEAM 安装说明", type: "说明书", size: "1.2 MB", version: "v1.6", updatedAt: "8 月 18 日" },
     ],
   },
 ];

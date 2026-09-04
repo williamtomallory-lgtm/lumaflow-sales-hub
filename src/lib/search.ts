@@ -12,6 +12,7 @@ const fieldLabels: Array<[keyof Product, string, number]> = [
   ["name", "产品名", 8],
   ["power", "功率", 8],
   ["material", "材质", 5],
+  ["dimensions", "尺寸", 5],
   ["colors", "颜色", 5],
   ["scenarios", "适用场景", 6],
   ["category", "品类", 6],
@@ -46,6 +47,17 @@ export function searchProducts(query: string, source: Product[] = products): Sea
   if (!query.trim()) return source.map((product) => ({ product, score: 0, matches: [] }));
   const searchTerms = terms(query);
   const normalizedQuery = normalize(query);
+  const exactIdentifiers = source.filter((product) =>
+    [product.sku, product.model].some((value) => aliases(value) === aliases(normalizedQuery)),
+  );
+
+  if (exactIdentifiers.length) {
+    return exactIdentifiers.map((product) => ({
+      product,
+      score: 100,
+      matches: aliases(product.sku) === aliases(normalizedQuery) ? ["SKU"] : ["型号"],
+    }));
+  }
 
   return source
     .map((product) => {

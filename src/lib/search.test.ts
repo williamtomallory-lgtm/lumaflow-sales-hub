@@ -10,7 +10,9 @@ describe("catalog search", () => {
   });
 
   it("finds an exact SKU", () => {
-    expect(searchProducts("LT-ARC-T18-BK")[0].product.id).toBe("arc-t18");
+    const results = searchProducts("LT-ARC-T18-BK");
+    expect(results).toHaveLength(1);
+    expect(results[0].product.id).toBe("arc-t18");
   });
 
   it("returns the full catalog for an empty query", () => {
