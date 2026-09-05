@@ -1,0 +1,184 @@
+openapi: 3.1.0
+info:
+  title: LumaFlow Backend API
+  version: 1.0.0
+  description: Dynamic business-data API. Frontend presentation constants are not served here.
+servers:
+  - url: /api/v1
+paths:
+  /bootstrap:
+    get:
+      summary: Load the validated dynamic application snapshot
+      responses:
+        "200":
+          description: Dynamic data, dashboard projection, and source metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BootstrapResponse"
+  /health:
+    get:
+      summary: Check the active source and PostgreSQL reachability
+      responses:
+        "200":
+          description: Health result
+  /products:
+    get:
+      summary: List and search products
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: category
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Product page }
+    post:
+      summary: Persist a new product in PostgreSQL
+      security: [{ bearerAuth: [] }, { sameOriginDemo: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductInput" }
+      responses:
+        "201": { description: Product created }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "503": { $ref: "#/components/responses/PersistenceUnavailable" }
+  /products/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      summary: Get one product
+      responses:
+        "200": { description: Product }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Update selected product fields in PostgreSQL
+      security: [{ bearerAuth: [] }, { sameOriginDemo: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, minProperties: 1 }
+      responses:
+        "200": { description: Updated product }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /customers:
+    get:
+      summary: List and search customers
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200": { description: Customer page }
+  /followups:
+    get:
+      summary: List and search follow-up tasks
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, completed] }
+      responses:
+        "200": { description: Follow-up page }
+  /followups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    patch:
+      summary: Change a follow-up status in PostgreSQL
+      security: [{ bearerAuth: [] }, { sameOriginDemo: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, completed] }
+      responses:
+        "200": { description: Updated follow-up }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    sameOriginDemo:
+      type: apiKey
+      in: header
+      name: Origin
+      description: Development-only same-origin mode; requires DEMO_WRITES_ENABLED=true.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 120 }
+    Query:
+      name: q
+      in: query
+      schema: { type: string, maxLength: 200 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  schemas:
+    ProductInput:
+      type: object
+      description: Full Product fields except the server-generated id. Runtime schema is authoritative.
+    BootstrapResponse:
+      type: object
+      required: [data, dashboard, meta]
+      properties:
+        data: { type: object }
+        dashboard: { type: object }
+        meta:
+          type: object
+          required: [apiVersion, requestId, generatedAt, source]
+          properties:
+            apiVersion: { const: v1 }
+            requestId: { type: string }
+            generatedAt: { type: string, format: date-time }
+            source: { type: string, enum: [json, postgres, json-fallback] }
+    Error:
+      type: object
+      required: [error, meta]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+        meta:
+          type: object
+          required: [requestId]
+          properties:
+            requestId: { type: string }
+  responses:
+    NotFound:
+      description: Resource not found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Unique-key conflict
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ValidationFailed:
+      description: Zod validation failed
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    PersistenceUnavailable:
+      description: PostgreSQL is not configured or writes are disabled
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }

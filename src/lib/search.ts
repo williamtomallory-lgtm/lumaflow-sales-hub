@@ -1,4 +1,4 @@
-import { products, type Product } from "./catalog";
+import type { Product } from "./catalog";
 
 export type SearchResult = {
   product: Product;
@@ -43,7 +43,7 @@ function aliases(value: string) {
     .replaceAll("苔藓绿", "绿色");
 }
 
-export function searchProducts(query: string, source: Product[] = products): SearchResult[] {
+export function searchProducts(query: string, source: Product[]): SearchResult[] {
   if (!query.trim()) return source.map((product) => ({ product, score: 0, matches: [] }));
   const searchTerms = terms(query);
   const normalizedQuery = normalize(query);
@@ -87,7 +87,7 @@ export function searchProducts(query: string, source: Product[] = products): Sea
     .sort((a, b) => b.score - a.score || b.product.stock - a.product.stock);
 }
 
-export function answerQuestion(query: string, source: Product[] = products): { answer: string; product: Product | null; confidence: number } {
+export function answerQuestion(query: string, source: Product[]): { answer: string; product: Product | null; confidence: number } {
   const results = searchProducts(query, source);
   const product = results[0]?.product ?? null;
   if (!product) {

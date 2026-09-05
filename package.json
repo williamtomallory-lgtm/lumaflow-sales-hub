@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "verify:api": "node scripts/verify-backend.mjs",
     "db:setup": "node --env-file-if-exists=.env.local scripts/seed-postgres.mjs"
   },
   "dependencies": {
@@ -23,7 +24,8 @@
     "pg": "^8.23.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "unpdf": "^1.8.1"
+    "unpdf": "^1.8.1",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.8.0",

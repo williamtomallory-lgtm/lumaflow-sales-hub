@@ -1,5 +1,4 @@
-import businessSeed from "../data/business.json";
-import { products, type Product } from "./catalog";
+import type { Product } from "./catalog";
 
 export type KnowledgeCategory = "FAQ" | "销售话术" | "产品知识" | "公司知识" | "政策" | "案例" | "文档解析";
 
@@ -73,14 +72,7 @@ export type QualityIssue = {
   owner: string;
 };
 
-export const knowledgeEntries = businessSeed.knowledgeEntries as KnowledgeEntry[];
-export const demoCurrencyRates = businessSeed.demoCurrencyRates as Record<Currency, number>;
-export const quoteHistory = businessSeed.quoteHistory as QuoteHistoryRecord[];
-export const adminUsers = businessSeed.adminUsers as AdminUser[];
-export const aiLogs = businessSeed.aiLogs as AiLog[];
-export const qualityIssues = businessSeed.qualityIssues as QualityIssue[];
-
-export function filterKnowledge(query: string, category: "全部" | KnowledgeCategory, source = knowledgeEntries) {
+export function filterKnowledge(query: string, category: "全部" | KnowledgeCategory, source: KnowledgeEntry[]) {
   const normalized = query.trim().toLowerCase();
   return source.filter((entry) => {
     const categoryMatch = category === "全部" || entry.category === category;
@@ -102,7 +94,7 @@ export function quantityFactor(quantity: number) {
   return 1;
 }
 
-export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog = products, currencyRates = demoCurrencyRates): QuoteTotals {
+export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog: Product[], currencyRates: Record<Currency, number>): QuoteTotals {
   let subtotal = 0;
   let afterTier = 0;
   let afterDiscount = 0;

@@ -1,5 +1,4 @@
-import crmSeed from "../data/crm.json";
-import { allAssets, products, type Asset, type Product } from "./catalog";
+import type { Asset, Product } from "./catalog";
 import { searchProducts, type SearchResult } from "./search";
 
 export type CustomerIntent =
@@ -145,9 +144,6 @@ const intentRules: ReadonlyArray<{
 const highUrgencyKeywords = ["紧急", "急", "马上", "尽快", "今天", "明天", "来不及", "立刻", "截止"];
 const mediumUrgencyKeywords = ["本周", "这周", "最近", "几天内", "尽快确认", "计划"];
 
-export const crmCustomers = crmSeed.customers as Customer[];
-export const followupTasks = crmSeed.followupTasks as FollowupTask[];
-
 function normalize(value: string): string {
   return value.toLowerCase().replace(/[\s，。？！、/\\\-_:：；;（）()]+/g, "");
 }
@@ -183,14 +179,14 @@ function recommendationReasons(result: SearchResult): string[] {
   return reasons.length > 0 ? reasons : ["与客户描述的产品方向匹配"];
 }
 
-export function recommendProductsForMessage(message: string, sourceProducts: Product[] = products): ProductRecommendation[] {
+export function recommendProductsForMessage(message: string, sourceProducts: Product[]): ProductRecommendation[] {
   if (!message.trim()) return [];
   return searchProducts(message, sourceProducts)
     .slice(0, 3)
     .map((result) => ({ product: result.product, score: result.score, reasons: recommendationReasons(result) }));
 }
 
-export function recommendAssetsForProducts(productRecommendations: ProductRecommendation[], limit = 6, sourceAssets: CrmAsset[] = allAssets): CrmAsset[] {
+export function recommendAssetsForProducts(productRecommendations: ProductRecommendation[], limit: number, sourceAssets: CrmAsset[]): CrmAsset[] {
   if (limit <= 0 || productRecommendations.length === 0) return [];
   const productRank = new Map(productRecommendations.map((recommendation, index) => [recommendation.product.id, index]));
   const preferredTypes: CrmAsset["type"][] = ["图片", "尺寸图", "参数表", "证书", "案例", "视频", "说明书", "PDF"];
@@ -217,7 +213,7 @@ function composeReplyDraft(message: string, intent: CustomerIntent, recommendati
   return `${greeting}\n\n根据您提到的需求，建议先看 ${product.name}（${product.model}）：${product.power}，${product.material}，${product.colorTemp}，适合${product.scenarios.slice(0, 3).join("、")}。${stock}。${price}\n\n${request}\n如果您确认数量和收货时间，我可以继续为您整理下一步方案。`;
 }
 
-export function analyzeCustomerMessage(message: string, customerName?: string, sourceProducts: Product[] = products, sourceAssets: CrmAsset[] = allAssets): CustomerMessageAnalysis {
+export function analyzeCustomerMessage(message: string, customerName: string | undefined, sourceProducts: Product[], sourceAssets: CrmAsset[]): CustomerMessageAnalysis {
   const cleanMessage = message.trim();
   const { intent, label, matched: intentSignals } = pickIntent(cleanMessage);
   const { urgency, reason: urgencyReason, matched: urgencySignals } = pickUrgency(cleanMessage);
@@ -241,7 +237,7 @@ export function analyzeCustomerMessage(message: string, customerName?: string, s
   };
 }
 
-export function searchCustomers(query: string, sourceCustomers: Customer[] = crmCustomers): Customer[] {
+export function searchCustomers(query: string, sourceCustomers: Customer[]): Customer[] {
   const normalizedQuery = normalize(query);
   if (!normalizedQuery) return [...sourceCustomers];
   return sourceCustomers
@@ -268,7 +264,7 @@ export function searchCustomers(query: string, sourceCustomers: Customer[] = crm
     .map(({ customer }) => customer);
 }
 
-export function getCustomerById(customerId: string, sourceCustomers: Customer[] = crmCustomers): Customer | undefined {
+export function getCustomerById(customerId: string, sourceCustomers: Customer[]): Customer | undefined {
   return sourceCustomers.find((customer) => customer.id === customerId);
 }
 

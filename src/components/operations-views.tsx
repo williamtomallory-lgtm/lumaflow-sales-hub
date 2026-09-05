@@ -7,8 +7,6 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
-  Clock3,
   Copy,
   Download,
   FileText,
@@ -26,14 +24,8 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
-  adminUsers as defaultAdminUsers,
-  aiLogs as defaultAiLogs,
   calculateQuote,
-  demoCurrencyRates,
   filterKnowledge,
-  knowledgeEntries as defaultKnowledgeEntries,
-  qualityIssues as defaultQualityIssues,
-  quoteHistory as defaultQuoteHistory,
   quoteRequiresApproval,
   type AdminUser,
   type AiLog,
@@ -44,14 +36,17 @@ import {
   type QuoteHistoryRecord,
   type QuoteLine,
 } from "@/lib/business";
-import { products as defaultProducts, type Product } from "@/lib/catalog";
+import type { Product } from "@/lib/catalog";
+import type { DashboardSummary } from "@/lib/contracts/api";
+import type { Customer } from "@/lib/crm";
+import { DEMO_PROFILE } from "@/config/ui-static";
 import styles from "./operations-views.module.css";
 
 type ToastFn = (message: string) => void;
 
 const knowledgeCategories: Array<"全部" | KnowledgeCategory> = ["全部", "FAQ", "销售话术", "产品知识", "公司知识", "政策", "案例", "文档解析"];
 
-export function KnowledgeBaseView({ initialEntries = defaultKnowledgeEntries, onToast }: { initialEntries?: KnowledgeEntry[]; onToast: ToastFn }) {
+export function KnowledgeBaseView({ initialEntries, onToast }: { initialEntries: KnowledgeEntry[]; onToast: ToastFn }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"全部" | KnowledgeCategory>("全部");
   const [entries, setEntries] = useState(initialEntries);
@@ -80,7 +75,7 @@ export function KnowledgeBaseView({ initialEntries = defaultKnowledgeEntries, on
       summary: draft.summary.trim(),
       content: draft.summary.trim(),
       tags: [draft.category, "新建"],
-      owner: "Junjun Hu",
+      owner: DEMO_PROFILE.name,
       version: "v0.1",
       updatedAt: "刚刚",
       status: "待审核",
@@ -191,10 +186,10 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function QuotationView({ products = defaultProducts, initialHistory = defaultQuoteHistory, currencyRates = demoCurrencyRates, onToast }: { products?: Product[]; initialHistory?: QuoteHistoryRecord[]; currencyRates?: Record<Currency, number>; onToast: ToastFn }) {
+export function QuotationView({ products, customers, initialHistory, currencyRates, onToast }: { products: Product[]; customers: Customer[]; initialHistory: QuoteHistoryRecord[]; currencyRates: Record<Currency, number>; onToast: ToastFn }) {
   const [lines, setLines] = useState<QuoteLine[]>(() => products.slice(0, 2).map((product, index) => ({ id: `line-${index + 1}`, productId: product.id, quantity: index === 0 ? 20 : 12, discount: index === 0 ? 5 : 0 })));
   const [currency, setCurrency] = useState<Currency>("CNY");
-  const [customer, setCustomer] = useState("NOVA 服饰 · 陈经理");
+  const [customerId, setCustomerId] = useState(customers[0].id);
   const [status, setStatus] = useState<"草稿" | "待审批" | "已批准">("草稿");
   const [version, setVersion] = useState(1);
   const [newProductId, setNewProductId] = useState(products[0].id);
@@ -203,6 +198,8 @@ export function QuotationView({ products = defaultProducts, initialHistory = def
   const needsApproval = quoteRequiresApproval(lines);
   const symbols: Record<Currency, string> = { CNY: "¥", USD: "$", CAD: "C$" };
   const symbol = symbols[currency];
+  const selectedCustomer = customers.find((item) => item.id === customerId) ?? customers[0];
+  const customerLabel = `${selectedCustomer.company} · ${selectedCustomer.name}`;
 
   function updateLine(id: string, field: "quantity" | "discount", value: number) {
     setLines((current) => current.map((line) => line.id === id ? { ...line, [field]: Math.max(0, value) } : line));
@@ -249,7 +246,7 @@ export function QuotationView({ products = defaultProducts, initialHistory = def
           <div><span>当前报价</span><strong>QT-2026-0904 · v{version}</strong></div>
           <div className={styles.quoteControls}><select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)} aria-label="报价币种"><option>CNY</option><option>USD</option><option>CAD</option></select><span className={`${styles.statusPill} ${status === "已批准" ? styles.approved : status === "待审批" ? styles.waiting : ""}`}>{status}</span></div>
         </div>
-        <label className={styles.customerField}>客户<select value={customer} onChange={(event) => setCustomer(event.target.value)}><option>NOVA 服饰 · 陈经理</option><option>屿见酒店 · 林女士</option><option>北辰设计 · 周工</option></select></label>
+        <label className={styles.customerField}>客户<select value={customerId} onChange={(event) => setCustomerId(event.target.value)}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.company} · {customer.name}</option>)}</select></label>
 
         <div className={styles.lineTableWrap}>
           <table className={styles.lineTable}>
@@ -273,7 +270,7 @@ export function QuotationView({ products = defaultProducts, initialHistory = def
         <div ref={previewRef} className={styles.quotePreview}>
           <div className={styles.quoteBrand}><div><span className={styles.brandMark}>➜</span><strong>LumaFlow</strong></div><span>QUOTATION</span></div>
           <div className={styles.quoteTitle}><div><span>报价单</span><strong>QT-2026-0904</strong></div><div><span>版本 / 日期</span><strong>v{version} · 2026-09-04</strong></div></div>
-          <div className={styles.quoteParties}><div><span>报价给</span><strong>{customer}</strong><small>商业照明项目</small></div><div><span>报价方</span><strong>LumaFlow Lighting</strong><small>sales@lumaflow.example</small></div></div>
+          <div className={styles.quoteParties}><div><span>报价给</span><strong>{customerLabel}</strong><small>{selectedCustomer.industry}</small></div><div><span>报价方</span><strong>LumaFlow Lighting</strong><small>sales@lumaflow.example</small></div></div>
           <table><thead><tr><th>产品</th><th>数量</th><th>折扣</th><th>金额</th></tr></thead><tbody>{lines.map((line) => { const product = products.find((item) => item.id === line.productId)!; return <tr key={line.id}><td><strong>{product.name}</strong><small>{product.model}</small></td><td>{line.quantity}</td><td>{line.discount}%</td><td>{symbol}{calculateQuote([line], currency, products, currencyRates).total.toFixed(2)}</td></tr>; })}</tbody></table>
           <div className={styles.previewTotal}><span>合计（{currency}）</span><strong>{symbol}{totals.total.toFixed(2)}</strong></div>
           <div className={styles.quoteTerms}><strong>报价说明</strong><p>报价有效期 14 天；交期以订单确认时库存为准；正式折扣须完成内部审批。产品享受对应型号质保服务。</p></div>
@@ -290,7 +287,7 @@ export function QuotationView({ products = defaultProducts, initialHistory = def
 
 type AdminTab = "总览" | "用户权限" | "知识管理" | "数据质量" | "AI 日志";
 
-export function AdminView({ initialUsers = defaultAdminUsers, initialKnowledge = defaultKnowledgeEntries, initialLogs = defaultAiLogs, initialIssues = defaultQualityIssues, onToast }: { initialUsers?: AdminUser[]; initialKnowledge?: KnowledgeEntry[]; initialLogs?: AiLog[]; initialIssues?: QualityIssue[]; onToast: ToastFn }) {
+export function AdminView({ dashboard, initialUsers, initialKnowledge, initialLogs, initialIssues, onToast }: { dashboard: DashboardSummary; initialUsers: AdminUser[]; initialKnowledge: KnowledgeEntry[]; initialLogs: AiLog[]; initialIssues: QualityIssue[]; onToast: ToastFn }) {
   const [tab, setTab] = useState<AdminTab>("总览");
   const [users, setUsers] = useState(initialUsers);
   const [managedKnowledge, setManagedKnowledge] = useState(initialKnowledge);
@@ -321,7 +318,7 @@ export function AdminView({ initialUsers = defaultAdminUsers, initialKnowledge =
   return (
     <div className={styles.adminLayout}>
       <div className={styles.adminTabs} role="tablist" aria-label="管理后台栏目">{tabs.map((item) => <button role="tab" aria-selected={tab === item} className={tab === item ? styles.activeAdminTab : ""} onClick={() => setTab(item)} key={item}>{item}</button>)}</div>
-      {tab === "总览" && <AdminOverview />}
+      {tab === "总览" && <AdminOverview users={users} knowledge={managedKnowledge} logs={initialLogs} issues={issues} dashboard={dashboard} />}
       {tab === "用户权限" && (
         <section className={styles.adminPanel}>
           <div className={styles.sectionHead}><div><span>访问控制</span><h2>用户与权限</h2></div><button className={styles.primaryButton} onClick={inviteUser}><UserPlus size={15} /> 邀请用户</button></div>
@@ -350,23 +347,29 @@ export function AdminView({ initialUsers = defaultAdminUsers, initialKnowledge =
   );
 }
 
-function AdminOverview() {
-  const bars = [58, 72, 66, 84, 78, 91, 88];
+function AdminOverview({ users, knowledge, logs, issues, dashboard }: { users: AdminUser[]; knowledge: KnowledgeEntry[]; logs: AiLog[]; issues: QualityIssue[]; dashboard: DashboardSummary }) {
+  const activeUsers = users.filter((user) => user.status === "活跃").length;
+  const publishedKnowledge = knowledge.filter((entry) => entry.status === "已发布").length;
+  const publishedPercent = knowledge.length ? Math.round((publishedKnowledge / knowledge.length) * 100) : 0;
+  const dataCompleteness = dashboard.dataCompleteness;
+  const maxActivity = Math.max(1, ...dashboard.activitySeries.map((entry) => entry.value));
+  const bars = dashboard.activitySeries.length ? dashboard.activitySeries.map((entry) => Math.round((entry.value / maxActivity) * 92)) : [0];
+  const labels = dashboard.activitySeries.length ? dashboard.activitySeries.map((entry) => entry.label) : ["暂无"];
   return (
     <div className={styles.adminOverview}>
       <section className={styles.adminMetrics}>
-        <AdminMetric icon={UsersRound} label="活跃用户" value="18" delta="+12%" />
-        <AdminMetric icon={Sparkles} label="AI 问答" value="426" delta="+28%" />
-        <AdminMetric icon={Clock3} label="平均节省" value="2m 18s" delta="每次查询" />
-        <AdminMetric icon={CircleDollarSign} label="资料促成" value="31" delta="+7 本周" />
+        <AdminMetric icon={UsersRound} label="活跃用户" value={String(activeUsers)} delta={`共 ${users.length} 位`} />
+        <AdminMetric icon={Sparkles} label="AI 操作记录" value={String(logs.length)} delta="后端日志" />
+        <AdminMetric icon={BookOpen} label="已发布知识" value={String(publishedKnowledge)} delta={`共 ${knowledge.length} 条`} />
+        <AdminMetric icon={AlertTriangle} label="质量问题" value={String(issues.length)} delta="等待处理" />
       </section>
       <section className={styles.chartPanel}>
-        <div className={styles.sectionHead}><div><span>使用统计</span><h2>近 7 日团队使用量</h2></div><span className={styles.summaryBadge}>+24.6%</span></div>
-        <div className={styles.barChart}>{bars.map((height, index) => <div key={index}><span style={{ height: `${height}%` }} /><small>{["周六", "周日", "周一", "周二", "周三", "周四", "今天"][index]}</small></div>)}</div>
+        <div className={styles.sectionHead}><div><span>后端日志</span><h2>最近 AI 操作记录</h2></div><span className={styles.summaryBadge}>{logs.length} 条</span></div>
+        <div className={styles.barChart}>{bars.map((height, index) => <div key={`${labels[index]}-${index}`}><span style={{ height: `${height}%` }} /><small>{labels[index]}</small></div>)}</div>
       </section>
       <section className={styles.effectPanel}>
-        <div className={styles.sectionHead}><div><span>效果评估</span><h2>本月业务效果</h2></div></div>
-        <div className={styles.effectRows}><div><span>资料查找时间</span><strong>42 秒</strong><em>目标 &lt; 60 秒</em></div><div><span>回答采用率</span><strong>78%</strong><em>较上月 +9%</em></div><div><span>资料包打开率</span><strong>71%</strong><em>行业基准 54%</em></div><div><span>知识覆盖率</span><strong>86%</strong><em>待补 7 条</em></div></div>
+        <div className={styles.sectionHead}><div><span>实时质量</span><h2>动态数据完整度</h2></div></div>
+        <div className={styles.effectRows}><div><span>资料完整度</span><strong>{dataCompleteness}%</strong><em>按产品资料计算</em></div><div><span>知识发布率</span><strong>{publishedPercent}%</strong><em>{publishedKnowledge}/{knowledge.length} 已发布</em></div><div><span>用户启用率</span><strong>{users.length ? Math.round((activeUsers / users.length) * 100) : 0}%</strong><em>{activeUsers}/{users.length} 活跃</em></div><div><span>质量待办</span><strong>{issues.length}</strong><em>来自后端数据</em></div></div>
       </section>
     </div>
   );

@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeCustomerMessage,
   buildFollowupMessage,
-  crmCustomers,
   filterFollowupTasks,
-  followupTasks,
   getLatestInboundMessage,
   isTaskOverdue,
   recommendAssetsForProducts,
@@ -12,12 +10,15 @@ import {
   searchCustomers,
   toggleFollowupTask,
 } from "./crm";
+import { testAssets, testCustomers, testFollowups, testProducts } from "../test/fixtures";
 
 const referenceDate = "2026-09-04T14:00:00+08:00";
+const crmCustomers = testCustomers;
+const followupTasks = testFollowups;
 
 describe("CRM customer message analysis", () => {
   it("identifies intent, urgency, product and supporting assets", () => {
-    const result = analyzeCustomerMessage("18W 黑色轨道灯，服装店下周进场，今天能发吗？把参数表和黑色场景图一起发我。", "陈经理");
+    const result = analyzeCustomerMessage("18W 黑色轨道灯，服装店下周进场，今天能发吗？把参数表和黑色场景图一起发我。", "陈经理", testProducts, testAssets);
 
     expect(result.intent).toBe("资料索取");
     expect(result.intentLabel).toBe("资料 / 附件");
@@ -29,7 +30,7 @@ describe("CRM customer message analysis", () => {
   });
 
   it("keeps an unsupported message grounded", () => {
-    const result = analyzeCustomerMessage("紫色水晶风扇灯什么时候可以安装？");
+    const result = analyzeCustomerMessage("紫色水晶风扇灯什么时候可以安装？", undefined, testProducts, testAssets);
 
     expect(result.recommendedProducts).toHaveLength(0);
     expect(result.recommendedAssets).toHaveLength(0);
@@ -38,7 +39,7 @@ describe("CRM customer message analysis", () => {
   });
 
   it("ranks multiple products without mutating the catalog", () => {
-    const recommendations = recommendProductsForMessage("办公室低眩光筒灯，30W，今天要参数表");
+    const recommendations = recommendProductsForMessage("办公室低眩光筒灯，30W，今天要参数表", testProducts);
     const ids = recommendations.map(({ product }) => product.id);
 
     expect(ids[0]).toBe("beam-s30");
@@ -46,8 +47,8 @@ describe("CRM customer message analysis", () => {
   });
 
   it("orders recommended assets by product then useful asset type", () => {
-    const recommendations = recommendProductsForMessage("黑色轨道灯 18W");
-    const assets = recommendAssetsForProducts(recommendations, 4);
+    const recommendations = recommendProductsForMessage("黑色轨道灯 18W", testProducts);
+    const assets = recommendAssetsForProducts(recommendations, 4, testAssets);
 
     expect(assets.length).toBeGreaterThan(0);
     expect(assets[0]?.productId).toBe("arc-t18");
@@ -57,11 +58,11 @@ describe("CRM customer message analysis", () => {
 
 describe("CRM customer records", () => {
   it("searches company, contact, tags and context", () => {
-    expect(searchCustomers("陈经理")[0]?.id).toBe("cust-nova");
-    expect(searchCustomers("预算")[0]?.id).toBe("cust-nova");
-    expect(searchCustomers("报价中")[0]?.id).toBe("cust-nova");
-    expect(searchCustomers("未读").map((customer) => customer.id)).toEqual(["cust-nova", "cust-northstar"]);
-    expect(searchCustomers("不存在的客户")).toHaveLength(0);
+    expect(searchCustomers("陈经理", crmCustomers)[0]?.id).toBe("cust-nova");
+    expect(searchCustomers("预算", crmCustomers)[0]?.id).toBe("cust-nova");
+    expect(searchCustomers("报价中", crmCustomers)[0]?.id).toBe("cust-nova");
+    expect(searchCustomers("未读", crmCustomers).map((customer) => customer.id)).toEqual(["cust-nova", "cust-northstar"]);
+    expect(searchCustomers("不存在的客户", crmCustomers)).toHaveLength(0);
   });
 
   it("returns the latest inbound message without changing conversation order", () => {

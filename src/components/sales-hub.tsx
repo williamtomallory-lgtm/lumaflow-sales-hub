@@ -29,6 +29,7 @@ import {
   PackageCheck,
   Paperclip,
   Plus,
+  RefreshCw,
   Search,
   ScanSearch,
   Send,
@@ -42,55 +43,49 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useRef, useState, type FormEvent } from "react";
-import type { AppDataSnapshot } from "@/lib/data-snapshot";
+import { DASHBOARD_LABELS, DEMO_PROFILE, PRIMARY_NAV, QUICK_QUESTIONS, SECONDARY_NAV, VIEW_META, type StaticNavItem, type View } from "@/config/ui-static";
+import { useBackendData } from "@/hooks/use-backend-data";
+import { createProductViaApi } from "@/lib/client/backend-api";
+import type { DashboardSummary } from "@/lib/contracts/api";
+import type { AppDataSnapshot, DataSourceKind } from "@/lib/data-snapshot";
 import { type Asset, type Product } from "@/lib/catalog";
 import { answerQuestion, buildSalesMessage, searchProducts } from "@/lib/search";
 import { CustomersView, FollowupView, SalesAssistantView } from "./crm-views";
 import { AdminView, KnowledgeBaseView, QuotationView } from "./operations-views";
 
-type View = "overview" | "products" | "assets" | "knowledge" | "assistant" | "kit" | "salesAssistant" | "customers" | "quotation" | "followup" | "admin";
 type CatalogAsset = Asset & { productId: string; productName: string };
 
-type NavItem = { id: View; label: string; icon: LucideIcon; badge?: string; phase?: string };
+type NavItem = StaticNavItem & { icon: LucideIcon };
 
-const primaryNav: NavItem[] = [
-  { id: "overview", label: "工作台", icon: LayoutDashboard },
-  { id: "products", label: "产品中心", icon: Box },
-  { id: "assets", label: "资料中心", icon: FolderOpen },
-  { id: "knowledge", label: "知识库", icon: BookOpen },
-  { id: "assistant", label: "智能搜索", icon: ScanSearch, badge: "AI" },
-  { id: "kit", label: "销售资料包", icon: BriefcaseBusiness },
-  { id: "salesAssistant", label: "销售助手", icon: MessageCircleMore, badge: "AI" },
-];
-
-const secondaryNav: NavItem[] = [
-  { id: "customers", label: "客户与会话", icon: UsersRound },
-  { id: "quotation", label: "报价系统", icon: CircleDollarSign },
-  { id: "followup", label: "跟进提醒", icon: Clock3 },
-  { id: "admin", label: "管理后台", icon: BarChart3 },
-];
-
-const viewMeta: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
-  overview: { eyebrow: "9 月 4 日 · 星期五", title: "下午好，Junjun", subtitle: "这里是今天最值得你关注的产品与销售资料。" },
-  products: { eyebrow: "产品中心", title: "把每个型号讲清楚", subtitle: "型号、参数、场景、库存和资料都在同一个视图里。" },
-  assets: { eyebrow: "资料中心", title: "找到，选中，直接发", subtitle: "按产品归档的最新图片、参数表、证书与案例。" },
-  knowledge: { eyebrow: "知识库", title: "把团队经验变成共同资产", subtitle: "统一管理 FAQ、销售话术、产品知识、政策、案例和解析文档。" },
-  assistant: { eyebrow: "智能搜索", title: "自然语言、图片和附件，一处搜索", subtitle: "SKU 精确查找、参数筛选与语义问答都引用已审核数据。" },
-  kit: { eyebrow: "销售资料包", title: "十秒拼好一套客户资料", subtitle: "选择产品与附件，生成推荐话术并下载交付清单。" },
-  salesAssistant: { eyebrow: "销售助手", title: "读懂客户，再给出可审核的回复", subtitle: "识别客户意图，推荐产品与附件，生成可编辑、确认后待发送的回复。" },
-  customers: { eyebrow: "客户与会话", title: "每次沟通都带着完整上下文", subtitle: "客户档案、联系人、需求、聊天、历史报价和记忆统一管理。" },
-  quotation: { eyebrow: "报价系统 · CPQ", title: "准确报价，也能快速推进", subtitle: "价格阶梯、折扣、币种、审批、PDF 与版本历史完整联动。" },
-  followup: { eyebrow: "跟进系统", title: "不错过该推进的客户", subtitle: "未回复提醒、下一步行动、自动话术和销售任务集中处理。" },
-  admin: { eyebrow: "管理后台", title: "让知识、权限和 AI 持续可信", subtitle: "用户权限、数据质量、AI 日志、使用统计与效果评估。" },
+const navIcons: Record<View, LucideIcon> = {
+  overview: LayoutDashboard,
+  products: Box,
+  assets: FolderOpen,
+  knowledge: BookOpen,
+  assistant: ScanSearch,
+  kit: BriefcaseBusiness,
+  salesAssistant: MessageCircleMore,
+  customers: UsersRound,
+  quotation: CircleDollarSign,
+  followup: Clock3,
+  admin: BarChart3,
 };
 
-const quickQuestions = [
-  "18W 黑色轨道灯，服装店用，今天能发吗？",
-  "酒店餐厅适合哪款金色吊灯？",
-  "推荐一款低眩光的办公室筒灯",
-];
+const primaryNav: NavItem[] = PRIMARY_NAV.map((item) => ({ ...item, icon: navIcons[item.id] }));
+const secondaryNav: NavItem[] = SECONDARY_NAV.map((item) => ({ ...item, icon: navIcons[item.id] }));
 
-export function SalesHub({ initialData }: { initialData: AppDataSnapshot }) {
+export function SalesHub() {
+  const { response, loading, error, refresh } = useBackendData();
+  if (!response && loading) return <BackendState title="正在读取后端动态数据" detail="产品、库存、客户和报价尚未返回…" />;
+  if (!response || error) return <BackendState title="后端数据读取失败" detail={error ?? "返回格式不符合 API 契约"} action="重新读取" onAction={() => void refresh()} />;
+  return <SalesHubWorkspace initialData={response.data} dashboard={response.dashboard} generatedAt={response.meta.generatedAt} refreshing={loading} onRefresh={() => void refresh()} />;
+}
+
+function BackendState({ title, detail, action, onAction }: { title: string; detail: string; action?: string; onAction?: () => void }) {
+  return <main className="backend-state"><div className="brand-mark" aria-hidden="true"><span /></div><span>LumaFlow · Backend API v1</span><h1>{title}</h1><p>{detail}</p>{action && <button className="primary-button" onClick={onAction}><RefreshCw size={16} /> {action}</button>}</main>;
+}
+
+function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, onRefresh }: { initialData: AppDataSnapshot; dashboard: DashboardSummary; generatedAt: string; refreshing: boolean; onRefresh: () => void }) {
   const catalog = initialData.products;
   const catalogAssets = catalog.flatMap((product) => product.assets.map((asset) => ({ ...asset, productId: product.id, productName: product.name })));
   const [view, setView] = useState<View>("overview");
@@ -101,7 +96,12 @@ export function SalesHub({ initialData }: { initialData: AppDataSnapshot }) {
   const [crmCustomerId, setCrmCustomerId] = useState<string>();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
-  const meta = viewMeta[view];
+  const meta = VIEW_META[view];
+  const openFollowup = initialData.followupTasks.find((task) => task.status === "open");
+  const qualityIssue = initialData.qualityIssues[0];
+  const recentQuote = initialData.quoteHistory[0];
+  const notificationCount = Number(Boolean(openFollowup)) + Number(Boolean(qualityIssue)) + Number(Boolean(recentQuote));
+  const sourceLabel = initialData.source === "postgres" ? "PostgreSQL" : initialData.source === "json-fallback" ? "JSON 回退" : "JSON";
 
   function navigate(next: View) {
     setView(next);
@@ -142,14 +142,14 @@ export function SalesHub({ initialData }: { initialData: AppDataSnapshot }) {
 
         <div className="sidebar-card">
           <div className="sidebar-card-icon"><Zap size={16} fill="currentColor" /></div>
-          <strong>资料完整度 86%</strong>
-          <p>补齐 3 份产品证书，回答可信度会更高。</p>
+          <strong>资料完整度 {dashboard.dataCompleteness}%</strong>
+          <p>{dashboard.qualityIssueCount} 项数据问题等待处理。</p>
           <button onClick={() => navigate("assets")}>查看待补资料 <ArrowRight size={14} /></button>
         </div>
 
         <div className="profile-row">
-          <div className="avatar">JH</div>
-          <div><strong>Junjun Hu</strong><small>销售顾问</small></div>
+          <div className="avatar">{DEMO_PROFILE.initials}</div>
+          <div><strong>{DEMO_PROFILE.name}</strong><small>{DEMO_PROFILE.role} · 静态演示身份</small></div>
           <Settings size={17} />
         </div>
       </aside>
@@ -171,6 +171,7 @@ export function SalesHub({ initialData }: { initialData: AppDataSnapshot }) {
             <kbd>⌘ K</kbd>
           </div>
           <div className="topbar-actions">
+            <button className="data-source-button" data-testid="data-source" onClick={onRefresh} disabled={refreshing} title={`最后同步：${new Date(generatedAt).toLocaleString("zh-CN")}`}><span />动态数据 · {sourceLabel} <RefreshCw size={13} className={refreshing ? "spinning" : ""} /></button>
             <button className="icon-button notification-button" aria-label="消息" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Inbox size={19} /><span /></button>
             <button className="primary-button compact" onClick={() => navigate("kit")}><Plus size={17} /> 新建资料包</button>
           </div>
@@ -181,21 +182,21 @@ export function SalesHub({ initialData }: { initialData: AppDataSnapshot }) {
             <div><span className="eyebrow">{meta.eyebrow}</span><h1>{meta.title}</h1><p>{meta.subtitle}</p></div>
           </div>
 
-          {view === "overview" && <Overview products={catalog} onNavigate={navigate} onProduct={setSelectedProduct} onAsk={(question) => { setGlobalQuery(question); navigate("assistant"); }} />}
-          {view === "products" && <ProductsView products={catalog} initialQuery={globalQuery} onProduct={setSelectedProduct} onToast={showToast} />}
+          {view === "overview" && <Overview products={catalog} dashboard={dashboard} onNavigate={navigate} onProduct={setSelectedProduct} onAsk={(question) => { setGlobalQuery(question); navigate("assistant"); }} />}
+          {view === "products" && <ProductsView products={catalog} dataSource={initialData.source} initialQuery={globalQuery} onProduct={setSelectedProduct} onToast={showToast} />}
           {view === "assets" && <AssetsView assets={catalogAssets} onNavigate={navigate} onToast={showToast} />}
           {view === "knowledge" && <KnowledgeBaseView initialEntries={initialData.knowledgeEntries} onToast={showToast} />}
           {view === "assistant" && <AssistantView products={catalog} initialQuestion={globalQuery} onProduct={setSelectedProduct} onToast={showToast} onAddToKit={(id) => { setKitProductId(id); navigate("kit"); }} />}
           {view === "kit" && <SalesKitView products={catalog} initialProductId={kitProductId} onProduct={setSelectedProduct} onToast={showToast} />}
           {view === "salesAssistant" && <SalesAssistantView products={catalog} assets={catalogAssets} customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
           {view === "customers" && <CustomersView customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenCustomer={setCrmCustomerId} onAnalyzeCustomer={(customer) => { setCrmCustomerId(customer.id); navigate("salesAssistant"); }} onCreateQuote={() => navigate("quotation")} onToast={showToast} />}
-          {view === "quotation" && <QuotationView products={catalog} initialHistory={initialData.quoteHistory} currencyRates={initialData.currencyRates} onToast={showToast} />}
+          {view === "quotation" && <QuotationView products={catalog} customers={initialData.customers} initialHistory={initialData.quoteHistory} currencyRates={initialData.currencyRates} onToast={showToast} />}
           {view === "followup" && <FollowupView customers={initialData.customers} tasks={initialData.followupTasks} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
-          {view === "admin" && <AdminView initialUsers={initialData.adminUsers} initialKnowledge={initialData.knowledgeEntries} initialLogs={initialData.aiLogs} initialIssues={initialData.qualityIssues} onToast={showToast} />}
+          {view === "admin" && <AdminView dashboard={dashboard} initialUsers={initialData.adminUsers} initialKnowledge={initialData.knowledgeEntries} initialLogs={initialData.aiLogs} initialIssues={initialData.qualityIssues} onToast={showToast} />}
         </section>
       </main>
 
-      {notificationsOpen && <div className="notification-popover"><div><BellRing size={16} /><strong>3 条待处理</strong><button onClick={() => setNotificationsOpen(false)} aria-label="关闭通知"><X size={15} /></button></div><button onClick={() => { setNotificationsOpen(false); navigate("followup"); }}><span className="notification-dot urgent" /><p><strong>NOVA 服饰 3 天未回复</strong><small>建议今天 16:00 前跟进</small></p><ChevronRight size={14} /></button><button onClick={() => { setNotificationsOpen(false); navigate("admin"); }}><span className="notification-dot warn" /><p><strong>MOSS O8 证书即将过期</strong><small>剩余 21 天</small></p><ChevronRight size={14} /></button><button onClick={() => { setNotificationsOpen(false); navigate("quotation"); }}><span className="notification-dot" /><p><strong>1 份报价等待审批</strong><small>来自 Lin Chen</small></p><ChevronRight size={14} /></button></div>}
+      {notificationsOpen && <div className="notification-popover"><div><BellRing size={16} /><strong>{notificationCount} 条后端提醒</strong><button onClick={() => setNotificationsOpen(false)} aria-label="关闭通知"><X size={15} /></button></div>{openFollowup && <button onClick={() => { setNotificationsOpen(false); navigate("followup"); }}><span className="notification-dot urgent" /><p><strong>{openFollowup.company} · {openFollowup.title}</strong><small>{openFollowup.dueLabel}</small></p><ChevronRight size={14} /></button>}{qualityIssue && <button onClick={() => { setNotificationsOpen(false); navigate("admin"); }}><span className="notification-dot warn" /><p><strong>{qualityIssue.subject}</strong><small>{qualityIssue.severity}优先 · {qualityIssue.detail}</small></p><ChevronRight size={14} /></button>}{recentQuote && <button onClick={() => { setNotificationsOpen(false); navigate("quotation"); }}><span className="notification-dot" /><p><strong>{recentQuote.id} · {recentQuote.status}</strong><small>{recentQuote.customer} · {recentQuote.total}</small></p><ChevronRight size={14} /></button>}</div>}
       {selectedProduct && <ProductDrawer products={catalog} product={selectedProduct} onClose={() => setSelectedProduct(null)} onBuildKit={() => { setKitProductId(selectedProduct.id); setSelectedProduct(null); navigate("kit"); }} onAsk={() => { setGlobalQuery(`${selectedProduct.model} 有哪些参数和适用场景？`); setSelectedProduct(null); navigate("assistant"); }} />}
       <div className={`toast ${toast ? "toast-visible" : ""}`} role="status"><CheckCircle2 size={17} /> {toast}</div>
     </div>
@@ -208,12 +209,11 @@ function NavButton({ item, active, onClick }: { item: NavItem; active: boolean; 
     <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick} aria-current={active ? "page" : undefined}>
       <Icon size={18} /><span>{item.label}</span>
       {item.badge && <em>{item.badge}</em>}
-      {item.phase && <small>{item.phase}</small>}
     </button>
   );
 }
 
-function Overview({ products, onNavigate, onProduct, onAsk }: { products: Product[]; onNavigate: (view: View) => void; onProduct: (product: Product) => void; onAsk: (question: string) => void }) {
+function Overview({ products, dashboard, onNavigate, onProduct, onAsk }: { products: Product[]; dashboard: DashboardSummary; onNavigate: (view: View) => void; onProduct: (product: Product) => void; onAsk: (question: string) => void }) {
   return (
     <div className="overview-grid">
       <section className="hero-card">
@@ -229,16 +229,16 @@ function Overview({ products, onNavigate, onProduct, onAsk }: { products: Produc
         <div className="hero-visual" aria-hidden="true">
           <div className="glow-ring ring-one" /><div className="glow-ring ring-two" />
           <div className="lamp"><span className="lamp-head" /><span className="lamp-neck" /><span className="lamp-light" /></div>
-          <div className="floating-pill pill-one"><Check size={13} /> 已匹配 4 项参数</div>
-          <div className="floating-pill pill-two"><PackageCheck size={13} /> 库存 126</div>
+          <div className="floating-pill pill-one"><Check size={13} /> 已关联 {products[0].assets.length} 份资料</div>
+          <div className="floating-pill pill-two"><PackageCheck size={13} /> 库存 {products[0].stock}</div>
         </div>
       </section>
 
       <section className="metric-strip" aria-label="核心指标">
-        <Metric icon={Box} label="在售产品" value="5" note="1 款预售" tone="sand" />
-        <Metric icon={FolderOpen} label="可用资料" value="18" note="本周 +3" tone="blue" />
-        <Metric icon={Sparkles} label="今日问答" value="24" note="节省约 46 分钟" tone="green" />
-        <Metric icon={BriefcaseBusiness} label="已发资料包" value="9" note="打开率 78%" tone="rose" />
+        <Metric icon={Box} label={DASHBOARD_LABELS.activeProducts} value={String(dashboard.activeProducts.value)} note={dashboard.activeProducts.note} tone="sand" />
+        <Metric icon={FolderOpen} label={DASHBOARD_LABELS.assets} value={String(dashboard.assets.value)} note={dashboard.assets.note} tone="blue" />
+        <Metric icon={Sparkles} label={DASHBOARD_LABELS.aiEvents} value={String(dashboard.aiEvents.value)} note={dashboard.aiEvents.note} tone="green" />
+        <Metric icon={BriefcaseBusiness} label={DASHBOARD_LABELS.quotations} value={String(dashboard.quotations.value)} note={dashboard.quotations.note} tone="rose" />
       </section>
 
       <section className="panel products-panel">
@@ -251,7 +251,7 @@ function Overview({ products, onNavigate, onProduct, onAsk }: { products: Produc
       <section className="panel ask-panel">
         <PanelHeading eyebrow="快速问答" title="大家都在问" action="进入知识问答" onClick={() => onNavigate("assistant")} />
         <div className="question-list">
-          {quickQuestions.map((question, index) => (
+          {QUICK_QUESTIONS.map((question, index) => (
             <button key={question} onClick={() => onAsk(question)}>
               <span>{index + 1}</span><p>{question}</p><ArrowRight size={16} />
             </button>
@@ -262,9 +262,7 @@ function Overview({ products, onNavigate, onProduct, onAsk }: { products: Produc
       <section className="panel activity-panel">
         <PanelHeading eyebrow="知识动态" title="最近更新" />
         <div className="activity-list">
-          <Activity icon={FileSpreadsheet} tone="blue" title="ARC T18 参数表" detail="更新了光束角与显色指数" time="12 分钟前" />
-          <Activity icon={FileBadge} tone="green" title="LINE 系列 CE 证书" detail="资料状态已变为可发送" time="2 小时前" />
-          <Activity icon={FileImage} tone="rose" title="NOVA 服装店案例" detail="新增 8 张项目现场图" time="昨天" />
+          {dashboard.recentActivities.map((activity) => <Activity key={activity.id} icon={activity.kind === "ai" ? Sparkles : activity.kind === "quality" ? ShieldCheck : FileText} tone={activity.kind === "ai" ? "blue" : activity.kind === "quality" ? "rose" : "green"} title={activity.title} detail={activity.detail} time={activity.occurredAt} />)}
         </div>
       </section>
     </div>
@@ -303,7 +301,7 @@ function Activity({ icon: Icon, tone, title, detail, time }: { icon: LucideIcon;
   return <div className="activity"><span className={`activity-icon ${tone}`}><Icon size={17} /></span><div><strong>{title}</strong><p>{detail}</p></div><time>{time}</time></div>;
 }
 
-function ProductsView({ products, initialQuery, onProduct, onToast }: { products: Product[]; initialQuery: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
+function ProductsView({ products, dataSource, initialQuery, onProduct, onToast }: { products: Product[]; dataSource: DataSourceKind; initialQuery: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState("全部产品");
   const [catalog, setCatalog] = useState(products);
@@ -312,12 +310,27 @@ function ProductsView({ products, initialQuery, onProduct, onToast }: { products
   const categories = ["全部产品", ...new Set(catalog.map((product) => product.category))];
   const results = useMemo(() => searchProducts(query, catalog).filter(({ product }) => (category === "全部产品" || product.category === category) && (!stockOnly || product.stock > 0)), [query, category, catalog, stockOnly]);
 
-  function addProduct(product: Product) {
-    setCatalog((current) => [product, ...current]);
-    setCategory("全部产品");
-    setQuery(product.model);
-    setShowCreate(false);
-    onToast(`${product.model} 已加入产品中心`);
+  async function addProduct(product: Product) {
+    if (dataSource !== "postgres") {
+      setCatalog((current) => [product, ...current]);
+      setCategory("全部产品");
+      setQuery(product.model);
+      setShowCreate(false);
+      onToast(`${product.model} 已加入当前会话；JSON 种子文件未被修改`);
+      return;
+    }
+    try {
+      const { id: _temporaryId, ...input } = product;
+      void _temporaryId;
+      const created = await createProductViaApi(input);
+      setCatalog((current) => [created, ...current]);
+      setCategory("全部产品");
+      setQuery(created.model);
+      setShowCreate(false);
+      onToast(`${created.model} 已通过后端写入 PostgreSQL`);
+    } catch (error) {
+      onToast(error instanceof Error ? `保存失败：${error.message}` : "保存失败，请检查后端");
+    }
   }
 
   return (
@@ -360,23 +373,29 @@ function ProductCard({ product, matches, onClick }: { product: Product; matches:
   );
 }
 
-function ProductCreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: (product: Product) => void }) {
+function ProductCreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: (product: Product) => void | Promise<void> }) {
   const [form, setForm] = useState({ name: "", model: "", sku: "", category: "轨道灯", power: "18W", material: "压铸铝", dimensions: "", stock: "0", price: "299" });
-  function submit(event: FormEvent<HTMLFormElement>) {
+  const [saving, setSaving] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form.name.trim() || !form.model.trim() || !form.sku.trim()) return;
     const stock = Math.max(0, Number(form.stock) || 0);
     const price = Math.max(0, Number(form.price) || 0);
-    onCreate({
-      id: `custom-${Date.now()}`,
-      name: form.name.trim(), model: form.model.trim().toUpperCase(), sku: form.sku.trim().toUpperCase(), category: form.category, family: "自定义产品",
-      status: stock > 10 ? "在售" : stock > 0 ? "低库存" : "预售", power: form.power, lumens: "待补充", colorTemp: "待补充", material: form.material,
-      dimensions: form.dimensions || "待补充", colors: ["待补充"], scenarios: ["待补充"], supplier: "待补充", cost: 0, priceRange: `¥${price}`, moq: 1, stock,
-      leadTime: stock > 0 ? "现货，交期待确认" : "待确认到仓时间", warranty: "待补充", description: "新建产品，等待产品负责人补齐并审核参数。",
-      gradient: "linear-gradient(145deg,#dfe5df,#81968a)", accent: "#a8c2b2", assets: [],
-    });
+    setSaving(true);
+    try {
+      await onCreate({
+        id: `custom-${Date.now()}`,
+        name: form.name.trim(), model: form.model.trim().toUpperCase(), sku: form.sku.trim().toUpperCase(), category: form.category, family: "自定义产品",
+        status: stock > 10 ? "在售" : stock > 0 ? "低库存" : "预售", power: form.power, lumens: "待补充", colorTemp: "待补充", material: form.material,
+        dimensions: form.dimensions || "待补充", colors: ["待补充"], scenarios: ["待补充"], supplier: "待补充", cost: 0, priceRange: `¥${price}`, moq: 1, stock,
+        leadTime: stock > 0 ? "现货，交期待确认" : "待确认到仓时间", warranty: "待补充", description: "新建产品，等待产品负责人补齐并审核参数。",
+        gradient: "linear-gradient(145deg,#dfe5df,#81968a)", accent: "#a8c2b2", assets: [],
+      });
+    } finally {
+      setSaving(false);
+    }
   }
-  return <div className="form-modal-layer" role="dialog" aria-modal="true" aria-label="新增产品"><button className="form-modal-scrim" onClick={onClose} aria-label="关闭" /><form className="form-modal" onSubmit={submit}><div className="form-modal-head"><div><span>产品中心</span><h2>新增产品</h2></div><button type="button" onClick={onClose} aria-label="关闭"><X size={19} /></button></div><div className="form-grid"><label>产品名称<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：Nova 射灯" /></label><label>型号<input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="NOVA T20" /></label><label>SKU<input required value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} placeholder="LT-NOVA-T20-BK" /></label><label>品类<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>轨道灯</option><option>吊灯</option><option>磁吸灯</option><option>洗墙灯</option><option>户外灯</option><option>筒灯</option></select></label><label>功率<input value={form.power} onChange={(event) => setForm({ ...form, power: event.target.value })} /></label><label>材质<input value={form.material} onChange={(event) => setForm({ ...form, material: event.target.value })} /></label><label>尺寸<input value={form.dimensions} onChange={(event) => setForm({ ...form, dimensions: event.target.value })} placeholder="Ø62 × H138 mm" /></label><label>库存<input type="number" min="0" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} /></label><label>参考价格<input type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label></div><p className="form-note"><ShieldCheck size={14} /> 新产品会标记待补资料，发布前应完成参数与证书审核。</p><div className="form-modal-actions"><button type="button" className="outline-button" onClick={onClose}>取消</button><button className="primary-button" type="submit">保存产品</button></div></form></div>;
+  return <div className="form-modal-layer" role="dialog" aria-modal="true" aria-label="新增产品"><button className="form-modal-scrim" onClick={onClose} aria-label="关闭" /><form className="form-modal" onSubmit={submit}><div className="form-modal-head"><div><span>产品中心</span><h2>新增产品</h2></div><button type="button" onClick={onClose} aria-label="关闭"><X size={19} /></button></div><div className="form-grid"><label>产品名称<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：Nova 射灯" /></label><label>型号<input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="NOVA T20" /></label><label>SKU<input required value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} placeholder="LT-NOVA-T20-BK" /></label><label>品类<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>轨道灯</option><option>吊灯</option><option>磁吸灯</option><option>洗墙灯</option><option>户外灯</option><option>筒灯</option></select></label><label>功率<input value={form.power} onChange={(event) => setForm({ ...form, power: event.target.value })} /></label><label>材质<input value={form.material} onChange={(event) => setForm({ ...form, material: event.target.value })} /></label><label>尺寸<input value={form.dimensions} onChange={(event) => setForm({ ...form, dimensions: event.target.value })} placeholder="Ø62 × H138 mm" /></label><label>库存<input type="number" min="0" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} /></label><label>参考价格<input type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label></div><p className="form-note"><ShieldCheck size={14} /> 新产品会标记待补资料，发布前应完成参数与证书审核。</p><div className="form-modal-actions"><button type="button" className="outline-button" onClick={onClose} disabled={saving}>取消</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "正在保存…" : "保存产品"}</button></div></form></div>;
 }
 
 function AssetsView({ assets, onNavigate, onToast }: { assets: CatalogAsset[]; onNavigate: (view: View) => void; onToast: (message: string) => void }) {
@@ -457,7 +476,7 @@ function formatAssetSize(bytes: number) {
 }
 
 function AssistantView({ products, initialQuestion, onProduct, onToast, onAddToKit }: { products: Product[]; initialQuestion: string; onProduct: (product: Product) => void; onToast: (message: string) => void; onAddToKit: (productId: string) => void }) {
-  const starter = initialQuestion && initialQuestion.length < 90 ? initialQuestion : quickQuestions[0];
+  const starter = initialQuestion && initialQuestion.length < 90 ? initialQuestion : QUICK_QUESTIONS[0];
   const [input, setInput] = useState(starter);
   const [question, setQuestion] = useState(starter);
   const [attachment, setAttachment] = useState("");
@@ -508,7 +527,7 @@ function AssistantView({ products, initialQuestion, onProduct, onToast, onAddToK
         </div>
       </section>
       <aside className="assistant-side">
-        <div className="side-block"><span className="side-label">试试这样问</span>{quickQuestions.map((item) => <button key={item} onClick={() => { setInput(item); setQuestion(item); }}>{item}<ArrowRight size={14} /></button>)}</div>
+        <div className="side-block"><span className="side-label">试试这样问</span>{QUICK_QUESTIONS.map((item) => <button key={item} onClick={() => { setInput(item); setQuestion(item); }}>{item}<ArrowRight size={14} /></button>)}</div>
         <div className="side-block sources"><span className="side-label">本次引用</span>{result.product ? <><Source icon={FileSpreadsheet} title={`${result.product.model} 参数表`} meta="已审核 · v3.2" /><Source icon={PackageCheck} title="实时库存快照" meta="更新于 14:20" /><Source icon={FileBadge} title="质保与销售政策" meta="2026 版" /></> : <p className="no-source">没有可引用的内部资料</p>}</div>
         <div className="trust-note"><ShieldCheck size={17} /><p><strong>回答边界</strong><span>找不到依据时不会编造产品信息；最终价格仍以审批报价为准。</span></p></div>
       </aside>

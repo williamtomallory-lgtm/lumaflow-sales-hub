@@ -1,5 +1,3 @@
-import catalogSeed from "../data/catalog.json";
-
 export type Asset = {
   id: string;
   name: string;
@@ -43,11 +41,3 @@ export type KnowledgeArticle = {
   title: string;
   reads: number;
 };
-
-export const products = catalogSeed.products as Product[];
-
-export const allAssets = products.flatMap((product) =>
-  product.assets.map((asset) => ({ ...asset, productId: product.id, productName: product.name })),
-);
-
-export const knowledgeArticles = catalogSeed.knowledgeArticles as KnowledgeArticle[];

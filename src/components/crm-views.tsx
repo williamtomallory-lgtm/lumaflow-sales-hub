@@ -34,13 +34,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { allAssets as catalogAssets, products as catalogProducts, type Product } from "@/lib/catalog";
+import type { Product } from "@/lib/catalog";
 import {
   analyzeCustomerMessage,
   buildFollowupMessage,
-  crmCustomers,
   filterFollowupTasks,
-  followupTasks,
   formatQuoteAmount,
   getCustomerById,
   getLatestInboundMessage,
@@ -68,9 +66,9 @@ export type ReplyConfirmation = {
 };
 
 export type SalesAssistantViewProps = {
-  customers?: Customer[];
-  products?: Product[];
-  assets?: CrmAsset[];
+  customers: Customer[];
+  products: Product[];
+  assets: CrmAsset[];
   initialCustomerId?: string;
   initialMessage?: string;
   onConfirmReply?: (confirmation: ReplyConfirmation) => void;
@@ -80,7 +78,7 @@ export type SalesAssistantViewProps = {
 };
 
 export type CustomersViewProps = {
-  customers?: Customer[];
+  customers: Customer[];
   initialCustomerId?: string;
   onAnalyzeCustomer?: (customer: Customer) => void;
   onCreateQuote?: (customerId: string) => void;
@@ -89,15 +87,14 @@ export type CustomersViewProps = {
 };
 
 export type FollowupViewProps = {
-  customers?: Customer[];
-  tasks?: FollowupTask[];
+  customers: Customer[];
+  tasks: FollowupTask[];
   referenceDate?: Date | string;
   onOpenCustomer?: (customerId: string) => void;
   onTaskStatusChange?: (task: FollowupTask, status: FollowupTaskStatus) => void;
   onToast?: CrmToastHandler;
 };
 
-const fallbackCustomer = crmCustomers[0];
 const defaultReferenceDate = "2026-09-04T14:00:00+08:00";
 
 function cx(...names: Array<string | false | undefined>): string {
@@ -191,8 +188,8 @@ function CustomerSelect({ customers, value, onChange }: { customers: Customer[];
   return <label className={styles.selectField}><UserRound size={16} /><select value={value} onChange={(event) => onChange(event.target.value)} aria-label="选择客户">{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.company} · {customer.name}</option>)}</select><ChevronDown size={16} /></label>;
 }
 
-export function SalesAssistantView({ customers = crmCustomers, products = catalogProducts, assets = catalogAssets, initialCustomerId, initialMessage, onConfirmReply, onOpenCustomer, onOpenProduct, onToast }: SalesAssistantViewProps) {
-  const initialCustomer = getCustomerById(initialCustomerId ?? "", customers) ?? customers[0] ?? fallbackCustomer;
+export function SalesAssistantView({ customers, products, assets, initialCustomerId, initialMessage, onConfirmReply, onOpenCustomer, onOpenProduct, onToast }: SalesAssistantViewProps) {
+  const initialCustomer = getCustomerById(initialCustomerId ?? "", customers) ?? customers[0];
   const initialInbound = getLatestInboundMessage(initialCustomer);
   const [customerId, setCustomerId] = useState(initialCustomer.id);
   const [message, setMessage] = useState(initialMessage ?? initialInbound?.content ?? "");
@@ -291,7 +288,7 @@ export function SalesAssistantView({ customers = crmCustomers, products = catalo
   );
 }
 
-export function CustomersView({ customers = crmCustomers, initialCustomerId, onAnalyzeCustomer, onCreateQuote, onOpenCustomer, onToast }: CustomersViewProps) {
+export function CustomersView({ customers, initialCustomerId, onAnalyzeCustomer, onCreateQuote, onOpenCustomer, onToast }: CustomersViewProps) {
   const [customerState, setCustomerState] = useState(customers);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(initialCustomerId ?? customers[0]?.id ?? "");
@@ -368,7 +365,7 @@ function CustomerProfile({ customer, onAnalyze, onCreateQuote, onToast }: { cust
 
 const followupFilterLabels: Record<FollowupFilter, string> = { all: "全部任务", overdue: "已逾期", today: "今天", upcoming: "即将到期", completed: "已完成" };
 
-export function FollowupView({ customers = crmCustomers, tasks = followupTasks, referenceDate = defaultReferenceDate, onOpenCustomer, onTaskStatusChange, onToast }: FollowupViewProps) {
+export function FollowupView({ customers, tasks, referenceDate = defaultReferenceDate, onOpenCustomer, onTaskStatusChange, onToast }: FollowupViewProps) {
   const [taskState, setTaskState] = useState(tasks);
   const [filter, setFilter] = useState<FollowupFilter>("all");
   const [query, setQuery] = useState("");
@@ -399,7 +396,7 @@ export function FollowupView({ customers = crmCustomers, tasks = followupTasks, 
   }
 
   function createTask() {
-    const customer = customers[0] ?? fallbackCustomer;
+    const customer = customers[0];
     const task: FollowupTask = {
       id: `task-local-${Date.now()}`,
       customerId: customer.id,
