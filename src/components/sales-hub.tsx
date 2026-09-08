@@ -27,7 +27,6 @@ import {
   Menu,
   MessageCircleMore,
   PackageCheck,
-  Paperclip,
   Plus,
   RefreshCw,
   Search,
@@ -49,7 +48,8 @@ import { createProductViaApi } from "@/lib/client/backend-api";
 import type { DashboardSummary } from "@/lib/contracts/api";
 import type { AppDataSnapshot, DataSourceKind } from "@/lib/data-snapshot";
 import { type Asset, type Product } from "@/lib/catalog";
-import { answerQuestion, buildSalesMessage, searchProducts } from "@/lib/search";
+import { buildSalesMessage, searchProducts } from "@/lib/search";
+import { SmartSearchView as AssistantView } from "./smart-search-view";
 import { CustomersView, FollowupView, SalesAssistantView } from "./crm-views";
 import { AdminView, KnowledgeBaseView, QuotationView } from "./operations-views";
 
@@ -475,69 +475,6 @@ function formatAssetSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function AssistantView({ products, initialQuestion, onProduct, onToast, onAddToKit }: { products: Product[]; initialQuestion: string; onProduct: (product: Product) => void; onToast: (message: string) => void; onAddToKit: (productId: string) => void }) {
-  const starter = initialQuestion && initialQuestion.length < 90 ? initialQuestion : QUICK_QUESTIONS[0];
-  const [input, setInput] = useState(starter);
-  const [question, setQuestion] = useState(starter);
-  const [attachment, setAttachment] = useState("");
-  const attachmentRef = useRef<HTMLInputElement>(null);
-  const result = useMemo(() => answerQuestion(question, products), [question, products]);
-
-  async function copyAnswer() {
-    await navigator.clipboard.writeText(result.answer);
-    onToast("答案已复制，可以直接发给客户");
-  }
-
-  function searchAttachment(file?: File) {
-    if (!file) return;
-    const name = file.name.toLowerCase();
-    const inferred = name.includes("halo") || name.includes("hotel") || name.includes("酒店") ? "酒店餐厅适合的金色吊灯" : name.includes("line") || name.includes("磁吸") ? "黑色磁吸线条灯" : name.includes("beam") || name.includes("office") ? "办公室低眩光筒灯" : "18W 黑色轨道灯 服装店";
-    setAttachment(file.name);
-    setInput(inferred);
-    setQuestion(inferred);
-    onToast(`已读取附件“${file.name}”并匹配目录特征`);
-    if (attachmentRef.current) attachmentRef.current.value = "";
-  }
-
-  return (
-    <div className="assistant-layout">
-      <section className="assistant-main">
-        <div className="search-mode-bar"><span className="active"><Sparkles size={13} /> 自然语言</span><span>语义搜索</span><button onClick={() => attachmentRef.current?.click()}><Paperclip size={13} /> 图片 / 附件</button><input ref={attachmentRef} hidden type="file" accept="image/*,.pdf,.doc,.docx,.xlsx,.csv" onChange={(event) => searchAttachment(event.target.files?.[0])} /></div>
-        <div className="chat-date"><span>今天</span></div>
-        {attachment && <div className="attachment-chip"><FileImage size={14} /><span>{attachment}</span><button onClick={() => setAttachment("")} aria-label="移除附件"><X size={13} /></button></div>}
-        <div className="customer-message"><div className="avatar customer">客</div><div><small>客户问题</small><p>{question}</p></div></div>
-        <div className="ai-message">
-          <div className="ai-avatar"><Sparkles size={17} /></div>
-          <div className="answer-card">
-            <div className="answer-head"><div><strong>LumaFlow 回答</strong><span><ShieldCheck size={13} /> 基于已审核资料</span></div><em>{result.confidence}% 匹配</em></div>
-            <p>{result.answer}</p>
-            {result.product && (
-              <button className="answer-product" onClick={() => onProduct(result.product!)}>
-                <ProductArt product={result.product} />
-                <span><small>推荐产品</small><strong>{result.product.name}</strong><em>{result.product.model} · {result.product.power}</em></span>
-                <ChevronRight size={18} />
-              </button>
-            )}
-            <div className="answer-actions"><button onClick={copyAnswer}><Copy size={15} /> 复制答案</button><button onClick={() => result.product ? onAddToKit(result.product.id) : onToast("当前答案没有可加入的产品")}><Paperclip size={15} /> 加入资料包</button><button onClick={() => onToast(result.product ? "右侧已列出 3 项引用依据" : "当前没有可引用依据")}><History size={15} /> 查看依据</button></div>
-          </div>
-        </div>
-        <div className="chat-input-wrap">
-          <div className="chat-input"><Sparkles size={18} /><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (input.trim()) setQuestion(input); } }} aria-label="输入产品问题" placeholder="输入客户的问题…" /><button aria-label="发送问题" onClick={() => input.trim() && setQuestion(input)}><Send size={17} /></button></div>
-          <small>Enter 发送 · Shift + Enter 换行 · 支持 SKU、参数、语义和附件搜索</small>
-        </div>
-      </section>
-      <aside className="assistant-side">
-        <div className="side-block"><span className="side-label">试试这样问</span>{QUICK_QUESTIONS.map((item) => <button key={item} onClick={() => { setInput(item); setQuestion(item); }}>{item}<ArrowRight size={14} /></button>)}</div>
-        <div className="side-block sources"><span className="side-label">本次引用</span>{result.product ? <><Source icon={FileSpreadsheet} title={`${result.product.model} 参数表`} meta="已审核 · v3.2" /><Source icon={PackageCheck} title="实时库存快照" meta="更新于 14:20" /><Source icon={FileBadge} title="质保与销售政策" meta="2026 版" /></> : <p className="no-source">没有可引用的内部资料</p>}</div>
-        <div className="trust-note"><ShieldCheck size={17} /><p><strong>回答边界</strong><span>找不到依据时不会编造产品信息；最终价格仍以审批报价为准。</span></p></div>
-      </aside>
-    </div>
-  );
-}
-
-function Source({ icon: Icon, title, meta }: { icon: LucideIcon; title: string; meta: string }) {
-  return <div className="source-row"><span><Icon size={15} /></span><div><strong>{title}</strong><small>{meta}</small></div><CheckCircle2 size={14} /></div>;
-}
 
 function SalesKitView({ products, initialProductId, onProduct, onToast }: { products: Product[]; initialProductId: string; onProduct: (product: Product) => void; onToast: (message: string) => void }) {
   const [productId, setProductId] = useState(initialProductId);

@@ -1,0 +1,24 @@
+.smart-search-live .search-model-bar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.smart-search-live .search-model-bar label { display: grid; gap: 6px; flex: 1; min-width: 190px; font-size: 12px; font-weight: 700; }
+.smart-search-live .search-model-bar select { width: 100%; min-height: 40px; padding: 8px; border: 1px solid #b9ccbf; border-radius: 8px; background: white; color: var(--ink); font: inherit; }
+.smart-search-live .search-model-bar button, .smart-search-live .search-error button { display: inline-flex; align-items: center; gap: 6px; padding: 10px; border: 1px solid #cedbd2; border-radius: 8px; background: white; color: var(--green); cursor: pointer; font-size: 12px; }
+.smart-search-live .search-model-bar > span { padding: 10px 0; color: var(--green); font-size: 12px; }
+.smart-search-live .search-model-detail { font-size: 11px; color: #557163; overflow-wrap: anywhere; }
+.smart-search-live .search-capability-note { margin: 0 0 12px; color: #6a756d; font-size: 11px; line-height: 1.7; }
+.smart-search-live .search-empty { padding: 38px 16px; text-align: center; color: #567461; }
+.smart-search-live .search-empty h2 { font-size: 18px; }
+.smart-search-live .search-empty p { font-size: 13px; line-height: 1.8; }
+.smart-search-live .search-error { margin: 12px 0; padding: 12px; border: 1px solid #e6c5b8; border-radius: 8px; background: #fff8f2; color: #8a422b; font-size: 12px; overflow-wrap: anywhere; }
+.smart-search-live .search-error button { margin: 8px; }
+.smart-search-live .answer-card > p { font-size: 13px; overflow-wrap: anywhere; }
+.smart-search-live .search-answer-text { white-space: pre-wrap; }
+.smart-search-live .search-tool-trace { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 15px; }
+.smart-search-live .search-tool-trace span { font-size: 11px; background: #eef5f0; border-radius: 6px; padding: 6px 8px; }
+.smart-search-live .source-row { grid-template-columns: 26px minmax(0, 1fr); }
+.smart-search-live .source-row strong { font-size: 11px; overflow-wrap: anywhere; }
+.smart-search-live .source-row small { font-size: 10px; overflow-wrap: anywhere; }
+.smart-search-live .chat-input textarea, .smart-search-live .customer-message p { font-size: 13px; }
+.smart-search-live button:disabled { opacity: .45; cursor: not-allowed; }
+.smart-search-live .answer-head { flex-wrap: wrap; }
+.smart-search-live .answer-head strong, .smart-search-live .answer-head em { font-size: 12px; }
+.smart-search-live .trust-note span { font-size: 11px; }

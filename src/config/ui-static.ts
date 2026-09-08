@@ -34,7 +34,7 @@ export const VIEW_META: Record<View, { eyebrow: string; title: string; subtitle:
   products: { eyebrow: "产品中心", title: "把每个型号讲清楚", subtitle: "型号、参数、场景、库存和资料都在同一个视图里。" },
   assets: { eyebrow: "资料中心", title: "找到，选中，直接发", subtitle: "按产品归档的最新图片、参数表、证书与案例。" },
   knowledge: { eyebrow: "知识库", title: "把团队经验变成共同资产", subtitle: "统一管理 FAQ、销售话术、产品知识、政策、案例和解析文档。" },
-  assistant: { eyebrow: "智能搜索", title: "自然语言、图片和附件，一处搜索", subtitle: "SKU 精确查找、参数筛选与语义问答都引用已审核数据。" },
+  assistant: { eyebrow: "智能搜索 · 本地 Agent", title: "选择模型，查询产品与资料", subtitle: "文字问题发送到所选模型；产品、库存和资料引用来自本轮后端工具调用。" },
   kit: { eyebrow: "销售资料包", title: "十秒拼好一套客户资料", subtitle: "选择产品与附件，生成推荐话术并下载交付清单。" },
   salesAssistant: { eyebrow: "销售助手", title: "读懂客户，再给出可审核的回复", subtitle: "识别客户意图，推荐产品与附件，生成可编辑、确认后待发送的回复。" },
   customers: { eyebrow: "客户与会话", title: "每次沟通都带着完整上下文", subtitle: "客户档案、联系人、需求、聊天、历史报价和记忆统一管理。" },
