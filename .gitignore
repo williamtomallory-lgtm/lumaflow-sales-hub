@@ -26,3 +26,7 @@ pnpm-debug.log*
 
 # browser verification artifacts
 /artifacts/
+
+# Portable local model runtime, weights and logs (never publish these to Git).
+/.local-runtime/
+/.local-data/

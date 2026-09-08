@@ -37,6 +37,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, isToolUIPart } from "ai";
 import { useMemo, useState } from "react";
 import { useModelHealth } from "@/hooks/use-model-health";
+import { useModelCatalog } from "@/hooks/use-model-catalog";
 import type { SalesAgentUIMessage } from "@/lib/ai/sales-agent";
 import type { AssistantReasoningMode } from "@/lib/contracts/api";
 import type { Product } from "@/lib/catalog";
@@ -203,11 +204,14 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
   const [selectedAssets, setSelectedAssets] = useState<string[]>(analysis.recommendedAssets.slice(0, 4).map((asset) => asset.id));
   const [confirmed, setConfirmed] = useState(false);
   const [draftEdited, setDraftEdited] = useState(false);
-  const [reasoningMode, setReasoningMode] = useState<AssistantReasoningMode>("normal");
+  const [reasoningMode, setReasoningMode] = useState<AssistantReasoningMode>("fast");
+  const { models, modelProfileId, selectedModel, selectModel, loading: loadingModels, error: modelCatalogError, refresh: refreshModelCatalog } = useModelCatalog();
   const transport = useMemo(() => new DefaultChatTransport<SalesAgentUIMessage>({ api: "/api/v1/assistant/chat" }), []);
-  const { messages: modelMessages, sendMessage, status: modelStatus, error: modelError, stop, setMessages } = useChat<SalesAgentUIMessage>({ transport, throttle: 40 });
-  const { health: modelHealth, checking: checkingModel, refresh: refreshModelHealth } = useModelHealth();
+  const { messages: modelMessages, sendMessage, status: modelStatus, error: modelError, stop, setMessages, clearError } = useChat<SalesAgentUIMessage>({ transport, throttle: 40 });
+  const { health: modelHealth, checking: checkingModel, refresh: refreshModelHealth } = useModelHealth(modelProfileId);
   const modelBusy = modelStatus === "streaming" || modelStatus === "submitted";
+  const modelReady = Boolean(selectedModel && !loadingModels && !checkingModel && modelHealth?.reachable);
+  const selectedModelName = modelHealth?.model ?? selectedModel?.model ?? "等待读取模型";
   const customer = getCustomerById(customerId, customers) ?? initialCustomer;
 
   const modelText = useMemo(() => modelMessages
@@ -253,10 +257,28 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
     setMessage(nextMessage);
     updateLocalAnalysis(nextMessage, nextCustomer);
     setMessages([]);
+    clearError();
+  }
+
+  function changeModel(nextId: string) {
+    if (modelBusy || nextId === modelProfileId || !models.some((model) => model.id === nextId)) return;
+    selectModel(nextId);
+    setMessages([]);
+    clearError();
+    setDraft("");
+    setDraftEdited(false);
+    setConfirmed(false);
+    setSelectedAssets([]);
+    setReasoningMode("fast");
+  }
+
+  function refreshModels() {
+    refreshModelCatalog();
+    refreshModelHealth();
   }
 
   async function runModelAnalysis() {
-    if (modelBusy) return;
+    if (modelBusy || !modelReady) return;
     const cleanMessage = message.trim();
     if (!cleanMessage) {
       onToast?.("请先输入客户消息");
@@ -269,6 +291,7 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
       body: {
         mode: reasoningMode,
         customerId: customer.id,
+        modelProfileId,
       },
     });
   }
@@ -300,7 +323,7 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
       </div>
 
       <div className={styles.metricStrip} aria-label="销售助手指标">
-        <Metric icon={MessageSquareText} label="模型服务" value={modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "模拟" : "在线" : "离线"} detail={modelHealth?.model ?? "等待检测"} tone="gold" />
+        <Metric icon={MessageSquareText} label="模型服务" value={checkingModel ? "检测中" : modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "模拟" : "在线" : "离线"} detail={selectedModelName} tone="gold" />
         <Metric icon={Sparkles} label="本轮模型状态" value={modelBusy ? "生成中" : modelError ? "失败" : modelText ? "已完成" : "待开始"} detail={`${toolParts.length} 次受控工具调用`} tone="green" />
         <Metric icon={Paperclip} label="资料候选" value={String(analysis.recommendedAssets.length).padStart(2, "0")} detail="来自后端产品资料" tone="blue" />
         <Metric icon={CheckCircle2} label="人工确认" value={confirmed ? "已确认" : "待确认"} detail="模型不能自动发送" tone="rose" />
@@ -308,11 +331,23 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
 
       <div className={styles.assistantLayout}>
         <section className={cx(styles.card, styles.messageCard)}>
-          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>01 · 客户消息</span><h2>发送给 Qwen 销售 Agent</h2></div><button className={styles.demoPill} onClick={() => void refreshModelHealth()}><span /> {checkingModel ? "检测中" : modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "协议模拟已连接" : "Qwen 已连接" : "Qwen 未连接"}</button></div>
+          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>01 · 客户消息</span><h2>发送给销售 Agent</h2></div><span className={cx(styles.demoPill, !modelHealth?.reachable && styles.modelOffline)} role="status"><span /> {checkingModel ? "检测中" : modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接" : "模型未连接"}</span></div>
+          <div className={styles.modelPicker}>
+            <div className={styles.modelPickerRow}>
+              <label className={styles.modelSelect}><span>选择模型</span><select aria-label="选择模型" value={modelProfileId} disabled={modelBusy || loadingModels || models.length === 0} onChange={(event) => changeModel(event.target.value)}>{models.length ? models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.id === modelProfileId ? checkingModel ? "检测中" : modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "协议模拟" : "已连接" : "未连接" : model.reachable ? model.connectionKind === "protocol-mock" ? "协议模拟" : "已连接" : model.configured ? "未连接" : "未配置"}</option>) : <option value={modelProfileId}>{loadingModels ? "正在读取模型列表…" : "模型列表不可用"}</option>}</select></label>
+              <button className={styles.secondaryButton} disabled={modelBusy || loadingModels || checkingModel} onClick={refreshModels} aria-label="刷新模型连接"><RefreshCw size={14} /> 刷新</button>
+            </div>
+            {selectedModel && <p className={styles.modelDescription}>{selectedModel.description}</p>}
+            {modelProfileId === "local-qwen3-8b" && <div className={styles.modelCapabilities}><span>本地演示</span><span>文字对话</span><span>业务工具</span>{selectedModel?.contextTokens && <span>{selectedModel.contextTokens.toLocaleString()} tokens 上下文</span>}</div>}
+            <small className={styles.modelIdentifier}>当前模型：{selectedModelName}</small>
+            {modelCatalogError && <p className={styles.modelSetupHint} role="alert">{modelCatalogError}</p>}
+            {!checkingModel && !modelHealth?.reachable && <p className={styles.modelSetupHint}>{modelProfileId === "local-qwen3-8b" ? <>本地模型尚未启动。在项目目录运行 <code>npm run local:up</code>，完成后点击刷新。</> : "所选模型尚未连接，请检查后端模型配置和服务状态，然后点击刷新。"}</p>}
+            {modelBusy && <p className={styles.modelSetupHint}>模型正在生成，结束或停止后可以切换。</p>}
+          </div>
           <div className={styles.customerBanner}><Avatar customer={customer} /><div><strong>{customer.name} · {customer.company}</strong><span>{customer.role} · {customer.lastContactLabel}</span></div><button className={styles.linkButton} onClick={() => onOpenCustomer?.(customer.id)}>查看档案 <ArrowRight size={13} /></button><StageBadge stage={customer.stage} /></div>
           <label className={styles.textareaLabel} htmlFor="crm-customer-message">客户原消息</label>
           <textarea id="crm-customer-message" className={styles.messageTextarea} value={message} onChange={(event) => { setMessage(event.target.value); setConfirmed(false); }} placeholder="粘贴客户的微信、邮件或电话纪要…" />
-          <div className={styles.messageFooter}><span>{message.length} 字 · 模型档位 <select aria-label="模型推理档位" value={reasoningMode} onChange={(event) => setReasoningMode(event.target.value as AssistantReasoningMode)}><option value="fast">FAST</option><option value="normal">NORMAL</option><option value="deep">DEEP</option></select></span>{modelStatus === "streaming" || modelStatus === "submitted" ? <button className={styles.secondaryButton} onClick={() => void stop()}><X size={15} /> 停止</button> : <button className={styles.primaryButton} disabled={!modelHealth?.reachable} onClick={() => void runModelAnalysis()}><Sparkles size={15} /> 调用 Qwen 分析</button>}</div>
+          <div className={styles.messageFooter}><span>{message.length} 字 · 模型档位 <select aria-label="模型推理档位" value={reasoningMode} disabled={modelBusy} onChange={(event) => setReasoningMode(event.target.value as AssistantReasoningMode)}><option value="fast">FAST · 快速</option><option value="normal">NORMAL · 标准</option><option value="deep">DEEP · 深度</option></select></span>{modelBusy ? <button className={styles.secondaryButton} onClick={() => void stop()}><X size={15} /> 停止</button> : <button className={styles.primaryButton} disabled={!modelReady} onClick={() => void runModelAnalysis()}><Sparkles size={15} /> 调用模型分析</button>}</div>
           {modelError && <div className={styles.modelError}><AlertCircle size={14} /><span>{modelError.message}</span></div>}
           <div className={styles.tipLine}><ShieldCheck size={14} /><span>分析只引用当前产品资料，不会替客户承诺未经审批的正式价格。</span></div>
         </section>
@@ -338,7 +373,7 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
 
         <section className={cx(styles.card, styles.draftCard)}>
           <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>04 · 回复草稿</span><h2>业务员确认后再发送</h2></div>{confirmed ? <span className={styles.confirmedPill}><CheckCircle2 size={14} /> 已确认待发送</span> : <span className={styles.reviewPill}><AlertCircle size={14} /> 待人工确认</span>}</div>
-          <div className={styles.draftMeta}><div className={styles.aiMark}><Sparkles size={15} /></div><span><strong>{modelText ? modelHealth?.connectionKind === "protocol-mock" ? "协议模拟草稿" : "模型流式草稿" : "本地规则草稿"} · 可直接编辑</strong><small>{modelText ? `Agent 已调用 ${toolParts.length} 次受控工具` : "尚未调用模型，不冒充 AI 输出"}</small></span><button className={styles.iconButton} disabled={!modelHealth?.reachable || modelBusy} onClick={() => void runModelAnalysis()} aria-label="重新生成回复"><RefreshCw size={15} /></button></div>
+          <div className={styles.draftMeta}><div className={styles.aiMark}><Sparkles size={15} /></div><span><strong>{modelText ? modelHealth?.connectionKind === "protocol-mock" ? "协议模拟草稿" : "模型流式草稿" : draft ? "本地规则草稿" : "等待生成草稿"} · 可直接编辑</strong><small>{modelText ? `${selectedModelName} · Agent 已调用 ${toolParts.length} 次受控工具` : "尚未调用模型"}</small></span><button className={styles.iconButton} disabled={!modelReady || modelBusy} onClick={() => void runModelAnalysis()} aria-label="重新生成回复"><RefreshCw size={15} /></button></div>
           <textarea className={styles.draftTextarea} value={visibleDraft} onChange={(event) => { setDraft(event.target.value); setDraftEdited(true); setConfirmed(false); }} aria-label="可编辑回复草稿" />
           <div className={styles.draftActions}><button className={styles.secondaryButton} disabled={modelBusy} onClick={() => copyText(visibleDraft, onToast, "回复草稿已复制") }><Copy size={15} /> 复制草稿</button><button className={styles.primaryButton} disabled={modelBusy} onClick={confirmReply}><CheckCircle2 size={15} /> 确认本次草稿</button></div>
           <p className={styles.disclaimer}><ShieldCheck size={14} /> 当前确认保留在本页面，尚未保存到数据库；请复制后人工发送。</p>

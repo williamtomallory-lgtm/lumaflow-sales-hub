@@ -65,6 +65,14 @@ describe("local model backend options", () => {
     expect(body).toMatchObject({ temperature: 0.7, top_p: 0.8 });
   });
 
+  it.each(["fast", "normal", "deep"] as const)("keeps local Ollama thinking off with a laptop-sized budget in %s mode", async (mode) => {
+    const body = await serializedRequest("ollama", mode);
+    expect(body.reasoning_effort).toBe("none");
+    expect(body).not.toHaveProperty("chat_template_kwargs");
+    expect(body).not.toHaveProperty("top_k");
+    expect(body.max_tokens).toBeLessThanOrEqual(2_048);
+  });
+
   it("respects the configured ceiling for every mode and backend", () => {
     for (const backend of ["vllm", "openai-compatible"] as const) {
       for (const mode of ["fast", "normal", "deep"] as const) {

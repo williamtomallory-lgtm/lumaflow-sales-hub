@@ -1,7 +1,7 @@
 import { calculateQuote, productListPrice, quoteRequiresApproval } from "../business";
 import type { Product } from "../catalog";
 import type { AppDataSnapshot } from "../data-snapshot";
-import { searchProducts } from "../search";
+import { normalizeProductSearchValue, searchProducts } from "../search";
 
 export type ProductSearchInput = {
   query?: string;
@@ -54,6 +54,14 @@ function contains(value: string, expected?: string) {
   return !expected || value.toLowerCase().includes(expected.trim().toLowerCase());
 }
 
+function matchesColor(value: string, expected: string) {
+  // Natural-language model filters use basic colors, while catalog entries use shade names.
+  // Only widen generic color names; an explicit shade remains an exact substring filter.
+  const genericColor = expected.trim();
+  return contains(value, expected) || (["黑色", "白色", "金色", "绿色"].includes(genericColor)
+    && normalizeProductSearchValue(value).includes(genericColor));
+}
+
 export function searchProductRecords(input: ProductSearchInput, snapshot: AppDataSnapshot) {
   const unavailableFilters: string[] = [];
   const query = input.query?.trim() ?? "";
@@ -62,7 +70,7 @@ export function searchProductRecords(input: ProductSearchInput, snapshot: AppDat
     const power = numericPower(product);
     const listPrice = productListPrice(product);
     return contains(product.category, input.category)
-      && (!input.color || product.colors.some((color) => contains(color, input.color)))
+      && (!input.color || product.colors.some((color) => matchesColor(color, input.color!)))
       && (!input.cct || product.colorTemp.includes(String(input.cct)))
       && (input.powerMin === undefined || power >= input.powerMin)
       && (input.powerMax === undefined || power <= input.powerMax)

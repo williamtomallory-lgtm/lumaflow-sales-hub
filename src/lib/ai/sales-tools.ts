@@ -47,7 +47,7 @@ export const salesTools = {
     execute: async ({ query, sku }) => searchKnowledgeRecords(query, sku, await getDataSnapshot()),
   }),
   getProductAssets: tool({
-    description: "List approved product attachments such as specifications, images, certificates, and PDFs.",
+    description: "List product attachment metadata such as specifications, images, certificates, and PDFs. No download URLs are returned. List the actual file names and ask sales to select them in the page; never invent links, including placeholder (#) links.",
     inputSchema: z.object({ identifier: productIdentifier }).strict(),
     execute: async ({ identifier }) => getProductAssetRecords(identifier, await getDataSnapshot()),
   }),

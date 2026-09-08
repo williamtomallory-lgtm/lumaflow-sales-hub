@@ -241,6 +241,7 @@ export const productListQuerySchema = listQuerySchema.extend({ category: z.strin
 export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum(["open", "completed"]).optional() });
 
 export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep"]);
+export const assistantModelProfileIdSchema = z.enum(["local-qwen3-8b", "configured"]);
 
 const assistantUiMessageSchema = z.object({
   id: idSchema,
@@ -256,6 +257,7 @@ export const assistantRequestSchema = z.object({
   // Client-supplied assistant messages and tool outputs must never become trusted model history.
   messages: z.array(assistantUiMessageSchema).length(1),
   mode: assistantReasoningModeSchema.default("normal"),
+  modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
 });
 
@@ -266,6 +268,8 @@ export const assistantHealthResponseSchema = z.object({
     provider: z.literal("vllm-openai-compatible"),
     connectionKind: z.enum(["live", "protocol-mock"]),
     model: z.string(),
+    profileId: assistantModelProfileIdSchema,
+    contextTokens: z.number().int().positive().nullable(),
     latencyMs: z.number().int().nonnegative().nullable(),
   }),
   meta: z.object({
@@ -275,7 +279,29 @@ export const assistantHealthResponseSchema = z.object({
   }),
 });
 
+export const assistantModelOptionSchema = z.object({
+  id: assistantModelProfileIdSchema,
+  label: nonEmptyString,
+  model: nonEmptyString,
+  description: z.string(),
+  configured: z.boolean(),
+  reachable: z.boolean(),
+  connectionKind: z.enum(["live", "protocol-mock"]),
+  contextTokens: z.number().int().positive().nullable(),
+});
+
+export const assistantModelsResponseSchema = z.object({
+  data: z.object({
+    defaultProfileId: assistantModelProfileIdSchema,
+    models: z.array(assistantModelOptionSchema),
+  }),
+  meta: z.object({ apiVersion: z.literal("v1"), requestId: nonEmptyString }),
+});
+
 export type AssistantReasoningMode = z.infer<typeof assistantReasoningModeSchema>;
+export type AssistantModelProfileId = z.infer<typeof assistantModelProfileIdSchema>;
+export type AssistantModelOption = z.infer<typeof assistantModelOptionSchema>;
+export type AssistantModelsResponse = z.infer<typeof assistantModelsResponseSchema>;
 export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHealthResponse = z.infer<typeof assistantHealthResponseSchema>;
 

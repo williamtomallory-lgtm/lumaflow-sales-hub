@@ -1,8 +1,22 @@
 import "server-only";
 
+import { assistantModelProfileIdSchema, type AssistantModelProfileId } from "../contracts/api";
 import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS, type ModelBackend } from "./model-options";
 
 export const QWEN_PROVIDER_NAME = "vllm";
+export const DEFAULT_MODEL_PROFILE_ID: AssistantModelProfileId = "local-qwen3-8b";
+export const LOCAL_MODEL_ID = "lumaflow-qwen3-8b:latest";
+
+// Server-owned allowlist: requests select an ID, never a URL, credential, or model name.
+const MODEL_PROFILES = {
+  "local-qwen3-8b": {
+    label: "Qwen3 8B · 本机演示",
+    description: "Ollama 本地 4-bit 模型，8K 上下文；适用于 16GB 内存、8GB 显存笔记本。",
+  },
+  configured: {
+    description: "由服务器 LLM_* 环境变量配置的模型服务。",
+  },
+} as const;
 
 function configurationError(message: string) {
   const error = new Error(message);
@@ -10,24 +24,44 @@ function configurationError(message: string) {
   return error;
 }
 
-export function getModelConfig() {
+export function getModelConfig(profileId: AssistantModelProfileId = "configured") {
+  assistantModelProfileIdSchema.parse(profileId);
+  if (profileId === "local-qwen3-8b") {
+    return {
+      profileId,
+      label: MODEL_PROFILES[profileId].label,
+      description: MODEL_PROFILES[profileId].description,
+      baseURL: "http://127.0.0.1:11434/v1",
+      backend: "ollama" as ModelBackend,
+      maxOutputTokens: 2_048,
+      apiKey: "ollama-local",
+      model: LOCAL_MODEL_ID,
+      connectionKind: "live" as const,
+      contextTokens: 8_192,
+    };
+  }
   const baseURL = process.env.LLM_BASE_URL?.trim().replace(/\/$/, "") || null;
   const backend = process.env.LLM_BACKEND?.trim() || "vllm";
-  if (backend !== "vllm" && backend !== "openai-compatible") {
-    throw configurationError("LLM_BACKEND must be vllm or openai-compatible.");
+  if (backend !== "vllm" && backend !== "openai-compatible" && backend !== "ollama") {
+    throw configurationError("LLM_BACKEND must be vllm or openai-compatible or ollama.");
   }
   const configuredBudget = process.env.LLM_MAX_OUTPUT_TOKENS?.trim();
   const maxOutputTokens = configuredBudget ? Number(configuredBudget) : DEFAULT_MAX_OUTPUT_TOKENS;
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
     throw configurationError(`LLM_MAX_OUTPUT_TOKENS must be an integer from ${MIN_MAX_OUTPUT_TOKENS} to ${MAX_MAX_OUTPUT_TOKENS}.`);
   }
+  const model = process.env.LLM_MODEL?.trim() || "lumaflow-qwen";
   return {
+    profileId,
+    label: `${model} · 自定义服务`,
+    description: MODEL_PROFILES.configured.description,
     baseURL,
     backend: backend as ModelBackend,
     maxOutputTokens,
     apiKey: process.env.LLM_API_KEY?.trim() || "local",
-    model: process.env.LLM_MODEL?.trim() || "lumaflow-qwen",
+    model,
     connectionKind: process.env.LLM_CONNECTION_KIND === "protocol-mock" ? "protocol-mock" as const : "live" as const,
+    contextTokens: null,
   };
 }
 
@@ -36,18 +70,25 @@ export function getAssistantTimeoutMs() {
   return Number.isFinite(configured) ? Math.min(300_000, Math.max(5_000, configured)) : 120_000;
 }
 
-export function assertModelConfigured() {
-  const config = getModelConfig();
+export function assertModelConfigured(profileId?: AssistantModelProfileId) {
+  const config = getModelConfig(profileId);
   if (!config.baseURL) {
     throw configurationError("The local model is not configured. Set LLM_BACKEND, LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL on the server.");
   }
   return { ...config, baseURL: config.baseURL };
 }
 
-export async function getModelHealth() {
-  const config = getModelConfig();
+export async function getModelHealth(profileId?: AssistantModelProfileId) {
+  const config = getModelConfig(profileId);
+  const publicConfig = {
+    provider: "vllm-openai-compatible" as const,
+    connectionKind: config.connectionKind,
+    model: config.model,
+    profileId: config.profileId,
+    contextTokens: config.contextTokens,
+  };
   if (!config.baseURL) {
-    return { configured: false, reachable: false, provider: "vllm-openai-compatible" as const, connectionKind: config.connectionKind, model: config.model, latencyMs: null };
+    return { ...publicConfig, configured: false, reachable: false, latencyMs: null };
   }
   const startedAt = performance.now();
   try {
@@ -62,8 +103,41 @@ export async function getModelHealth() {
       ? payload.data.flatMap((item: unknown) => item && typeof item === "object" && "id" in item && typeof item.id === "string" ? [item.id] : [])
       : [];
     const reachable = advertisedModels.includes(config.model);
-    return { configured: true, reachable, provider: "vllm-openai-compatible" as const, connectionKind: config.connectionKind, model: config.model, latencyMs: Math.round(performance.now() - startedAt) };
+    return { ...publicConfig, configured: true, reachable, latencyMs: Math.round(performance.now() - startedAt) };
   } catch {
-    return { configured: true, reachable: false, provider: "vllm-openai-compatible" as const, connectionKind: config.connectionKind, model: config.model, latencyMs: null };
+    return { ...publicConfig, configured: true, reachable: false, latencyMs: null };
   }
+}
+
+export async function getModelOptions() {
+  return Promise.all(assistantModelProfileIdSchema.options.map(async (id) => {
+    try {
+      const config = getModelConfig(id);
+      const health = await getModelHealth(id);
+      return {
+        id,
+        label: config.label,
+        model: config.model,
+        description: config.description,
+        configured: health.configured,
+        reachable: health.reachable,
+        connectionKind: config.connectionKind,
+        contextTokens: config.contextTokens,
+      };
+    } catch (error) {
+      // A broken optional custom profile must not hide the independent local model.
+      if (id !== "configured" || !(error instanceof Error) || error.name !== "ModelNotConfiguredError") throw error;
+      const model = process.env.LLM_MODEL?.trim() || "lumaflow-qwen";
+      return {
+        id,
+        label: `${model} · 自定义服务`,
+        model,
+        description: "自定义服务配置无效，请检查服务器 LLM_* 环境变量。",
+        configured: false,
+        reachable: false,
+        connectionKind: process.env.LLM_CONNECTION_KIND === "protocol-mock" ? "protocol-mock" as const : "live" as const,
+        contextTokens: null,
+      };
+    }
+  }));
 }

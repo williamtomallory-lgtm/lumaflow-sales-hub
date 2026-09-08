@@ -13,6 +13,9 @@
     "verify:api": "node scripts/verify-backend.mjs",
     "verify:assistant": "node scripts/verify-assistant.mjs",
     "mock:vllm": "node scripts/mock-vllm.mjs",
+    "local:setup": "node scripts/local-model.mjs setup",
+    "local:up": "node scripts/local-model.mjs up",
+    "verify:local": "node scripts/verify-local-model.mjs",
     "db:setup": "node --env-file-if-exists=.env.local scripts/seed-postgres.mjs"
   },
   "dependencies": {

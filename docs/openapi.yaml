@@ -107,11 +107,48 @@ paths:
       responses:
         "200": { description: Updated follow-up }
         "404": { $ref: "#/components/responses/NotFound" }
+  /assistant/models:
+    get:
+      summary: List server-owned model profiles and connection status without URLs or keys
+      responses:
+        "200":
+          description: Model selector catalog (connection check, not an inference benchmark)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [defaultProfileId, models]
+                    properties:
+                      defaultProfileId: { const: local-qwen3-8b }
+                      models:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, label, model, description, configured, reachable, connectionKind, contextTokens]
+                          properties:
+                            id: { $ref: "#/components/schemas/ModelProfileId" }
+                            label: { type: string }
+                            model: { type: string }
+                            description: { type: string }
+                            configured: { type: boolean }
+                            reachable: { type: boolean }
+                            connectionKind: { type: string, enum: [live, protocol-mock] }
+                            contextTokens: { type: [integer, "null"] }
+                  meta: { type: object }
   /assistant/health:
     get:
-      summary: Check private Qwen/vLLM configuration and reachability
+      summary: Check the selected model configuration and advertised model ID
+      parameters:
+        - name: modelProfileId
+          in: query
+          schema: { $ref: "#/components/schemas/ModelProfileId" }
       responses:
         "200": { description: Model service health without exposing its URL or key }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
   /assistant/chat:
     post:
       summary: Stream the grounded sales agent and its controlled tool calls
@@ -146,10 +183,15 @@ paths:
                             type: { const: text }
                             text: { type: string, minLength: 1, maxLength: 20000 }
                 mode: { type: string, enum: [fast, normal, deep], default: normal }
+                modelProfileId: { $ref: "#/components/schemas/ModelProfileId" }
                 customerId: { type: string, maxLength: 120, description: Server resolves the authoritative customer context by id. }
       responses:
         "200":
           description: AI SDK UI message event stream containing text and tool parts
+          headers:
+            X-Model-Id: { schema: { type: string }, description: Actual server-selected model name }
+            X-Model-Profile: { schema: { $ref: "#/components/schemas/ModelProfileId" } }
+            X-Output-Policy: { schema: { const: attachment-names-v1 }, description: Line-buffered Markdown links converted to labels; current tools do not issue download URLs. }
           content:
             text/event-stream: {}
         "403": { description: Same-origin or bearer authorization failed }
@@ -197,6 +239,11 @@ components:
       in: query
       schema: { type: integer, minimum: 0, default: 0 }
   schemas:
+    ModelProfileId:
+      type: string
+      enum: [local-qwen3-8b, configured]
+      default: configured
+      description: Server-owned allowlist; omitting selects configured for backwards compatibility. UI explicitly defaults to local-qwen3-8b.
     ProductInput:
       type: object
       description: Full Product fields except the server-generated id. Runtime schema is authoritative.

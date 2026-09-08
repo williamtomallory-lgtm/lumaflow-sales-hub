@@ -1,6 +1,6 @@
 import type { AssistantReasoningMode } from "../contracts/api";
 
-export type ModelBackend = "vllm" | "openai-compatible";
+export type ModelBackend = "vllm" | "openai-compatible" | "ollama";
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 export const MIN_MAX_OUTPUT_TOKENS = 256;
@@ -14,6 +14,18 @@ export function getModelGenerationOptions(
 ) {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
     throw new RangeError(`maxOutputTokens must be an integer from ${MIN_MAX_OUTPUT_TOKENS} to ${MAX_MAX_OUTPUT_TOKENS}.`);
+  }
+
+  if (backend === "ollama") {
+    const budget = mode === "fast" ? 1_024 : mode === "normal" ? 1_536 : 2_048;
+    return {
+      temperature: 0.7,
+      topP: 0.8,
+      maxOutputTokens: Math.min(budget, maxOutputTokens),
+      // The OpenAI-compatible adapter serializes this as reasoning_effort.
+      // Ollama accepts "none" for Qwen3; no vLLM-only template options are sent.
+      providerOptions: { vllm: { reasoningEffort: "none" } },
+    };
   }
 
   if (backend === "openai-compatible") {

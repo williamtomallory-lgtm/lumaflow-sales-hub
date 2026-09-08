@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 type WireMessage = { role: string; content: string };
-type WireRequest = { messages: WireMessage[]; tools: Array<{ function: { name: string } }> };
+type WireRequest = { model: string; max_tokens: number; reasoning_effort?: string; messages: WireMessage[]; tools: Array<{ function: { name: string } }> };
 
 function completion(delta: object, finishReason: string) {
   const base = { id: "in-memory-test", object: "chat.completion.chunk", created: 1, model: "lumaflow-qwen" };
@@ -22,11 +22,11 @@ function toolCall(name: string, input: object) {
 }
 
 const userMessage = { id: "integration-user", role: "user", parts: [{ type: "text", text: "找18W黑色轨道灯，确认库存至少50件" }] };
-function request(messages: unknown[] = [userMessage], origin = "http://localhost:3000") {
+function request(messages: unknown[] = [userMessage], origin = "http://localhost:3000", extraBody: Record<string, unknown> = {}) {
   return new Request("http://localhost:3000/api/v1/assistant/chat", {
     method: "POST",
     headers: { origin, "content-type": "application/json" },
-    body: JSON.stringify({ messages, mode: "normal", customerId: "cust-nova" }),
+    body: JSON.stringify({ messages, mode: "normal", customerId: "cust-nova", ...extraBody }),
   });
 }
 
@@ -47,6 +47,68 @@ afterEach(() => {
 });
 
 describe("assistant route with an in-memory model protocol", () => {
+  it("sends each selected model to its own runtime and re-reads configured values for subsequent calls", async () => {
+    const upstreamRequests: Array<{ url: string; body: WireRequest }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as WireRequest;
+      upstreamRequests.push({ url: String(url), body });
+      return completion({ content: "你好，请描述需要的灯具。" }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const local = await POST(request([userMessage], undefined, { modelProfileId: "local-qwen3-8b" }));
+    expect(local.status).toBe(200);
+    expect(local.headers.get("x-model-profile")).toBe("local-qwen3-8b");
+    expect(local.headers.get("x-model-id")).toBe("lumaflow-qwen3-8b:latest");
+    expect(await local.text()).not.toContain('"type":"error"');
+
+    vi.stubEnv("LLM_BASE_URL", "http://configured-second.invalid/v1");
+    vi.stubEnv("LLM_MODEL", "second-configured-model");
+    const configured = await POST(request([userMessage], undefined, { modelProfileId: "configured" }));
+    expect(configured.status).toBe(200);
+    expect(configured.headers.get("x-model-id")).toBe("second-configured-model");
+    expect(await configured.text()).not.toContain('"type":"error"');
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[0]).toMatchObject({
+      url: "http://127.0.0.1:11434/v1/chat/completions",
+      body: { model: "lumaflow-qwen3-8b:latest", reasoning_effort: "none", max_tokens: 1_536 },
+    });
+    expect(upstreamRequests[1]).toMatchObject({
+      url: "http://configured-second.invalid/v1/chat/completions",
+      body: { model: "second-configured-model" },
+    });
+  });
+
+  it("rejects unknown model profile IDs before accessing the network", async () => {
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage], undefined, { modelProfileId: "http://attacker.invalid/v1" }));
+    expect(response.status).toBe(422);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not let request URLs, keys, or model names override the server-owned profile", async () => {
+    let destination = "";
+    let model = "";
+    let authorization = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      destination = String(url);
+      model = (JSON.parse(String(init?.body)) as WireRequest).model;
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return completion({ content: "ok" }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage], undefined, {
+      modelProfileId: "local-qwen3-8b",
+      baseURL: "http://attacker.invalid/v1",
+      apiKey: "attacker-key",
+      model: "attacker-model",
+    }));
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(destination).toBe("http://127.0.0.1:11434/v1/chat/completions");
+    expect(model).toBe("lumaflow-qwen3-8b:latest");
+    expect(authorization).toBe("Bearer ollama-local");
+  });
+
   it("loads skills, queries actual product and inventory tools, and streams their results", async () => {
     const upstreamRequests: WireRequest[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {

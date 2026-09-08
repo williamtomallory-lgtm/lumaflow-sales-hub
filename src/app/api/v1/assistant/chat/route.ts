@@ -5,6 +5,7 @@ import { assertModelConfigured, getAssistantTimeoutMs } from "@/lib/ai/model-con
 import { ApiHttpError, apiError, authorizeAssistantRequest, enforceRateLimit, readValidatedJson, requestId } from "@/lib/server/api-security";
 import { getDataSnapshot } from "@/lib/server/data-repository";
 import { loadSalesProfile } from "@/lib/ai/skill-profile";
+import { attachmentTextTransform } from "@/lib/ai/attachment-text";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,8 +16,8 @@ export async function POST(request: Request) {
   try {
     enforceRateLimit(request, 20);
     authorizeAssistantRequest(request);
-    assertModelConfigured();
     const body = await readValidatedJson(request, assistantRequestSchema);
+    const modelConfig = assertModelConfigured(body.modelProfileId);
     const profile = await loadSalesProfile();
     const snapshot = body.customerId ? await getDataSnapshot() : null;
     const customerRecord = body.customerId ? snapshot?.customers.find((customer) => customer.id === body.customerId) : undefined;
@@ -31,13 +32,17 @@ export async function POST(request: Request) {
     return await createAgentUIStreamResponse({
       agent: salesAgent,
       uiMessages: body.messages,
-      options: { mode: body.mode, customer, profile },
+      options: { mode: body.mode, customer, profile, modelProfileId: modelConfig.profileId },
       abortSignal: request.signal,
       timeout: { totalMs: getAssistantTimeoutMs() },
+      experimental_transform: attachmentTextTransform(),
       headers: {
         "Cache-Control": "no-store, max-age=0",
         "X-Content-Type-Options": "nosniff",
         "X-Request-Id": id,
+        "X-Model-Id": modelConfig.model,
+        "X-Model-Profile": modelConfig.profileId,
+        "X-Output-Policy": "attachment-names-v1",
         "X-Agent-Profile": `${profile.id}@${profile.version}`,
         "X-Agent-Skills": profile.skills.map((skill) => `${skill.id}@${skill.version}`).join(","),
       },

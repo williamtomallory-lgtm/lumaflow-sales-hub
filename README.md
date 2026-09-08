@@ -38,6 +38,23 @@ npm run dev
 打开 [http://localhost:3000](http://localhost:3000)。
 开发和生产启动命令默认只监听 `127.0.0.1`。多人/内网部署须先补登录、客户级权限和访问网关；当前同源检查不等同于身份认证。
 
+### Windows 笔记本：真实 8B 本地演示
+
+已在 16GB 内存、RTX 5060 Laptop 8GB 显存上实测 Qwen3-8B Q4_K_M。它是独立的 8B 文字/工具模型，不是 Qwen3.8-27B，不需要付费模型 API。完整说明见 [`docs/local-8b-demo.md`](docs/local-8b-demo.md)。
+
+```powershell
+npm ci
+npm run local:setup
+npm run build
+npm run local:up
+```
+
+首次安装联网下载官方 Ollama 和约 5.2GB 模型，存放在当前项目磁盘的 `.local-runtime/`、`.local-data/`（已忽略，不上传 Git）。之后启动只需 `npm run local:up`。更新代码后需重新 `npm run build`。
+
+打开销售助手，选择 **Qwen3 8B · 本机演示**，等待“模型已连接”，输入客户消息并点击“调用模型分析”。下拉框也保留服务器环境变量配置的自定义模型；选择会记在当前浏览器，切换时清空上一模型的草稿和轨迹，生成期间不能切换。
+
+`npm run verify:local` 会实际请求本机模型，核验产品查询、库存工具输出、流式回复与 GPU 模型加载信息，不使用协议模拟器。业务数据目前仍是 JSON 演示种子，不代表真实公司库存。
+
 ## 数据文件
 
 数据已经按所有权明确分离：
@@ -61,7 +78,8 @@ npm run dev
 - `GET/POST /api/v1/products`、`GET/PATCH /api/v1/products/{id}`
 - `GET /api/v1/customers`
 - `GET /api/v1/followups`、`PATCH /api/v1/followups/{id}`
-- `GET /api/v1/assistant/health`：Qwen/vLLM 配置与可达性
+- `GET /api/v1/assistant/models`：服务器允许选择的模型目录与连接状态
+- `GET /api/v1/assistant/health?modelProfileId=local-qwen3-8b`：所选模型配置与可达性
 - `GET /api/v1/assistant/skills`：从文件实际加载的 Agent/Skill 版本及工具清单
 - `POST /api/v1/assistant/chat`：Qwen 流式 Agent、工具调用和真实产品卡片
 
@@ -113,7 +131,9 @@ LLM_MAX_OUTPUT_TOKENS=8192
 
 `ai` 和 `@ai-sdk/*` 在这里是本机运行的代码库，不需要 Vercel 云部署、AI Gateway 或付费 OpenAI API。调用目标由服务器的 `LLM_BASE_URL` 决定。使用者需要自己安装模型及其运行环境，模型推理所需硬件和电力并非零成本。
 
-对于 Ollama、llama.cpp 等经过验证的兼容服务，设置 `LLM_BACKEND=openai-compatible` 和实际的 `/v1` 地址、模型名称。该模式不会发送 vLLM 专用参数；FAST/NORMAL/DEEP 仅调整输出预算，不承诺切换模型的 thinking。特定 Qwen3.8 量化版本、视觉和工具模板须另做实机验证，当前没有完成普通电脑上的真实 27B 推理验收。
+自定义 Ollama Qwen3 服务可设置 `LLM_BACKEND=ollama`；它通过 `reasoning_effort=none` 关闭 thinking。llama.cpp 等其他兼容服务使用 `LLM_BACKEND=openai-compatible` 和实际的 `/v1` 地址、模型名称，不发送 vLLM 专用参数。上述两种模式的 FAST/NORMAL/DEEP 仅调整输出预算，不代表切换 thinking；视觉和其他模型的工具模板须分别验证。当前没有完成普通电脑上的真实 27B 推理验收。
+
+浏览器只发送服务器白名单 `modelProfileId`（`local-qwen3-8b` / `configured`），不接收用户传入的模型 URL、Key 或任意模型名。未传该字段的旧 API 客户端仍使用 `configured`；页面默认显式选择本地 8B。响应头 `X-Model-Profile` 与 `X-Model-Id` 标明实际选择。
 
 当前 API 每次只接受一条用户文本；拒绝浏览器提交的 assistant/tool 历史，防止伪造数据库查询结果。后续多轮历史必须从服务端持久化会话加载。
 

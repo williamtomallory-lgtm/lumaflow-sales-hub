@@ -1,43 +1,38 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { assistantHealthResponseSchema, type AssistantHealthResponse } from "@/lib/contracts/api";
+import { assistantHealthResponseSchema, type AssistantHealthResponse, type AssistantModelProfileId } from "@/lib/contracts/api";
 
-export function useModelHealth() {
-  const [response, setResponse] = useState<AssistantHealthResponse>();
-  const [checking, setChecking] = useState(true);
-
-  const refresh = useCallback(async () => {
-    setChecking(true);
-    try {
-      const result = await fetch("/api/v1/assistant/health", { cache: "no-store", headers: { Accept: "application/json" } });
-      const payload: unknown = await result.json();
-      if (!result.ok) throw new Error(`Model health returned ${result.status}`);
-      setResponse(assistantHealthResponseSchema.parse(payload));
-    } catch {
-      setResponse(undefined);
-    } finally {
-      setChecking(false);
-    }
-  }, []);
+export function useModelHealth(modelProfileId: AssistantModelProfileId) {
+  const [revision, setRevision] = useState(0);
+  const [result, setResult] = useState<{
+    profileId: AssistantModelProfileId;
+    revision: number;
+    response?: AssistantHealthResponse;
+  }>();
 
   useEffect(() => {
-    let active = true;
-    async function loadInitialHealth() {
+    const controller = new AbortController();
+    async function loadHealth() {
       try {
-        const result = await fetch("/api/v1/assistant/health", { cache: "no-store", headers: { Accept: "application/json" } });
-        const payload: unknown = await result.json();
-        if (!result.ok) throw new Error(`Model health returned ${result.status}`);
-        if (active) setResponse(assistantHealthResponseSchema.parse(payload));
+        const response = await fetch(`/api/v1/assistant/health?modelProfileId=${encodeURIComponent(modelProfileId)}`, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(`Model health returned ${response.status}`);
+        const parsed = assistantHealthResponseSchema.parse(payload);
+        if (!controller.signal.aborted) setResult({ profileId: modelProfileId, revision, response: parsed });
       } catch {
-        if (active) setResponse(undefined);
-      } finally {
-        if (active) setChecking(false);
+        if (!controller.signal.aborted) setResult({ profileId: modelProfileId, revision });
       }
     }
-    void loadInitialHealth();
-    return () => { active = false; };
-  }, []);
+    void loadHealth();
+    return () => controller.abort();
+  }, [modelProfileId, revision]);
 
-  return { health: response?.data, checking, refresh };
+  const current = result?.profileId === modelProfileId && result.revision === revision;
+  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  return { health: current ? result.response?.data : undefined, checking: !current, refresh };
 }

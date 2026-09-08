@@ -28,6 +28,16 @@ describe("grounded sales-agent tools", () => {
     expect(assets.found && assets.assets.length).toBeGreaterThan(0);
   });
 
+  it("matches natural-language basic colors to catalog shades without dropping filters", () => {
+    for (const color of ["黑色", "白色"]) {
+      const result = searchProductRecords({ query: "18W轨道灯", category: "轨道灯", color, powerMin: 18, powerMax: 18 }, testSnapshot);
+      expect(result.products.map((product) => product.sku)).toEqual(["LT-ARC-T18-BK"]);
+    }
+    expect(searchProductRecords({ category: "轨道灯", color: "不存在的黑色" }, testSnapshot).products).toEqual([]);
+    expect(searchProductRecords({ category: "轨道灯", color: "哑光黑" }, testSnapshot).products).toEqual([]);
+    expect(searchProductRecords({ category: "轨道灯", color: "绿色" }, testSnapshot).products).toEqual([]);
+  });
+
   it("returns only published knowledge with explicit citations", () => {
     const published = searchKnowledgeRecords("轨道灯 光束角", undefined, testSnapshot);
     const pendingOnly = searchKnowledgeRecords("2026 产品册解析", undefined, testSnapshot);

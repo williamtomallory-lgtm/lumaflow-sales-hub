@@ -43,6 +43,8 @@ function aliases(value: string) {
     .replaceAll("苔藓绿", "绿色");
 }
 
+export { aliases as normalizeProductSearchValue };
+
 export function searchProducts(query: string, source: Product[]): SearchResult[] {
   if (!query.trim()) return source.map((product) => ({ product, score: 0, matches: [] }));
   const searchTerms = terms(query);
