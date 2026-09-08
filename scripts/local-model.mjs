@@ -12,7 +12,24 @@ const runtime = join(root, ".local-runtime", "ollama-0.33.3");
 const data = join(root, ".local-data");
 const executable = join(runtime, "ollama.exe");
 const baseUrl = "http://127.0.0.1:11434";
-const model = "lumaflow-qwen3-8b:latest";
+const LOCAL_MODELS = {
+  "8b": {
+    source: "qwen3:8b",
+    model: "lumaflow-qwen3-8b:latest",
+    modelfile: join(root, "agent", "Qwen3-8B.Modelfile"),
+    weightEstimate: "约 5.2GB",
+    description: "Qwen3-8B Q4_K_M",
+  },
+  "14b": {
+    // Keep the official Ollama tag. This avoids making an additional alias
+    // (and avoids a second copy of the base weights) for the larger model.
+    source: "qwen3:14b",
+    model: "qwen3:14b",
+    modelfile: null,
+    weightEstimate: "约 9GB",
+    description: "官方 Ollama Qwen3:14b Q4_K_M",
+  },
+};
 const archiveUrl = "https://github.com/ollama/ollama/releases/download/v0.33.3/ollama-windows-amd64.zip";
 const archiveHash = "52cb36a62e7e501f61514f60212dec7117b6c098811357585e02fffe32d2fcd7";
 const runtimeEnv = {
@@ -105,15 +122,37 @@ async function ensureService() {
 async function hasModel() {
   const response = await fetch(`${baseUrl}/api/tags`);
   if (!response.ok) throw new Error(`Cannot list local models: ${response.status}`);
-  return (await response.json()).models?.some((entry) => entry.name === model) === true;
+  return (await response.json()).models?.some((entry) => entry.name === modelConfig.model) === true;
 }
 
+function parseModelSelection(args = process.argv.slice(3)) {
+  let requested;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument.startsWith("--model=")) requested = argument.slice("--model=".length);
+    else if (argument === "--model") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--model requires 8b or 14b.");
+      requested = value;
+      index += 1;
+    }
+    else if (argument) throw new Error(`Unknown option: ${argument}`);
+  }
+  const modelKey = requested || "8b";
+  if (!Object.hasOwn(LOCAL_MODELS, modelKey)) throw new Error("--model must be 8b or 14b.");
+  if (modelKey === "14b") console.warn("Qwen3:14b is about 9GB and may exceed 8GB VRAM; Ollama will use CPU/GPU hybrid, which can be slow or exceed 16GB RAM.");
+  return LOCAL_MODELS[modelKey];
+}
+
+let modelConfig = LOCAL_MODELS["8b"];
+
 async function setup() {
+  modelConfig = parseModelSelection();
   await installRuntime();
   await ensureService();
-  if (await hasModel()) { console.log(`${model} is already installed.`); return; }
-  console.log("Downloading Qwen3-8B Q4_K_M (~5.2 GB). Ollama verifies the model blobs.");
-  const response = await fetch(`${baseUrl}/api/pull`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "qwen3:8b", stream: true }) });
+  if (await hasModel()) { console.log(`${modelConfig.model} is already installed.`); return; }
+  console.log(`Downloading ${modelConfig.description} (${modelConfig.weightEstimate}). Ollama verifies the model blobs.`);
+  const response = await fetch(`${baseUrl}/api/pull`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: modelConfig.source, stream: true }) });
   if (!response.ok || !response.body) throw new Error(`Model download failed: HTTP ${response.status}`);
   let pending = "";
   let last = 0;
@@ -134,17 +173,18 @@ async function setup() {
     }
   }
   if (!complete) throw new Error("Model download ended without a success acknowledgement. Rerun local:setup to resume.");
-  await run(executable, ["create", model, "-f", join(root, "agent", "Qwen3-8B.Modelfile")]);
-  if (!(await hasModel())) throw new Error("Created model was not advertised by Ollama.");
-  console.log(`${model} installed. Next: npm run local:up`);
+  if (modelConfig.modelfile) await run(executable, ["create", modelConfig.model, "-f", modelConfig.modelfile]);
+  if (!(await hasModel())) throw new Error("Downloaded model was not advertised by Ollama.");
+  console.log(`${modelConfig.model} installed. Next: npm run local:up -- --model=${modelConfig.model === "qwen3:14b" ? "14b" : "8b"}`);
 }
 
 async function up() {
+  modelConfig = parseModelSelection();
   await ensureService();
-  if (!(await hasModel())) throw new Error("Qwen3-8B demo model is missing. Run npm run local:setup first.");
+  if (!(await hasModel())) throw new Error(`${modelConfig.description} is missing. Run npm run local:setup -- --model=${modelConfig.model === "qwen3:14b" ? "14b" : "8b"} first.`);
   const next = join(root, "node_modules", "next", "dist", "bin", "next");
   if (!(await exists(join(root, ".next", "BUILD_ID")))) await run(process.execPath, [next, "build"], process.env);
-  console.log("Starting LumaFlow at http://localhost:3000. Select Qwen3-8B in the sales assistant.");
+  console.log(`Starting LumaFlow at http://localhost:3000. Select ${modelConfig.description} in the assistant.`);
   await run(process.execPath, [next, "start", "--hostname", "127.0.0.1"], process.env);
 }
 
@@ -152,7 +192,7 @@ try {
   const action = process.argv[2];
   if (action === "setup") await setup();
   else if (action === "up") await up();
-  else throw new Error("Usage: node scripts/local-model.mjs setup|up");
+  else throw new Error("Usage: node scripts/local-model.mjs setup|up [--model=8b|14b]");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

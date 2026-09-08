@@ -10,6 +10,9 @@ import { useModelHealth } from "@/hooks/use-model-health";
 import type { SalesAgentUIMessage } from "@/lib/ai/sales-agent";
 import type { Product } from "@/lib/catalog";
 import { projectAgentSearch } from "@/lib/client/agent-search-result";
+import { ModelRuntimeControls, InferenceReceiptView } from "./model-runtime-controls";
+import { parseInferenceReceipt, persistInferenceMode, savedInferenceMode, type InferenceMode, type InferenceReceipt } from "@/config/inference-ui";
+import { getInferenceProfileInputBudget } from "@/lib/ai/inference-policy";
 import "./smart-search.css";
 
 type Props = {
@@ -25,6 +28,9 @@ export function SmartSearchView({ products, initialQuestion, onProduct, onToast,
   const [question, setQuestion] = useState("");
   const [cancelled, setCancelled] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [mode, setMode] = useState<InferenceMode>(savedInferenceMode);
+  const [receipt, setReceipt] = useState<InferenceReceipt | null>(null);
+  const [exhausted, setExhausted] = useState(false);
   const submitting = useRef(false);
   const catalog = useModelCatalog();
   const { health, checking, refresh } = useModelHealth(catalog.modelProfileId);
@@ -35,17 +41,20 @@ export function SmartSearchView({ products, initialQuestion, onProduct, onToast,
       body: { ...body, id: rest.id, messages: messages.filter((message) => message.role === "user").slice(-1) },
     }),
     fetch: async (url, init) => {
-      const timeout = AbortSignal.timeout(150_000);
+      const timeout = AbortSignal.timeout(310_000);
       const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
       const response = await fetch(url, { ...init, signal });
       if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (typeof payload?.error?.message === "string") throw new Error(payload.error.message);
         const explanation = response.status === 429 ? "请求过于频繁，请稍后重试。" : response.status === 422 ? "问题格式不正确，请缩短内容后重试。" : "模型请求失败，请刷新连接后重试。";
         throw new Error(`${explanation}（HTTP ${response.status}）`);
       }
+      setReceipt(parseInferenceReceipt(response.headers));
       return response;
     },
   }), []);
-  const { messages, sendMessage, status, error, stop, setMessages, clearError } = useChat<SalesAgentUIMessage>({ transport, throttle: 40 });
+  const { messages, sendMessage, status, error, stop, setMessages, clearError } = useChat<SalesAgentUIMessage>({ transport, throttle: 40, onFinish: ({ finishReason }) => setExhausted(finishReason === "length") });
   const busy = status === "submitted" || status === "streaming";
   const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable);
   const result = useMemo(() => projectAgentSearch(messages), [messages]);
@@ -62,15 +71,21 @@ export function SmartSearchView({ products, initialQuestion, onProduct, onToast,
 
   async function submit(value = input) {
     if (submitting.current || busy || !ready || !value.trim()) return;
+    if (value.trim().length > getInferenceProfileInputBudget(mode)) {
+      onToast(`当前档位最多接受 ${getInferenceProfileInputBudget(mode).toLocaleString()} 字符，请缩小问题范围或选择 Instant。`);
+      return;
+    }
     submitting.current = true;
     setInput(value);
     setQuestion(value.trim());
     setCancelled(false);
     setElapsed(0);
+    setReceipt(null);
+    setExhausted(false);
     clearError();
     setMessages([]);
     try {
-      await sendMessage({ text: value.trim() }, { body: { modelProfileId: catalog.modelProfileId, mode: "fast" } });
+      await sendMessage({ text: value.trim() }, { body: { modelProfileId: catalog.modelProfileId, mode } });
     } finally {
       submitting.current = false;
     }
@@ -78,10 +93,19 @@ export function SmartSearchView({ products, initialQuestion, onProduct, onToast,
   function changeModel(value: string) {
     if (busy || submitting.current || value === catalog.modelProfileId) return;
     catalog.selectModel(value);
+    setMode("instant");
+    persistInferenceMode("instant");
+    setReceipt(null);
+    setExhausted(false);
     setMessages([]);
     clearError();
     setQuestion("");
     setCancelled(false);
+  }
+  function changeMode(next: InferenceMode) {
+    if (busy || submitting.current) return;
+    setMode(next); persistInferenceMode(next);
+    setMessages([]); clearError(); setQuestion(""); setCancelled(false); setReceipt(null); setExhausted(false);
   }
   async function copyAnswer() {
     try { await navigator.clipboard.writeText(result.text); onToast("已复制模型草稿，请核对后发送"); }
@@ -98,14 +122,18 @@ export function SmartSearchView({ products, initialQuestion, onProduct, onToast,
         <span role="status">{checking ? "检测中" : health?.reachable ? health.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接" : "模型未连接"}</span>
       </div>
       <p className="search-model-detail">当前模型：{selectedName} · 文字问答 / 受控业务工具 · 搜索入口 v2</p>
-      <p className="search-capability-note">图片识别和附件正文问答尚未接入；可用文字查询产品及资料目录。当前一次处理一个问题，不保存长期记忆。</p>
+      <ModelRuntimeControls models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} />
+      {catalog.modelProfileId === "local-qwen3-14b" && <p className="search-capability-note">{catalog.selectedModel?.description}首次加载较慢，日常使用建议优先选择 8B。</p>}
+      <p className="search-capability-note">可检索已人工确认的知识文件正文节选。图片识别和直接附件上传尚未接入；请在知识库上传文件。当前一次处理一个问题，不保存长期聊天记忆。</p>
       {catalog.error && <p className="search-error" role="alert">{catalog.error}</p>}
-      {!checking && !health?.reachable && <p className="search-error" role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地模型未连接：首次安装运行 npm run local:setup，启动运行 npm run local:up，再刷新连接。" : "自定义模型未连接，请先在服务器配置 LLM_*。当前电脑已安装的演示模型是 Qwen3 8B，可切回该项。"}</p>}
+      {!checking && !health?.reachable && <p className="search-error" role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地模型未连接：首次安装运行 npm run local:setup，启动运行 npm run local:up，再刷新连接。" : catalog.modelProfileId === "local-qwen3-14b" ? "14B 尚未就绪。安装命令：npm run local:setup -- --model=14b；完成后刷新连接。未安装时不能生成答案，可切回 8B。" : "自定义模型未连接，请先在服务器配置 LLM_*。当前电脑已安装的演示模型是 Qwen3 8B，可切回该项。"}</p>}
       {!question && <div className="search-empty"><Sparkles size={24} /><h2>向你选择的模型提问</h2><p>发送后才会生成答案。模型会按需调用产品、库存和资料工具；这里不再使用预填的规则回答。</p></div>}
       {question && <>
         <div className="customer-message"><div className="avatar customer">客</div><div><small>本轮问题</small><p>{question}</p></div></div>
         <div className="ai-message"><div className="ai-avatar"><Sparkles size={17} /></div><div className="answer-card">
-          <div className="answer-head"><strong>模型回答</strong><em>{busy ? `生成中 · ${elapsed} 秒` : error ? "生成失败" : cancelled ? "已停止 · 内容可能不完整" : result.text ? "已完成 · 待人工核对" : "未返回文字"}</em></div>
+          <div className="answer-head"><strong>模型回答</strong><em>{busy ? `生成中 · ${elapsed} 秒` : error ? "生成失败" : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "预算已用尽 · 答案可能不完整" : result.text ? "已完成 · 待人工核对" : "未返回文字"}</em></div>
+          <InferenceReceiptView receipt={receipt} />
+          {exhausted && <p role="alert">模型已用完本轮生成预算。请缩小问题范围或调整档位后重试；当前内容不作为完整答案。</p>}
           {busy && <p role="status">{tools.length ? `已观察到 ${tools.length} 次工具调用，正在整理答案…` : "正在等待本地模型，首次加载可能需要约一分钟…"} 可以点击停止。</p>}
           {error && <div className="search-error" role="alert">模型未能完成回答：{error.message === "An error occurred." ? "本地推理服务出错或超时，请刷新连接后重试。" : error.message}<button onClick={() => void submit(question)} disabled={!ready || busy}>重试本轮问题</button></div>}
           {result.text && <p className="search-answer-text" data-testid="model-answer">{result.text}</p>}

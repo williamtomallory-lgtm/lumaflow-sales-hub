@@ -66,6 +66,21 @@ export function authorizeAssistantRequest(request: Request) {
   }
 }
 
+// Private uploaded files have stricter reads than the demo catalog. This is a
+// loopback workstation boundary, not multi-user authentication.
+export function authorizeLocalKnowledgeRead(request: Request) {
+  const configuredToken = process.env.ASSISTANT_API_TOKEN;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (configuredToken && bearer && safeTokenEqual(bearer, configuredToken)) return;
+  const url = new URL(request.url);
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) throw new ApiHttpError(403, "LOCAL_ONLY", "知识库目前仅允许本机访问，远程部署前需配置身份权限。");
+  const origin = request.headers.get("origin");
+  const site = request.headers.get("sec-fetch-site");
+  if ((origin && origin !== url.origin) || (site && site !== "same-origin")) throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin knowledge access is not allowed.");
+  if (origin === url.origin || site === "same-origin") return;
+  throw new ApiHttpError(403, "ORIGIN_REQUIRED", "请从本机知识库页面访问文件，或使用已配置的 API token。");
+}
+
 export async function readValidatedJson<T>(request: Request, schema: ZodType<T>): Promise<T> {
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
   if (declaredLength > MAX_JSON_BYTES) throw new ApiHttpError(413, "PAYLOAD_TOO_LARGE", "JSON body exceeds 256 KB.");

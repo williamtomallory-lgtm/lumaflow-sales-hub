@@ -138,6 +138,9 @@ paths:
                             reachable: { type: boolean }
                             connectionKind: { type: string, enum: [live, protocol-mock] }
                             contextTokens: { type: [integer, "null"] }
+                            family: { type: string, description: Server-declared model family }
+                            parameterSizeB: { type: [number, "null"], description: Parameter scale in billions; null when not verified }
+                            supportedModes: { type: array, items: { type: string, enum: [instant, medium, high, extra-high, pro] } }
                   meta: { type: object }
   /assistant/health:
     get:
@@ -182,15 +185,34 @@ paths:
                           properties:
                             type: { const: text }
                             text: { type: string, minLength: 1, maxLength: 20000 }
-                mode: { type: string, enum: [fast, normal, deep], default: normal }
+                mode: { type: string, enum: [instant, medium, high, extra-high, pro, fast, normal, deep], default: instant, description: Current inference profiles plus three backwards-compatible legacy modes. Pro routes only to installed local 14B. }
                 modelProfileId: { $ref: "#/components/schemas/ModelProfileId" }
                 customerId: { type: string, maxLength: 120, description: Server resolves the authoritative customer context by id. }
+                agentRoleId:
+                  type: string
+                  enum: [sales-consultant, wechat-service, sales-review, moments-operator]
+                  description: Server-owned role instructions and tool allowlist. Role or document requests limit user text to 4000 characters.
+                knowledgeDocumentIds:
+                  type: array
+                  maxItems: 5
+                  uniqueItems: true
+                  default: []
+                  items: { type: string, format: uuid }
+                  description: Explicitly selected local files. Server loads bounded excerpts; user text plus excerpts share a 4000-character budget.
       responses:
         "200":
           description: AI SDK UI message event stream containing text and tool parts
           headers:
             X-Model-Id: { schema: { type: string }, description: Actual server-selected model name }
             X-Model-Profile: { schema: { $ref: "#/components/schemas/ModelProfileId" } }
+            X-Agent-Role: { schema: { type: string }, description: Actual selected role when supplied }
+            X-Knowledge-Coverage: { schema: { type: string }, description: URI-encoded JSON array of file IDs, names, includedCharacters, totalCharacters, truncated and hasText }
+            X-Requested-Model-Profile: { schema: { $ref: "#/components/schemas/ModelProfileId" } }
+            X-Inference-Mode: { schema: { type: string }, description: Actual inference mode after policy validation }
+            X-Thinking-Enabled: { schema: { type: string, enum: ["true", "false", "unknown"] } }
+            X-Output-Budget: { schema: { type: integer }, description: Actual completion ceiling including thinking and final answer }
+            X-Input-Budget: { schema: { type: integer }, description: Shared user and selected-file excerpt character budget }
+            X-Inference-Timeout-Ms: { schema: { type: integer } }
             X-Output-Policy: { schema: { const: attachment-names-v1 }, description: Line-buffered Markdown links converted to labels; current tools do not issue download URLs. }
           content:
             text/event-stream: {}
@@ -202,6 +224,100 @@ paths:
       summary: Inspect the application-owned skills actually loaded from local files
       responses:
         "200": { description: Agent identity, skill versions and tools. Memory persistence is explicitly not implemented. }
+  /knowledge:
+    get:
+      summary: List local uploads and archive statistics, excluding JSON demo knowledge
+      security: [{ assistantBearer: [] }, { localKnowledgeOrigin: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Offset"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: category
+          in: query
+          schema: { $ref: "#/components/schemas/KnowledgeCategory" }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, classified, archived] }
+      responses:
+        "200": { description: "data: safe file metadata and previews; summary: actual total, classified, pending, archived, category counts and storage bytes. No full text or filesystem paths." }
+        "403": { description: Local same-origin or assistant token required }
+    post:
+      summary: Persist an original file and classify supported extracted text with the selected model
+      security: [{ assistantBearer: [] }, { localKnowledgeOrigin: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: Any extension; maximum 25 MiB. Unsupported or unreadable files remain archive-only. }
+                modelProfileId: { $ref: "#/components/schemas/ModelProfileId" }
+      responses:
+        "201": { description: File saved. Model failure leaves the original and pending metadata for retry. }
+        "200": { description: Exact SHA-256 duplicate; existing record returned }
+        "413": { description: File, multipart stream, archive count or storage limit exceeded }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /knowledge/{id}:
+    parameters:
+      - $ref: "#/components/parameters/KnowledgeId"
+    get:
+      summary: Read safe file details, classification and bounded preview
+      security: [{ assistantBearer: [] }, { localKnowledgeOrigin: [] }]
+      responses:
+        "200": { description: Safe file metadata }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Manually correct or confirm classification; confirmed readable knowledge becomes searchable
+      security: [{ assistantBearer: [] }, { localKnowledgeOrigin: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                category: { $ref: "#/components/schemas/KnowledgeCategory" }
+                title: { type: string, minLength: 1, maxLength: 240 }
+                summary: { type: string, minLength: 1, maxLength: 1200 }
+                tags: { type: array, maxItems: 12, items: { type: string, minLength: 1, maxLength: 80 } }
+                status: { type: string, enum: [classified, archived] }
+      responses:
+        "200": { description: Saved manual classification; no CRM or PostgreSQL write }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /knowledge/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/KnowledgeId"
+    get:
+      summary: Download exact original bytes as attachment, never render user HTML inline
+      security: [{ assistantBearer: [] }, { localKnowledgeOrigin: [] }]
+      responses:
+        "200": { description: Original byte stream with attachment and nosniff headers }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /knowledge/{id}/classify:
+    parameters:
+      - $ref: "#/components/parameters/KnowledgeId"
+    post:
+      summary: Retry classification without overwriting a human-confirmed classification
+      security: [{ assistantBearer: [] }, { localKnowledgeOrigin: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                modelProfileId: { $ref: "#/components/schemas/ModelProfileId" }
+      responses:
+        "200": { description: Metadata with actual classified flag; original preserved on model failure }
+        "404": { $ref: "#/components/responses/NotFound" }
 components:
   securitySchemes:
     bearerAuth:
@@ -219,8 +335,18 @@ components:
       type: apiKey
       in: header
       name: Origin
-      description: Browser model calls must be same-origin. This is a local prototype protection, not user authentication.
+      description: Browser model calls must be same-origin on localhost, 127.0.0.1 or IPv6 loopback. This is a local prototype protection, not user authentication.
+    localKnowledgeOrigin:
+      type: apiKey
+      in: header
+      name: Origin
+      description: Localhost-only same-origin Origin or Sec-Fetch-Site=same-origin; rejects cross-site reads. ASSISTANT_API_TOKEN can authorize server calls. Not a multi-user authentication system.
   parameters:
+    KnowledgeId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Id:
       name: id
       in: path
@@ -241,9 +367,12 @@ components:
   schemas:
     ModelProfileId:
       type: string
-      enum: [local-qwen3-8b, configured]
+      enum: [local-qwen3-8b, local-qwen3-14b, configured]
       default: configured
       description: Server-owned allowlist; omitting selects configured for backwards compatibility. UI explicitly defaults to local-qwen3-8b.
+    KnowledgeCategory:
+      type: string
+      enum: [FAQ, 销售话术, 产品知识, 公司知识, 政策, 案例, 文档解析]
     ProductInput:
       type: object
       description: Full Product fields except the server-generated id. Runtime schema is authoritative.

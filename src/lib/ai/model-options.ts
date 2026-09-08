@@ -1,4 +1,5 @@
 import type { AssistantReasoningMode } from "../contracts/api";
+import { INFERENCE_PROFILE_SETTINGS, isCurrentInferenceProfile } from "./inference-policy";
 
 export type ModelBackend = "vllm" | "openai-compatible" | "ollama";
 
@@ -14,6 +15,34 @@ export function getModelGenerationOptions(
 ) {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
     throw new RangeError(`maxOutputTokens must be an integer from ${MIN_MAX_OUTPUT_TOKENS} to ${MAX_MAX_OUTPUT_TOKENS}.`);
+  }
+
+  // Current named profiles are provider-aware, while the legacy branches
+  // below intentionally retain their historical wire format.
+  if (isCurrentInferenceProfile(mode)) {
+    const settings = INFERENCE_PROFILE_SETTINGS[mode];
+    const thinkingEnabled = settings.thinkingEnabled;
+    const budget = Math.min(settings.maxOutputTokens, maxOutputTokens);
+    if (backend === "openai-compatible") {
+      return {
+        temperature: thinkingEnabled ? 1 : 0.7,
+        topP: thinkingEnabled ? 0.95 : 0.8,
+        maxOutputTokens: budget,
+      };
+    }
+    if (backend !== "vllm" && backend !== "ollama") throw new Error(`Unsupported model backend: ${backend}`);
+    return {
+      temperature: thinkingEnabled ? 1 : 0.7,
+      topP: thinkingEnabled ? 0.95 : 0.8,
+      maxOutputTokens: budget,
+      providerOptions: {
+        vllm: {
+          reasoningEffort: settings.providerReasoningEffort,
+          ...(backend === "vllm" ? { top_k: 20 } : {}),
+          ...(backend === "vllm" ? { chat_template_kwargs: { enable_thinking: thinkingEnabled } } : {}),
+        },
+      },
+    };
   }
 
   if (backend === "ollama") {

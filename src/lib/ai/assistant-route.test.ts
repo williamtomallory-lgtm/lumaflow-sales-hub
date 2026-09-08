@@ -47,6 +47,43 @@ afterEach(() => {
 });
 
 describe("assistant route with an in-memory model protocol", () => {
+  it("applies a current Qwen3 profile and exposes the resolved policy without streaming reasoning", async () => {
+    let upstreamBody: WireRequest | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      upstreamBody = JSON.parse(String(init?.body)) as WireRequest;
+      return completion({ reasoning_content: "private reasoning", content: "medium answer" }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage], undefined, { mode: "medium", modelProfileId: "local-qwen3-8b" }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-requested-model-profile")).toBe("local-qwen3-8b");
+    expect(response.headers.get("x-model-profile")).toBe("local-qwen3-8b");
+    expect(response.headers.get("x-inference-mode")).toBe("medium");
+    expect(response.headers.get("x-thinking-enabled")).toBe("true");
+    expect(response.headers.get("x-output-budget")).toBe("1536");
+    expect(response.headers.get("x-input-budget")).toBe("2000");
+    expect(response.headers.get("x-inference-timeout-ms")).toBe("180000");
+    const body = await response.text();
+    expect(upstreamBody).toMatchObject({ model: "lumaflow-qwen3-8b:latest", reasoning_effort: "medium", max_tokens: 1_536 });
+    expect(upstreamBody).not.toHaveProperty("chat_template_kwargs");
+    expect(body).toContain("medium answer");
+    expect(body).not.toContain("private reasoning");
+  });
+
+  it("routes Pro to 14B and fails closed when the exact model is not installed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/models")) return Response.json({ data: [{ id: "other-model" }] });
+      const body = JSON.parse(String(init?.body)) as WireRequest;
+      return completion({ content: body.model }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage], undefined, { mode: "pro", modelProfileId: "local-qwen3-8b" }));
+    expect(response.status).toBe(503);
+    expect((await response.json()).error.code).toBe("MODEL_NOT_AVAILABLE");
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/models"), expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/chat/completions"), expect.anything());
+  });
+
   it("sends each selected model to its own runtime and re-reads configured values for subsequent calls", async () => {
     const upstreamRequests: Array<{ url: string; body: WireRequest }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -83,6 +120,21 @@ describe("assistant route with an in-memory model protocol", () => {
     const response = await POST(request([userMessage], undefined, { modelProfileId: "http://attacker.invalid/v1" }));
     expect(response.status).toBe(422);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("actually applies the selected Agent role and restricts its tools", async () => {
+    const upstreamRequests: WireRequest[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      upstreamRequests.push(JSON.parse(String(init?.body)) as WireRequest);
+      return completion({ content: "运营文案草稿，仅供人工发布。" }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage], undefined, { agentRoleId: "moments-operator", modelProfileId: "local-qwen3-8b" }));
+    expect(response.headers.get("x-agent-role")).toBe("moments-operator");
+    await response.text();
+    expect(upstreamRequests[0].messages.filter((item) => item.role === "system").map((item) => item.content).join("\n")).toContain("朋友圈运营 Agent");
+    expect(upstreamRequests[0].tools.map((tool) => tool.function.name)).not.toContain("createQuoteDraft");
+    expect(upstreamRequests[0].tools.map((tool) => tool.function.name)).not.toContain("checkInventory");
   });
 
   it("does not let request URLs, keys, or model names override the server-owned profile", async () => {

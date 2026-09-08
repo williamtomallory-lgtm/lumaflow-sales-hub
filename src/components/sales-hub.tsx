@@ -50,8 +50,10 @@ import type { AppDataSnapshot, DataSourceKind } from "@/lib/data-snapshot";
 import { type Asset, type Product } from "@/lib/catalog";
 import { buildSalesMessage, searchProducts } from "@/lib/search";
 import { SmartSearchView as AssistantView } from "./smart-search-view";
-import { CustomersView, FollowupView, SalesAssistantView } from "./crm-views";
-import { AdminView, KnowledgeBaseView, QuotationView } from "./operations-views";
+import { CustomersView, FollowupView } from "./crm-views";
+import { AdminView, QuotationView } from "./operations-views";
+import { KnowledgeHub as KnowledgeBaseView } from "./knowledge-hub";
+import { AgentWorkspace as SalesAssistantView } from "./agent-workspace";
 
 type CatalogAsset = Asset & { productId: string; productName: string };
 

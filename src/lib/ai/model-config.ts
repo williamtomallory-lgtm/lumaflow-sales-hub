@@ -5,16 +5,34 @@ import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS
 
 export const QWEN_PROVIDER_NAME = "vllm";
 export const DEFAULT_MODEL_PROFILE_ID: AssistantModelProfileId = "local-qwen3-8b";
-export const LOCAL_MODEL_ID = "lumaflow-qwen3-8b:latest";
+export const LOCAL_QWEN3_8B_MODEL_ID = "lumaflow-qwen3-8b:latest";
+// Keep the official Ollama tag for 14B so setup can pull it without creating a
+// second alias or duplicating the roughly 9 GB base weight on disk.
+export const LOCAL_QWEN3_14B_MODEL_ID = "qwen3:14b";
+// Backwards-compatible name used by the existing verification script/tests.
+export const LOCAL_MODEL_ID = LOCAL_QWEN3_8B_MODEL_ID;
 
 // Server-owned allowlist: requests select an ID, never a URL, credential, or model name.
 const MODEL_PROFILES = {
   "local-qwen3-8b": {
     label: "Qwen3 8B · 本机演示",
     description: "Ollama 本地 4-bit 模型，8K 上下文；适用于 16GB 内存、8GB 显存笔记本。",
+    family: "Qwen3",
+    parameterSizeB: 8,
+    supportedModes: ["instant", "medium", "high", "extra-high"] as const,
+  },
+  "local-qwen3-14b": {
+    label: "Qwen3 14B · 本机演示",
+    description: "官方 Ollama Qwen3:14b；约 9GB Q4 权重，8K 上下文，8GB 显存将使用 CPU/GPU 混合，16GB 内存可能较慢或不足。",
+    family: "Qwen3",
+    parameterSizeB: 14,
+    supportedModes: ["instant", "medium", "high", "extra-high", "pro"] as const,
   },
   configured: {
     description: "由服务器 LLM_* 环境变量配置的模型服务。",
+    family: "custom",
+    parameterSizeB: null,
+    supportedModes: ["instant"] as const,
   },
 } as const;
 
@@ -26,16 +44,20 @@ function configurationError(message: string) {
 
 export function getModelConfig(profileId: AssistantModelProfileId = "configured") {
   assistantModelProfileIdSchema.parse(profileId);
-  if (profileId === "local-qwen3-8b") {
+  if (profileId === "local-qwen3-8b" || profileId === "local-qwen3-14b") {
+    const is14b = profileId === "local-qwen3-14b";
     return {
       profileId,
       label: MODEL_PROFILES[profileId].label,
       description: MODEL_PROFILES[profileId].description,
       baseURL: "http://127.0.0.1:11434/v1",
       backend: "ollama" as ModelBackend,
-      maxOutputTokens: 2_048,
+      // New thinking profiles need their full completion budget (thinking
+      // plus answer); old modes still apply their own historical ceilings in
+      // getModelGenerationOptions.
+      maxOutputTokens: 4_096,
       apiKey: "ollama-local",
-      model: LOCAL_MODEL_ID,
+      model: is14b ? LOCAL_QWEN3_14B_MODEL_ID : LOCAL_QWEN3_8B_MODEL_ID,
       connectionKind: "live" as const,
       contextTokens: 8_192,
     };
@@ -123,6 +145,9 @@ export async function getModelOptions() {
         reachable: health.reachable,
         connectionKind: config.connectionKind,
         contextTokens: config.contextTokens,
+        family: MODEL_PROFILES[id].family,
+        parameterSizeB: MODEL_PROFILES[id].parameterSizeB,
+        supportedModes: [...MODEL_PROFILES[id].supportedModes],
       };
     } catch (error) {
       // A broken optional custom profile must not hide the independent local model.
@@ -137,6 +162,9 @@ export async function getModelOptions() {
         reachable: false,
         connectionKind: process.env.LLM_CONNECTION_KIND === "protocol-mock" ? "protocol-mock" as const : "live" as const,
         contextTokens: null,
+        family: MODEL_PROFILES.configured.family,
+        parameterSizeB: MODEL_PROFILES.configured.parameterSizeB,
+        supportedModes: [...MODEL_PROFILES.configured.supportedModes],
       };
     }
   }));

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
 const baseUrl = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
-const profileId = "local-qwen3-8b";
-const modelId = "lumaflow-qwen3-8b:latest";
+const is14b = process.argv.includes("--model=14b");
+const profileId = is14b ? "local-qwen3-14b" : "local-qwen3-8b";
+const modelId = is14b ? "qwen3:14b" : "lumaflow-qwen3-8b:latest";
 const catalog = await (await fetch(`${baseUrl}/api/v1/assistant/models`)).json();
 const local = catalog.data.models.find((entry) => entry.id === profileId);
 assert.equal(local?.model, modelId);
@@ -50,8 +51,9 @@ for await (const chunk of response.body) {
 }
 assert.equal(events.some((event) => event.type === "error"), false, JSON.stringify(events.filter((event) => event.type === "error")));
 const calls = events.filter((event) => event.type === "tool-input-available");
-// Exact-SKU lookup can legitimately use getProductDetails instead of fuzzy search.
-const hasProductLookup = calls.some((event) => ["searchProducts", "getProductDetails"].includes(event.toolName));
+// An exact-SKU inventory result already carries the authoritative SKU and model.
+// Recommendation mode below still requires search, details and asset lookups.
+const hasProductLookup = calls.some((event) => ["searchProducts", "getProductDetails", "checkInventory"].includes(event.toolName));
 if (!hasProductLookup || !calls.some((event) => event.toolName === "checkInventory")) {
   console.error("Unexpected real-model trace:", JSON.stringify(events.filter((event) => event.type !== "tool-input-delta"), null, 2));
 }

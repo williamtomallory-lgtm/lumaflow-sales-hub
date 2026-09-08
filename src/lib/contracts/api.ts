@@ -240,8 +240,12 @@ export const listQuerySchema = z.object({
 export const productListQuerySchema = listQuerySchema.extend({ category: z.string().trim().max(80).optional() });
 export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum(["open", "completed"]).optional() });
 
-export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep"]);
-export const assistantModelProfileIdSchema = z.enum(["local-qwen3-8b", "configured"]);
+// `fast|normal|deep` are retained for API/script compatibility. The five
+// named profiles are the current UI contract and are intentionally separate
+// from provider-native reasoning labels.
+export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "instant", "medium", "high", "extra-high", "pro"]);
+export const assistantInferenceProfileSchema = z.enum(["instant", "medium", "high", "extra-high", "pro"]);
+export const assistantModelProfileIdSchema = z.enum(["local-qwen3-8b", "local-qwen3-14b", "configured"]);
 
 const assistantUiMessageSchema = z.object({
   id: idSchema,
@@ -256,9 +260,11 @@ export const assistantRequestSchema = z.object({
   // Until conversation history is persisted on the server, only a fresh user turn is accepted.
   // Client-supplied assistant messages and tool outputs must never become trusted model history.
   messages: z.array(assistantUiMessageSchema).length(1),
-  mode: assistantReasoningModeSchema.default("normal"),
+  mode: assistantReasoningModeSchema.default("instant"),
   modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
+  agentRoleId: z.enum(["sales-consultant", "wechat-service", "sales-review", "moments-operator"]).optional(),
+  knowledgeDocumentIds: z.array(z.string().uuid()).max(5).refine((ids) => new Set(ids).size === ids.length, "Duplicate document IDs").default([]),
 });
 
 export const assistantHealthResponseSchema = z.object({
@@ -288,6 +294,11 @@ export const assistantModelOptionSchema = z.object({
   reachable: z.boolean(),
   connectionKind: z.enum(["live", "protocol-mock"]),
   contextTokens: z.number().int().positive().nullable(),
+  // Defaults keep older model-catalog fixtures valid while new clients can
+  // use explicit family/size/capability metadata for model selection.
+  family: z.string().trim().min(1).default("unknown"),
+  parameterSizeB: z.number().positive().nullable().default(null),
+  supportedModes: z.array(assistantInferenceProfileSchema).default(["instant"]),
 });
 
 export const assistantModelsResponseSchema = z.object({
@@ -299,6 +310,7 @@ export const assistantModelsResponseSchema = z.object({
 });
 
 export type AssistantReasoningMode = z.infer<typeof assistantReasoningModeSchema>;
+export type AssistantInferenceProfile = z.infer<typeof assistantInferenceProfileSchema>;
 export type AssistantModelProfileId = z.infer<typeof assistantModelProfileIdSchema>;
 export type AssistantModelOption = z.infer<typeof assistantModelOptionSchema>;
 export type AssistantModelsResponse = z.infer<typeof assistantModelsResponseSchema>;

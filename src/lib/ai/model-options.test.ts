@@ -73,6 +73,14 @@ describe("local model backend options", () => {
     expect(body.max_tokens).toBeLessThanOrEqual(2_048);
   });
 
+  it("keeps the optional 14B profile within its conservative laptop output ceiling", () => {
+    const config = getModelConfig("local-qwen3-14b");
+    for (const mode of ["fast", "normal", "deep"] as const) {
+      expect(getModelGenerationOptions(mode, config.backend, config.maxOutputTokens).maxOutputTokens)
+        .toBeLessThanOrEqual(4_096);
+    }
+  });
+
   it("respects the configured ceiling for every mode and backend", () => {
     for (const backend of ["vllm", "openai-compatible"] as const) {
       for (const mode of ["fast", "normal", "deep"] as const) {

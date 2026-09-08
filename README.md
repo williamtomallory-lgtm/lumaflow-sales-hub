@@ -1,17 +1,17 @@
 # LumaFlow Sales Hub
 
-面向照明销售团队的产品知识、客户协作与报价工作台。当前版本把“客户咨询 → 找产品与资料 → 生成待审回复 → 报价 → 跟进 → 管理复盘”做成一个无需外部 AI Key 即可完整运行的本地演示闭环。
+面向照明销售团队的本地知识库与销售 Agent 工作台。支持本机 Qwen3 8B / 14B 推理，不需要付费模型 API；产品、库存、CRM 与报价当前仍包含演示数据，不等于已接通公司的生产系统。
 
-产品目标是可自行部署、可持续积累的本地销售 Agent。两张业务截图对应的 Agent/Skill 拆解、长期记忆、数据库、部署和验收方案见 [`docs/local-agent-blueprint.md`](docs/local-agent-blueprint.md)。当前已经接通模型协议与业务 Skill；永久客户记忆、真实工作簿导入和完整 CRM 写入仍待实现。
+产品目标是可自行部署、可持续积累的本地销售 Agent。本轮知识归档、角色工作台与安全边界见 [`docs/knowledge-agent-workspace.md`](docs/knowledge-agent-workspace.md)。长期记忆、数据库和部署规划见 [`docs/local-agent-blueprint.md`](docs/local-agent-blueprint.md)。原文件和分类结果可以持久积累；自动客户记忆、工作簿到 CRM 的结构化导入、完整 CRM 写入仍待实现。
 
 ## 已实现
 
 - 产品中心：结构化管理产品、型号、SKU、参数、材质、尺寸、场景、供应商、成本、MOQ、库存、状态与关联产品，支持筛选和 PostgreSQL 新增 API
 - 资料中心：统一管理图片、尺寸图、参数表、PDF、证书、案例、视频与说明书，支持搜索、上传、下载和版本历史
-- 知识库：覆盖 FAQ、销售话术、产品/公司知识、政策与案例，支持新建、版本草稿和 TXT/CSV/Markdown/DOCX/PDF 服务端正文解析
+- 知识库：任意扩展名原文件本地保存，TXT/CSV/Markdown/JSON/PDF/DOCX/XLSX/PPTX 等可读正文自动分类；真实数量、分类分布、解析状态可视化；支持下载原件、分类重试和人工确认。图片、音视频及未知格式目前仅归档，不假装理解
 - 智能搜索：直接选择本地或已配置模型，提交文字问题，展示真实流式回答、工具返回的产品及本轮来源；支持停止、失败重试和连续独立提问。图片识别与附件正文问答尚未接入
 - 销售资料包：组合图片、参数、PDF、证书、案例和推荐话术，支持复制、系统分享以及真实 ZIP 生成
-- 销售助手：分析客户消息的意图和紧急度，推荐产品与附件，生成可编辑回复，并在人工确认后记录为待发送
+- 销售助手：直接选择产品销售顾问、微信客服、销售复盘、朋友圈运营四种角色，选择 8B / 14B 模型及最多五个知识库文件；真实流式输出，显示本轮正文覆盖范围。微信使用导出的短文本记录或已上传文件，不自动登录、读取微信数据库、发送消息或发朋友圈
 - 客户与会话：客户档案、联系人、聊天记录、需求、历史报价和上下文记忆集中管理，并可跳转销售助手或 CPQ
 - 报价系统（CPQ）：价格库、数量阶梯、手动折扣、多币种、超限审批、版本保存、实时预览和 PDF 下载
 - 跟进系统：未回复/逾期/今日/即将到期筛选、任务创建与完成、下一步话术、客户档案联动
@@ -51,7 +51,15 @@ npm run local:up
 
 首次安装联网下载官方 Ollama 和约 5.2GB 模型，存放在当前项目磁盘的 `.local-runtime/`、`.local-data/`（已忽略，不上传 Git）。之后启动只需 `npm run local:up`。更新代码后需重新 `npm run build`。
 
-打开 **智能搜索**，顶部应显示“选择模型，查询产品与资料”和“搜索入口 v2”。选择 **Qwen3 8B · 本机演示**，等待“模型已连接”，输入问题并发送。销售助手也保留模型选择和“调用模型分析”入口。下拉框中的自定义模型需要先配置服务器环境变量，并不代表已安装第二个模型；选择会记在当前浏览器，切换时清空上一模型的草稿和轨迹，生成期间不能切换。
+打开 **智能搜索**，顶部应显示“选择模型，查询产品与资料”和“搜索入口 v2”。选择 **Qwen3 8B · 本机演示**，等待“模型已连接”，输入问题并发送。**销售助手**显示“选一个角色，开始工作”，选择角色后点击“交给…”。自定义模型需要先配置服务器环境变量；模型选择会记在当前浏览器，切换时清空上一模型的草稿和轨迹，生成期间不能切换。
+
+可选安装较大的 14B 模型：`npm run local:setup -- --model=14b`。完成后在页面选择 **Qwen3 14B · 本机演示**；8GB 显存下会使用 CPU/GPU 混合加载，16GB 内存比较紧张，默认仍推荐使用 8B。已在此笔记本上实测 14B 的真实工具调用和回答，不代表任意长任务都能流畅执行。
+
+### 模型、Size 与推理档位
+
+智能搜索和销售助手中点击 **模型与 Size**，可选择模型系列与 8B / 14B 参数规模。五种工作档位分别是 Instant、Medium、High、Extra High 和 Pro；它们是 LumaFlow 自己的本地调度策略，不是付费套餐或 Qwen 原生五档。Pro 明确使用本机 14B，不会静默改用收费服务。生成期间不可切换，切换后清空旧答案，实际模型和预算由响应头回传显示。
+
+各档真实参数、输入限制与验收说明见 [`docs/inference-modes.md`](docs/inference-modes.md)。Size 不是答案长度，较大参数规模或更多思考预算不构成准确率保证。
 
 如果还看到旧标题“自然语言、图片和附件，一处搜索”，请确认最新代码已重新构建、重启服务，再强制刷新页面。旧智能搜索曾使用本地规则直接拼答案，不能作为真实模型验收；新入口不会预填答案或伪造引用，失败时也不会用规则答案替代模型。
 
@@ -62,6 +70,8 @@ npm run local:up
 数据已经按所有权明确分离：
 
 - `src/config/ui-static.ts`：前端发布时即可确定的导航、页面文案、推荐问题和静态演示身份
+- `src/config/agent-roles.ts`：前端静态角色名称、说明与输入提示；后端角色指令和工具权限位于 `src/lib/ai/agent-roles.ts`
+- `.local-data/knowledge/`：真实上传原件和分类元数据（Git 忽略，需自行备份），由知识库 API 读取；不会混入 Git 中的演示 JSON
 - `/api/v1/bootstrap`：产品、库存、客户、报价、跟进、日志与统计等后端动态数据的唯一页面入口
 - `src/lib/server/json-data.ts`：带 `server-only` 保护的 JSON 读取器，浏览器不能直接引用
 
@@ -84,6 +94,9 @@ npm run local:up
 - `GET /api/v1/assistant/health?modelProfileId=local-qwen3-8b`：所选模型配置与可达性
 - `GET /api/v1/assistant/skills`：从文件实际加载的 Agent/Skill 版本及工具清单
 - `POST /api/v1/assistant/chat`：Qwen 流式 Agent、工具调用和真实产品卡片
+- `GET/POST /api/v1/knowledge`：真实本地文件目录、统计与上传分类
+- `GET/PATCH /api/v1/knowledge/{id}`：文件详情与人工确认
+- `GET /api/v1/knowledge/{id}/download`、`POST /api/v1/knowledge/{id}/classify`：下载原件与重试分类
 
 架构、数据库与安全设计见 [`docs/backend-architecture.md`](docs/backend-architecture.md)，机器可读接口契约见 [`docs/openapi.yaml`](docs/openapi.yaml)。
 
@@ -100,7 +113,7 @@ npm run dev
 
 应用启动后访问 [http://localhost:3000/api/data-source](http://localhost:3000/api/data-source)，`source` 为 `postgres` 表示页面正在读取 PostgreSQL；未配置连接时为 `json`。连接异常时默认安全回退为 `json-fallback`，生产环境可设置 `POSTGRES_REQUIRED=true` 禁止回退。
 
-持久化写操作默认关闭。接好身份系统前，可为同源开发环境设置 `DEMO_WRITES_ENABLED=true`；服务器间调用可配置 `API_WRITE_TOKEN`。写 API 只写 PostgreSQL 并同步记录审计事件，绝不会改写 Git 中的 JSON 文件。
+产品和跟进等业务持久化写操作默认关闭。接好身份系统前，可为同源开发环境设置 `DEMO_WRITES_ENABLED=true`；服务器间调用可配置 `API_WRITE_TOKEN`。这些业务 API 只写 PostgreSQL 并同步记录审计事件，绝不会改写 Git 中的 JSON 文件。知识文件归档独立写入 `.local-data/knowledge/`，不依赖 PostgreSQL；它使用本机同源检查或 `ASSISTANT_API_TOKEN`，不受 `DEMO_WRITES_ENABLED` 控制。
 
 数据库结构位于 `database/schema.sql`，初始化脚本位于 `scripts/seed-postgres.mjs`。连接串只应写入被 Git 忽略的 `.env.local`，不要提交真实密码。
 
@@ -114,6 +127,8 @@ npm run verify:api
 ```
 
 `verify:api` 需在本地服务运行时执行；它会把 API 返回的产品数量、首条 ID 和 SKU 与 JSON 种子逐项比对，并检查筛选、输入拒绝、默认禁写、请求 ID、无缓存和安全响应头。
+
+`node scripts/verify-knowledge-agent.mjs` 使用真实本机 8B 验证上传、分类、去重、原件下载与微信客服文件引用；会保留明确标记的虚构验收样本。`npm run verify:local -- --model=14b` 验证 14B 的真实业务工具调用。模拟测试与真实模型验收不能互相替代。
 
 ## 接入 Qwen / vLLM
 
@@ -133,13 +148,15 @@ LLM_MAX_OUTPUT_TOKENS=8192
 
 `ai` 和 `@ai-sdk/*` 在这里是本机运行的代码库，不需要 Vercel 云部署、AI Gateway 或付费 OpenAI API。调用目标由服务器的 `LLM_BASE_URL` 决定。使用者需要自己安装模型及其运行环境，模型推理所需硬件和电力并非零成本。
 
-自定义 Ollama Qwen3 服务可设置 `LLM_BACKEND=ollama`；它通过 `reasoning_effort=none` 关闭 thinking。llama.cpp 等其他兼容服务使用 `LLM_BACKEND=openai-compatible` 和实际的 `/v1` 地址、模型名称，不发送 vLLM 专用参数。上述两种模式的 FAST/NORMAL/DEEP 仅调整输出预算，不代表切换 thinking；视觉和其他模型的工具模板须分别验证。当前没有完成普通电脑上的真实 27B 推理验收。
+自定义 Ollama Qwen3 服务可设置 `LLM_BACKEND=ollama`；Instant 通过 `reasoning_effort=none` 关闭 thinking。本机登记的 8B / 14B 可使用新的推理档位开启 thinking。llama.cpp 等其他兼容服务使用 `LLM_BACKEND=openai-compatible` 和实际的 `/v1` 地址、模型名称，不发送 vLLM 专用参数。自定义模型能力未经验证，界面只开放 Instant 生成预算，不承诺其思考开关已生效。旧 API 的 fast/normal/deep 保留兼容行为；视觉和其他模型的工具模板须分别验证。当前没有完成普通电脑上的真实 27B 推理验收。
 
-浏览器只发送服务器白名单 `modelProfileId`（`local-qwen3-8b` / `configured`），不接收用户传入的模型 URL、Key 或任意模型名。未传该字段的旧 API 客户端仍使用 `configured`；页面默认显式选择本地 8B。响应头 `X-Model-Profile` 与 `X-Model-Id` 标明实际选择。
+浏览器只发送服务器白名单 `modelProfileId`（`local-qwen3-8b` / `local-qwen3-14b` / `configured`），不接收用户传入的模型 URL、Key 或任意模型名。未传该字段的旧 API 客户端仍使用 `configured`；页面默认显式选择本地 8B。响应头 `X-Model-Profile` 与 `X-Model-Id` 标明实际选择。
 
 当前 API 每次只接受一条用户文本；拒绝浏览器提交的 assistant/tool 历史，防止伪造数据库查询结果。后续多轮历史必须从服务端持久化会话加载。
 
-### 你自己的业务 Skill
+### 角色与底层业务流程配置
+
+用户界面只展示四种 Agent 角色，不再要求选择 Skill。角色的后端指令及工具白名单位于 `src/lib/ai/agent-roles.ts`；角色权限与管理员流程配置取交集，不能通过切换角色扩大工具权限。`agentRoleId` 与 `knowledgeDocumentIds` 在 `/assistant/chat` 中经过服务端校验；模型只接收服务端读出的、有长度限制的正文。人工确认的公共知识才加入智能搜索，未确认的聊天记录仅在本轮显式勾选时引用。
 
 `agent/profile.json` 选择启用的流程，`agent/skills/*.json` 保存 `id`、`version`、`name`、`description`、`tools` 和 `instructions`。现在启用产品顾问、回复草拟、报价草稿、定制交接草拟四个 Skill。后端每次调用读取并校验文件，把指令与工具白名单真正用于 Agent；修改文件后下一次调用即生效，前端无需重新构建。返回头 `X-Agent-Profile`、`X-Agent-Skills` 可核对当前版本。
 
