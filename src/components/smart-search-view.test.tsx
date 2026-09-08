@@ -25,11 +25,14 @@ function modelReply(text = "模型实测回复：库存126件") {
   return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" } });
 }
 beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   posts.length = 0;
   localStorage.clear();
   nextChat = async () => modelReply();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/chat")) { posts.push(JSON.parse(String(init?.body))); return nextChat(init); }
+    if (url.endsWith("/knowledge")) return Response.json({ data: [] });
     const id = url.includes("modelProfileId=configured") ? "configured" : "local-qwen3-8b";
     const meta = { apiVersion: "v1", requestId: "test", checkedAt: new Date().toISOString() };
     if (url.endsWith("/models")) return Response.json({ data: { defaultProfileId: "local-qwen3-8b", models: [
@@ -47,14 +50,16 @@ describe("smart search real-model entry", () => {
   it("sends real reasoning modes and visibly routes Pro to 14B", async () => {
     render(<SmartSearchView {...props} />);
     await ready();
+    fireEvent.click(screen.getByRole("button", { name: /^选择推理强度 / }));
     fireEvent.click(screen.getByRole("button", { name: "High 更长推理" }));
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts[0]).toMatchObject({ mode: "high", modelProfileId: "local-qwen3-8b" }));
     await ready();
+    fireEvent.click(screen.getByRole("button", { name: /^选择推理强度 / }));
     fireEvent.click(screen.getByRole("button", { name: "Pro 较大模型" }));
     await ready();
-    expect(screen.queryByTestId("model-answer")).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "选择模型" })).toHaveValue("local-qwen3-14b");
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择模型 Qwen3 14B" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts[1]).toMatchObject({ mode: "pro", modelProfileId: "local-qwen3-14b" }));
   });
@@ -73,11 +78,11 @@ describe("smart search real-model entry", () => {
   it("starts without fabricated answers or citations and sends selected profile through the real useChat transport", async () => {
     render(<SmartSearchView {...props} />);
     await ready();
-    expect(screen.queryByTestId("model-answer")).not.toBeInTheDocument();
-    expect(screen.getByTestId("search-evidence")).not.toHaveTextContent("实时库存快照");
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("search-evidence")).not.toBeInTheDocument();
     expect(posts).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(screen.getByTestId("model-answer")).toHaveTextContent("模型实测回复"));
+    await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("模型实测回复"));
     expect(posts[0]).toMatchObject({ modelProfileId: "local-qwen3-8b", mode: "instant", messages: [{ role: "user", parts: [{ type: "text", text: "测试库存问题" }] }] });
     expect(screen.getByTestId("search-evidence")).toHaveTextContent("LT-ARC-T18-BK 库存 126");
     expect(screen.getByTestId("search-evidence")).toHaveTextContent("核对时间");
@@ -93,14 +98,16 @@ describe("smart search real-model entry", () => {
     render(<SmartSearchView {...props} />);
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(screen.getByTestId("model-answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("agent-answer")).toBeInTheDocument());
     await ready();
-    fireEvent.change(screen.getByRole("combobox", { name: "选择模型" }), { target: { value: "configured" } });
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("自定义模型未连接"));
+    fireEvent.click(screen.getByRole("button", { name: /^选择模型 / }));
+    fireEvent.click(screen.getByRole("button", { name: /自定义 未配置/ }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("所选模型尚未连接"));
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-    expect(screen.queryByTestId("model-answer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     expect(localStorage.getItem("lumaflow.assistant.model-profile")).toBe("configured");
-    fireEvent.change(screen.getByRole("combobox", { name: "选择模型" }), { target: { value: "local-qwen3-8b" } });
+    fireEvent.click(screen.getByRole("button", { name: /^选择模型 / }));
+    fireEvent.click(screen.getByRole("button", { name: /Qwen3 8B 已连接/ }));
     await ready();
   });
 
@@ -111,7 +118,7 @@ describe("smart search real-model entry", () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "停止生成" })).toBeInTheDocument());
-    expect(screen.getByRole("combobox", { name: "选择模型" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^选择模型 / })).toBeDisabled();
     expect(screen.getByText(/正在等待本地模型/)).toBeInTheDocument();
     resolve(modelReply());
     await ready();
@@ -123,10 +130,10 @@ describe("smart search real-model entry", () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("HTTP 503"));
-    expect(screen.queryByTestId("model-answer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     nextChat = async () => modelReply("重试成功");
     fireEvent.click(screen.getByRole("button", { name: "重试本轮问题" }));
-    await waitFor(() => expect(screen.getByTestId("model-answer")).toHaveTextContent("重试成功"));
+    await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("重试成功"));
   });
 
   it("aborts a pending request on stop and can send a fresh question afterwards", async () => {
@@ -143,10 +150,10 @@ describe("smart search real-model entry", () => {
     await ready();
     expect(signal?.aborted).toBe(true);
     expect(screen.getByText("已停止 · 内容可能不完整")).toBeInTheDocument();
-    expect(screen.queryByTestId("model-answer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     nextChat = async () => modelReply("停止后重新生成成功");
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(screen.getByTestId("model-answer")).toHaveTextContent("停止后重新生成成功"));
+    await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("停止后重新生成成功"));
   });
 
   it("does not send while confirming Chinese IME input or creating a newline", async () => {

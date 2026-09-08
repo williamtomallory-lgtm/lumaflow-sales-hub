@@ -41,12 +41,15 @@ const props = {
   products: testProducts,
   assets: testAssets,
   initialMessage: "客户问轨道灯库存",
+  initialExperience: "work" as const,
   onOpenCustomer: vi.fn(),
   onOpenProduct: vi.fn(),
   onToast: vi.fn(),
 };
 
 beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   posts.length = 0;
   localStorage.clear();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -99,18 +102,62 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 async function ready() {
-  await waitFor(() => expect(screen.getByRole("button", { name: /交给 产品销售顾问/ })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled());
 }
 
 describe("Agent workspace", () => {
+  it("merges Chat and Work into one workspace and keeps the selected model", async () => {
+    render(<AgentWorkspace {...props} initialExperience="chat" />);
+    await ready();
+    expect(screen.getByRole("heading", { name: "Chat-AI" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "选择 Agent 角色" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Work" }));
+    const role = screen.getByRole("combobox", { name: "选择 Agent 角色" });
+    expect(role.querySelectorAll("option")).toHaveLength(4);
+    fireEvent.change(role, { target: { value: "sales-review" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts[0]).toMatchObject({ agentRoleId: "sales-review", modelProfileId: "local-qwen3-8b" }));
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts[1]).toMatchObject({ agentRoleId: "sales-consultant", modelProfileId: "local-qwen3-8b" }));
+    await ready();
+  });
+
+  it("clears customer and file context for a new question without navigating on customer selection", async () => {
+    const openCustomer = vi.fn();
+    render(<AgentWorkspace {...props} onOpenCustomer={openCustomer} />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加资料与客户上下文" }));
+    await waitFor(() => expect(screen.getByLabelText("选择 已分类知识.md")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText("选择 已分类知识.md"));
+    fireEvent.change(screen.getByRole("combobox", { name: "选择客户" }), { target: { value: testCustomers[0].id } });
+    expect(openCustomer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts[0]).toMatchObject({ customerId: testCustomers[0].id, knowledgeDocumentIds: [documentId] }));
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "新问题" }));
+    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消客户上下文" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "客户问题或销售任务" })).toHaveValue("");
+    fireEvent.change(screen.getByRole("textbox", { name: "客户问题或销售任务" }), { target: { value: "全新问题" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]).not.toHaveProperty("customerId");
+    expect(posts[1].knowledgeDocumentIds).toEqual([]);
+    await ready();
+  });
+
   it("sends the selected role and knowledge IDs in the real chat body", async () => {
     render(<AgentWorkspace {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加资料与客户上下文" }));
     await waitFor(() => expect(screen.getByText("已分类知识.md")).toBeInTheDocument());
     await ready();
     const parsedSpreadsheet = screen.getByLabelText("选择 已解析表格.xlsx");
     expect(parsedSpreadsheet).toBeEnabled();
     fireEvent.click(parsedSpreadsheet);
-    fireEvent.click(screen.getByRole("button", { name: /交给 产品销售顾问/ }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("模型生成的客服草稿"));
     expect(screen.getByTestId("knowledge-coverage")).toHaveTextContent("已纳入 120 / 120 字");
     expect(posts[0]).toMatchObject({
@@ -126,17 +173,17 @@ describe("Agent workspace", () => {
   it("clears the previous output when switching role and does not invent an answer", async () => {
     render(<AgentWorkspace {...props} />);
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: /交给 产品销售顾问/ }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /微信客服 Agent/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
-    expect(screen.getByText("发送工作输入后，这里才会出现模型输出")).toBeInTheDocument();
+    expect(screen.getByText("选一位 Agent，一起把工作做好。")).toBeInTheDocument();
   });
 
   it("explains that personal WeChat is not connected instead of showing fake login", async () => {
     render(<AgentWorkspace {...props} />);
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: /微信客服 Agent/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
     fireEvent.click(screen.getByRole("button", { name: "导入微信记录" }));
     expect(screen.getByRole("dialog", { name: "导入微信记录" })).toHaveTextContent("个人微信：尚未连接");
     expect(screen.getByRole("dialog", { name: "导入微信记录" })).toHaveTextContent("不会生成二维码、索取密码或自动发送消息");
@@ -146,13 +193,14 @@ describe("Agent workspace", () => {
   it("clears output and persists the selected model when switching models", async () => {
     render(<AgentWorkspace {...props} />);
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: /交给 产品销售顾问/ }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toBeInTheDocument());
-    fireEvent.change(screen.getByRole("combobox", { name: "选择模型" }), { target: { value: "configured" } });
+    fireEvent.click(screen.getByRole("button", { name: /^选择模型 / }));
+    fireEvent.click(screen.getByRole("button", { name: /自定义模型/ }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("所选模型尚未连接"));
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     expect(localStorage.getItem("lumaflow.assistant.model-profile")).toBe("configured");
-    expect(screen.getByRole("button", { name: /交给 产品销售顾问/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
   });
 
   it("imports a short UTF-8 WeChat TXT, rejects over-budget input, malformed UTF-8, and more than five files", async () => {
@@ -160,7 +208,7 @@ describe("Agent workspace", () => {
     onToast.mockClear();
     render(<AgentWorkspace {...props} />);
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: /微信客服 Agent/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
     fireEvent.click(screen.getByRole("button", { name: "导入微信记录" }));
     const importInput = () => screen.getByLabelText("选择导出的文本记录（TXT / Markdown / CSV / JSON）") as HTMLInputElement;
     const shortFile = utf8File("wechat.txt", "客户：请发一份轨道灯参数\n销售：我先帮您确认。");

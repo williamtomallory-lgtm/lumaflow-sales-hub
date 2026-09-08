@@ -31,6 +31,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .app-shell { min-height: 100vh; }
 
+.chat-shell .main-area { background: #fcfdfa; }
+.chat-shell .topbar { height: 52px; background: #fcfdfa; border-bottom: 0; }
+.chat-topbar-label { font-size: 10px; color: #a1a89c; }
+.chat-page-wrap { width: 100%; }
+.chat-shell .sidebar-card { display: none; }
+.chat-shell .profile-row { margin-top: auto; }
+
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;

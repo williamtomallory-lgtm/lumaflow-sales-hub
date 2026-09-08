@@ -17,9 +17,8 @@ export const PRIMARY_NAV: readonly StaticNavItem[] = [
   { id: "products", label: "产品中心" },
   { id: "assets", label: "资料中心" },
   { id: "knowledge", label: "知识库" },
-  { id: "assistant", label: "智能搜索", badge: "AI" },
+  { id: "assistant", label: "Chat-AI", badge: "AI" },
   { id: "kit", label: "销售资料包" },
-  { id: "salesAssistant", label: "销售助手", badge: "AI" },
 ] as const;
 
 export const SECONDARY_NAV: readonly StaticNavItem[] = [
@@ -34,9 +33,9 @@ export const VIEW_META: Record<View, { eyebrow: string; title: string; subtitle:
   products: { eyebrow: "产品中心", title: "把每个型号讲清楚", subtitle: "型号、参数、场景、库存和资料都在同一个视图里。" },
   assets: { eyebrow: "资料中心", title: "找到，选中，直接发", subtitle: "按产品归档的最新图片、参数表、证书与案例。" },
   knowledge: { eyebrow: "知识库 · 本地归档", title: "文件归档，知识一目了然", subtitle: "上传文件、提取正文、模型分类；原件与分类持久保存在本机，未理解的内容明确标记。" },
-  assistant: { eyebrow: "智能搜索 · 本地 Agent", title: "选择模型，查询产品与资料", subtitle: "文字问题发送到所选模型；产品、库存和资料引用来自本轮后端工具调用。" },
+  assistant: { eyebrow: "Chat-AI", title: "Chat-AI", subtitle: "问答、资料检索和销售 Agent，共用本地模型。" },
   kit: { eyebrow: "销售资料包", title: "十秒拼好一套客户资料", subtitle: "选择产品与附件，生成推荐话术并下载交付清单。" },
-  salesAssistant: { eyebrow: "销售助手 · Agent 工作台", title: "选一个角色，开始工作", subtitle: "微信客服、销售复盘、朋友圈运营和产品顾问，共用本地模型；所有结果均为待人工审核的草稿。" },
+  salesAssistant: { eyebrow: "Chat-AI · Work", title: "Chat-AI", subtitle: "选择 Agent，开始工作。" },
   customers: { eyebrow: "客户与会话", title: "每次沟通都带着完整上下文", subtitle: "客户档案、联系人、需求、聊天、历史报价和记忆统一管理。" },
   quotation: { eyebrow: "报价系统 · CPQ", title: "准确报价，也能快速推进", subtitle: "价格阶梯、折扣、币种、审批、PDF 与版本历史完整联动。" },
   followup: { eyebrow: "跟进系统", title: "不错过该推进的客户", subtitle: "未回复提醒、下一步行动、自动话术和销售任务集中处理。" },

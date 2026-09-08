@@ -49,11 +49,10 @@ import type { DashboardSummary } from "@/lib/contracts/api";
 import type { AppDataSnapshot, DataSourceKind } from "@/lib/data-snapshot";
 import { type Asset, type Product } from "@/lib/catalog";
 import { buildSalesMessage, searchProducts } from "@/lib/search";
-import { SmartSearchView as AssistantView } from "./smart-search-view";
 import { CustomersView, FollowupView } from "./crm-views";
 import { AdminView, QuotationView } from "./operations-views";
 import { KnowledgeHub as KnowledgeBaseView } from "./knowledge-hub";
-import { AgentWorkspace as SalesAssistantView } from "./agent-workspace";
+import { AgentWorkspace } from "./agent-workspace";
 
 type CatalogAsset = Asset & { productId: string; productName: string };
 
@@ -90,7 +89,7 @@ function BackendState({ title, detail, action, onAction }: { title: string; deta
 function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, onRefresh }: { initialData: AppDataSnapshot; dashboard: DashboardSummary; generatedAt: string; refreshing: boolean; onRefresh: () => void }) {
   const catalog = initialData.products;
   const catalogAssets = catalog.flatMap((product) => product.assets.map((asset) => ({ ...asset, productId: product.id, productName: product.name })));
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("assistant");
   const [globalQuery, setGlobalQuery] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -99,6 +98,7 @@ function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, on
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const meta = VIEW_META[view];
+  const isChat = view === "assistant" || view === "salesAssistant";
   const openFollowup = initialData.followupTasks.find((task) => task.status === "open");
   const qualityIssue = initialData.qualityIssues[0];
   const recentQuote = initialData.quoteHistory[0];
@@ -123,7 +123,7 @@ function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, on
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${isChat ? " chat-shell" : ""}`}>
       <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`} aria-label="主导航">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true"><span /></div>
@@ -134,7 +134,7 @@ function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, on
         <nav className="nav-groups">
           <div className="nav-group">
             <span className="nav-label">工作空间</span>
-            {primaryNav.map((item) => <NavButton key={item.id} item={item} active={view === item.id} onClick={() => navigate(item.id)} />)}
+            {primaryNav.map((item) => <NavButton key={item.id} item={item} active={view === item.id || (view === "salesAssistant" && item.id === "assistant")} onClick={() => navigate(item.id)} />)}
           </div>
           <div className="nav-group nav-secondary">
             <span className="nav-label">管理与增长</span>
@@ -161,7 +161,7 @@ function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, on
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setMobileOpen(true)} aria-label="打开菜单"><Menu size={21} /></button>
-          <div className="global-search">
+          {isChat ? <span className="chat-topbar-label">你的本地 AI 工作空间</span> : <div className="global-search">
             <Search size={18} />
             <input
               value={globalQuery}
@@ -171,26 +171,25 @@ function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, on
               aria-label="全局搜索"
             />
             <kbd>⌘ K</kbd>
-          </div>
+          </div>}
           <div className="topbar-actions">
             <button className="data-source-button" data-testid="data-source" onClick={onRefresh} disabled={refreshing} title={`最后同步：${new Date(generatedAt).toLocaleString("zh-CN")}`}><span />动态数据 · {sourceLabel} <RefreshCw size={13} className={refreshing ? "spinning" : ""} /></button>
-            <button className="icon-button notification-button" aria-label="消息" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Inbox size={19} /><span /></button>
-            <button className="primary-button compact" onClick={() => navigate("kit")}><Plus size={17} /> 新建资料包</button>
+            {!isChat && <button className="icon-button notification-button" aria-label="消息" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Inbox size={19} /><span /></button>}
+            {!isChat && <button className="primary-button compact" onClick={() => navigate("kit")}><Plus size={17} /> 新建资料包</button>}
           </div>
         </header>
 
-        <section className="page-wrap">
-          <div className="page-heading">
+        <section className={isChat ? "chat-page-wrap" : "page-wrap"}>
+          {!isChat && <div className="page-heading">
             <div><span className="eyebrow">{meta.eyebrow}</span><h1>{meta.title}</h1><p>{meta.subtitle}</p></div>
-          </div>
+          </div>}
 
           {view === "overview" && <Overview products={catalog} dashboard={dashboard} onNavigate={navigate} onProduct={setSelectedProduct} onAsk={(question) => { setGlobalQuery(question); navigate("assistant"); }} />}
           {view === "products" && <ProductsView products={catalog} dataSource={initialData.source} initialQuery={globalQuery} onProduct={setSelectedProduct} onToast={showToast} />}
           {view === "assets" && <AssetsView assets={catalogAssets} onNavigate={navigate} onToast={showToast} />}
           {view === "knowledge" && <KnowledgeBaseView initialEntries={initialData.knowledgeEntries} onToast={showToast} />}
-          {view === "assistant" && <AssistantView products={catalog} initialQuestion={globalQuery} onProduct={setSelectedProduct} onToast={showToast} onAddToKit={(id) => { setKitProductId(id); navigate("kit"); }} />}
+          {isChat && <AgentWorkspace key={view} products={catalog} assets={catalogAssets} customers={initialData.customers} initialExperience={view === "salesAssistant" ? "work" : "chat"} initialMessage={globalQuery} initialCustomerId={view === "salesAssistant" ? crmCustomerId : undefined} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onOpenKnowledge={() => navigate("knowledge")} onToast={showToast} onAddToKit={(id) => { setKitProductId(id); navigate("kit"); }} />}
           {view === "kit" && <SalesKitView products={catalog} initialProductId={kitProductId} onProduct={setSelectedProduct} onToast={showToast} />}
-          {view === "salesAssistant" && <SalesAssistantView products={catalog} assets={catalogAssets} customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
           {view === "customers" && <CustomersView customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenCustomer={setCrmCustomerId} onAnalyzeCustomer={(customer) => { setCrmCustomerId(customer.id); navigate("salesAssistant"); }} onCreateQuote={() => navigate("quotation")} onToast={showToast} />}
           {view === "quotation" && <QuotationView products={catalog} customers={initialData.customers} initialHistory={initialData.quoteHistory} currencyRates={initialData.currencyRates} onToast={showToast} />}
           {view === "followup" && <FollowupView customers={initialData.customers} tasks={initialData.followupTasks} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}

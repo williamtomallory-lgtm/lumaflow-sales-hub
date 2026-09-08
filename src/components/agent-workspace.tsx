@@ -4,16 +4,16 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, isToolUIPart } from "ai";
 import {
   ArrowRight,
-  Check,
   CheckCircle2,
-  ChevronDown,
   Clock3,
   Copy,
   FileText,
   MessageCircle,
   Paperclip,
   RefreshCw,
-  Send,
+  ArrowUp,
+  SquarePen,
+  Plus,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { QUICK_QUESTIONS } from "@/config/ui-static";
 import { DEFAULT_AGENT_ROLE_ID, AGENT_ROLES, getAgentRoleOption, isAgentRoleId, type AgentRoleId } from "@/config/agent-roles";
 import { useModelCatalog } from "@/hooks/use-model-catalog";
 import { useModelHealth } from "@/hooks/use-model-health";
@@ -46,6 +47,9 @@ export type AgentWorkspaceProps = {
   assets: CrmAsset[];
   initialCustomerId?: string;
   initialMessage?: string;
+  initialExperience?: "chat" | "work";
+  onOpenKnowledge?: () => void;
+  onAddToKit?: (id: string) => void;
   onConfirmReply?: (confirmation: AgentReplyConfirmation) => void;
   onOpenCustomer?: (customerId: string) => void;
   onOpenProduct?: (product: Product) => void;
@@ -171,13 +175,6 @@ function savedRole(): AgentRoleId {
   }
 }
 
-function sourceLabel(roleId: AgentRoleId): string {
-  if (roleId === "wechat-service") return "个人微信导出记录 / 知识库文件";
-  if (roleId === "sales-review") return "聊天记录 / 跟进纪要 / 知识库文件";
-  if (roleId === "moments-operator") return "产品素材 / 知识库文件";
-  return "客户问题 / 产品资料 / 后端工具";
-}
-
 function customerLabel(customer: Customer) {
   return `${customer.company} · ${customer.name}`;
 }
@@ -188,12 +185,18 @@ export function AgentWorkspace({
   assets,
   initialCustomerId,
   initialMessage,
+  initialExperience = "chat",
+  onOpenKnowledge,
+  onAddToKit,
   onConfirmReply,
   onOpenCustomer,
   onOpenProduct,
   onToast,
 }: AgentWorkspaceProps) {
-  const [roleId, setRoleId] = useState<AgentRoleId>(savedRole);
+  const [experience, setExperience] = useState(initialExperience);
+  const [workRoleId, setWorkRoleId] = useState<AgentRoleId>(savedRole);
+  const roleId = experience === "chat" ? DEFAULT_AGENT_ROLE_ID : workRoleId;
+  const [contextOpen, setContextOpen] = useState(false);
   const [input, setInput] = useState(initialMessage ?? "");
   // Do not silently attach an arbitrary demo customer to a free-form chat.
   // A customer context is sent only when the caller or user explicitly picks it.
@@ -214,6 +217,8 @@ export function AgentWorkspace({
   const [wechatDialogOpen, setWechatDialogOpen] = useState(false);
   const submitting = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const importDialog = useRef<HTMLDialogElement>(null);
   const catalog = useModelCatalog();
   const { health, checking, refresh: refreshHealth } = useModelHealth(catalog.modelProfileId);
   const role = getAgentRoleOption(roleId);
@@ -297,9 +302,31 @@ export function AgentWorkspace({
 
   useEffect(() => () => { void stop(); }, [stop]);
 
+  useEffect(() => {
+    if (wechatDialogOpen && importDialog.current && !importDialog.current.open) importDialog.current.showModal();
+    if (!wechatDialogOpen && importDialog.current?.open) importDialog.current.close();
+  }, [wechatDialogOpen]);
+
+  function resetOutput() {
+    setMessages([]); clearError(); setQuestion(""); setCancelled(false);
+    setConfirmed(false); setReceipt(null); setExhausted(false); setKnowledgeCoverage([]);
+  }
+
+  function changeExperience(next: "chat" | "work") {
+    if (busy || submitting.current || next === experience) return;
+    setExperience(next); resetOutput();
+    // Customer and explicitly attached files remain visible in the composer.
+  }
+
+  function newQuestion() {
+    if (busy || submitting.current) return;
+    resetOutput(); setInput(""); setCustomerId(""); setSelectedDocumentIds([]);
+    setContextOpen(false); inputRef.current?.focus();
+  }
+
   function changeRole(value: string) {
     if (busy || !isAgentRoleId(value)) return;
-    setRoleId(value);
+    setWorkRoleId(value);
     setReceipt(null);
     setExhausted(false);
     setMessages([]);
@@ -443,93 +470,96 @@ export function AgentWorkspace({
       ? health.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接"
       : "模型未连接";
 
+  const inputLabel = experience === "chat" ? "输入产品问题" : role.inputLabel;
+  const inputBudget = getInferenceProfileInputBudget(mode);
+
   return (
-    <div className={styles.root} data-testid="agent-workspace">
+    <div className={cx(styles.root, Boolean(question) && styles.hasConversation)} data-testid="chat-ai-workspace">
       <header className={styles.header}>
-        <div>
-          <span className={styles.eyebrow}>Agent 工作台 · 角色驱动</span>
-          <h2>从资料到草稿，结果可核对</h2>
-          <p>角色决定模型的工作边界；知识文件和聊天记录只作为本轮上下文，不会自动发送或写回系统。</p>
+        <h1>Chat-AI</h1>
+        <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
+          <button type="button" aria-pressed={experience === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
+          <button type="button" aria-pressed={experience === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
         </div>
-        <div className={styles.headerStatus} role="status"><span className={cx(styles.statusDot, health?.reachable && styles.statusDotOnline)} />{statusText}<small>{selectedModelName}</small></div>
+        <button type="button" className={styles.iconButton} aria-label="新问题" title="清空本轮输入与资料" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button>
       </header>
 
-      <section className={styles.roleSection} aria-label="选择 Agent 角色">
-        <div className={styles.sectionHeading}><div><span className={styles.kicker}>01 · 工作角色</span><h2>你现在要谁来帮忙？</h2></div><span className={styles.selectionNote}>当前：{role.name}</span></div>
-        <div className={styles.roleGrid}>
-          {AGENT_ROLES.map((option) => <button key={option.id} type="button" className={cx(styles.roleCard, roleId === option.id && styles.roleCardActive)} onClick={() => changeRole(option.id)} disabled={busy} aria-pressed={roleId === option.id}>
-            <span className={styles.roleIcon}><Sparkles size={17} /></span>
-            <span className={styles.roleCopy}><strong>{option.name}</strong><small>{option.description}</small><span className={styles.chips}>{option.useCases.map((useCase) => <em key={useCase}>{useCase}</em>)}</span></span>
-            {roleId === option.id && <CheckCircle2 className={styles.roleCheck} size={17} />}
-          </button>)}
-        </div>
-      </section>
+      <div className={styles.stage}>
+        {!question && <div className={styles.welcome}>
+          <span className={styles.welcomeMark}><Sparkles size={23} /></span>
+          <h2>{experience === "chat" ? "你好，今天想解决什么？" : "选一位 Agent，一起把工作做好。"}</h2>
+          <p>{experience === "chat" ? "问产品，找资料，或整理一个想法。" : role.description}</p>
+        </div>}
 
-      <section className={styles.modelBar} aria-label="模型与上下文设置">
-        <label className={styles.modelSelect}><span>选择模型</span><select aria-label="选择模型" value={catalog.modelProfileId} disabled={busy || catalog.loading || !catalog.models.length} onChange={(event) => changeModel(event.target.value)}>
-          {catalog.models.length ? catalog.models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.id === catalog.modelProfileId ? statusText : model.reachable ? "已连接" : model.configured ? "未连接" : "未配置"}</option>) : <option value={catalog.modelProfileId}>{catalog.loading ? "正在读取模型列表…" : "模型列表不可用"}</option>}
-        </select><ChevronDown size={15} /></label>
-        <button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => { catalog.refresh(); refreshHealth(); }}><RefreshCw size={14} /> 刷新连接</button>
-        <span className={styles.modelHint}>{catalog.selectedModel?.description ?? "模型列表尚未读取"}</span>
-        {catalog.error && <span className={styles.errorText} role="alert">{catalog.error}</span>}
-      </section>
+        {question && <section className={styles.conversation} aria-label="本轮问答" data-testid="agent-output">
+          <div className={styles.questionBubble}><span>你</span><p>{question}</p></div>
+          <article className={styles.response}>
+            <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong>{experience === "chat" ? "LumaFlow" : role.name}</strong><span className={styles.outputStatus}>{busy ? <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "预算已用尽 · 答案可能不完整" : result.text ? confirmed ? "已人工核对" : "待人工核对" : ""}</span></div>
+            {busy && <p className={styles.generating} role="status">{toolParts.length ? `已观察到 ${toolParts.length} 次真实工具调用，正在整理…` : "正在等待本地模型，首次加载可能需要一些时间…"}</p>}
+            {result.text && <div className={styles.answer} data-testid="agent-answer">{result.text}</div>}
+            {result.sources.some((source) => source === "json" || source === "json-fallback") && <p className={styles.muted}>本轮使用 JSON 演示数据，不能作为正式库存或报价依据。</p>}
+            {!busy && !error && !result.text && <p className={styles.muted}>{cancelled ? "本次生成已停止。" : "模型没有返回文字输出；不会使用本地规则冒充回答。"}</p>}
+            {exhausted && <p className={styles.errorBox} role="alert">本轮生成预算已用尽，答案可能不完整。请缩小任务范围或调整档位后重试。</p>}
+            {error && <div className={styles.errorBox} role="alert"><span>模型没有完成本轮任务：{error.message === "An error occurred." ? "本地推理服务出错或超时" : error.message}</span><button type="button" onClick={() => void submit(question)} disabled={!ready || busy} aria-label="重试本轮问题">重试</button></div>}
+            {result.products.length > 0 && <div className={styles.productResults}>{result.products.map((record) => { const product = products.find((item) => item.id === record.id); return <div key={record.id}><button type="button" disabled={!product} onClick={() => product && onOpenProduct?.({ ...product, ...record })}><span><strong>{record.name}</strong><small>{record.sku} · {record.power}</small></span><ArrowRight size={15} /></button>{product && onAddToKit && <button type="button" className={styles.kitButton} onClick={() => onAddToKit(product.id)}><Plus size={14} /> 加入资料包</button>}</div>; })}</div>}
+            {(receipt || result.evidence.length > 0 || toolParts.length > 0 || knowledgeCoverage.length > 0) && <details className={styles.sources}>
+              <summary>查看依据与本轮模型 <ChevronIcon /></summary>
+              <InferenceReceiptView receipt={receipt} />
+              {result.sources.length > 0 && <p className={styles.muted}>本轮数据源：{result.sources.join("、")}{result.sources.some((source) => source === "json" || source === "json-fallback") ? " · 演示数据，非正式库存或报价依据" : ""}</p>}
+              {result.evidence.length > 0 && <div className={styles.evidence} data-testid="search-evidence">{result.evidence.map((entry, index) => <div key={`${entry.title}-${index}`}><FileText size={14} /><span><strong>{entry.title}</strong><small>{entry.detail}</small></span></div>)}</div>}
+              {toolParts.length > 0 && <div className={styles.toolTrace} aria-label="本轮工具调用">{toolParts.map((part) => <span key={part.toolCallId}>{part.type.replace(/^tool-/, "")} · {part.state === "output-available" ? "已返回" : part.state === "output-error" ? "失败" : "执行中"}</span>)}</div>}
+              {knowledgeCoverage.length > 0 && <div className={styles.coverage} data-testid="knowledge-coverage"><strong>本轮知识上下文覆盖</strong>{knowledgeCoverage.map((entry) => <div key={entry.id}><span>{entry.name}</span><small>{entry.hasText ? `已纳入 ${entry.includedCharacters.toLocaleString()} / ${entry.totalCharacters.toLocaleString()} 字` : "没有可读正文"}{entry.truncated ? " · 已截断" : ""}</small></div>)}</div>}
+            </details>}
+            {result.text && <div className={styles.outputActions}><button type="button" disabled={busy} onClick={() => void copyOutput()}><Copy size={14} /> 复制</button><button type="button" disabled={busy || confirmed || cancelled || exhausted || Boolean(error)} onClick={confirmOutput}><CheckCircle2 size={14} /> {confirmed ? "已人工核对" : "标记人工核对"}</button></div>}
+          </article>
+        </section>}
 
-      <ModelRuntimeControls models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} />
-      {!checking && !health?.reachable && <p className={styles.setupHint} role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请在项目目录运行 npm run local:up 后刷新。" : "所选模型尚未连接，请先配置对应的本地服务。"}</p>}
-
-      <div className={styles.workspaceGrid}>
-        <section className={styles.inputPanel}>
-          <div className={styles.panelHeading}><div><span className={styles.kicker}>02 · 工作输入</span><h2>{role.inputLabel}</h2></div><span className={styles.sourcePill}><MessageCircle size={13} /> {sourceLabel(roleId)}</span></div>
-          {customers.length > 0 && <div className={styles.contextRow}>
-            <label className={styles.customerSelect}><UserRound size={15} /><select aria-label="选择客户" value={customerId} disabled={busy} onChange={(event) => { setCustomerId(event.target.value); onOpenCustomer?.(event.target.value); }}><option value="">不绑定客户上下文</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}</select><ChevronDown size={14} /></label>
-            {selectedCustomer && <span className={styles.customerNote}>仅提供客户身份上下文，不自动带入历史聊天</span>}
-          </div>}
-          <div className={styles.inputToolbar}>
-            <span className={styles.inputLabel}><FileText size={15} /> {role.inputLabel}</span>
-            {roleId === "wechat-service" && <button type="button" className={styles.importButton} onClick={() => setWechatDialogOpen(true)} disabled={busy}><Upload size={14} /> 导入微信记录</button>}
+        <div className={styles.composerArea}>
+          <div className={styles.composer}>
+            {experience === "work" && <div className={styles.roleRow}>
+              <label><Sparkles size={14} /><select aria-label="选择 Agent 角色" value={roleId} disabled={busy} onChange={(event) => changeRole(event.target.value)}>{AGENT_ROLES.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
+              {roleId === "wechat-service" && <button type="button" disabled={busy} onClick={() => setWechatDialogOpen(true)}><Upload size={14} /> 导入微信记录</button>}
+            </div>}
+            {selectedDocuments.length > 0 && <div className={styles.selectedFiles}>{selectedDocuments.map((document) => <button type="button" key={document.id} disabled={busy} onClick={() => toggleDocument(document)} aria-label={`移除 ${document.title}`}><Paperclip size={12} /><span>{document.title}</span><X size={12} /></button>)}</div>}
+            {selectedCustomer && <div className={styles.selectedCustomer}><UserRound size={13} />{customerLabel(selectedCustomer)}<button type="button" aria-label="取消客户上下文" disabled={busy} onClick={() => setCustomerId("")}><X size={13} /></button></div>}
+            <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={4_000} disabled={busy} aria-label={inputLabel} placeholder={experience === "chat" ? "向 Chat-AI 提问…" : role.inputPlaceholder} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+            <div className={styles.composerTools}>
+              <button type="button" className={styles.iconButton} aria-label="添加资料与客户上下文" aria-expanded={contextOpen} disabled={busy} title="选择知识库文件或客户" onClick={() => setContextOpen((open) => !open)}><Plus size={21} /></button>
+              <div className={styles.modelTools}><ModelRuntimeControls compact models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} /></div>
+              {busy ? <button type="button" className={styles.sendButton} aria-label="停止生成" onClick={() => { setCancelled(true); void stop(); }}><X size={18} /></button> : <button type="button" className={styles.sendButton} aria-label="发送问题" title={`交给 ${role.name}`} disabled={!ready || !input.trim() || input.trim().length > inputBudget} onClick={() => void submit()}><ArrowUp size={20} /></button>}
+            </div>
           </div>
-          <textarea className={styles.messageInput} value={input} maxLength={4_000} disabled={busy} aria-label={role.inputLabel} placeholder={role.inputPlaceholder} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
-          <div className={styles.inputFooter}><span>{input.length.toLocaleString()} / {getInferenceProfileInputBudget(mode).toLocaleString()} 字 · 较长记录请上传到知识库 · Ctrl/⌘ + Enter 发送</span>{busy ? <button type="button" className={styles.secondaryButton} onClick={() => { setCancelled(true); void stop(); }}><X size={15} /> 停止</button> : <button type="button" className={styles.primaryButton} disabled={!ready || !input.trim()} onClick={() => void submit()}><Send size={15} /> 交给 {role.name}</button>}</div>
-          {error && <div className={styles.errorBox} role="alert"><span>模型没有完成本轮任务：{error.message === "An error occurred." ? "本地推理服务出错或超时" : error.message}</span><button type="button" onClick={() => void submit(question)} disabled={!ready || busy}>重试</button></div>}
-          <div className={styles.boundaryNote}><ShieldCheck size={15} /><span>{role.outputHint}</span></div>
-        </section>
+          <div className={styles.composerMeta}><span className={styles.connection} title={selectedModelName}><i className={health?.reachable ? styles.online : ""} />{statusText}<button type="button" aria-label="刷新模型连接" disabled={busy} onClick={() => { catalog.refresh(); refreshHealth(); }}><RefreshCw size={12} /></button></span><span>{input.length > 0 ? `${input.length.toLocaleString()} / ${inputBudget.toLocaleString()} 字 · ` : ""}Enter 发送 · Shift + Enter 换行</span></div>
+          {input.length > inputBudget && <p className={styles.errorBox} role="alert">内容超过当前档位 {inputBudget.toLocaleString()} 字符，请缩小任务范围或选择 Instant；不会静默截断你的输入。</p>}
+          {catalog.error && <p className={styles.errorBox} role="alert">{catalog.error}</p>}
+          {!checking && !catalog.loading && !health?.reachable && <p className={styles.errorBox} role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "所选模型尚未连接，请先配置对应的本地服务。"}</p>}
 
-        <section className={styles.documentsPanel} data-testid="knowledge-picker">
-          <div className={styles.panelHeading}><div><span className={styles.kicker}>03 · 参考资料</span><h2>选择知识库文件</h2></div><span className={styles.fileCount}>{selectedDocumentIds.length} / 5 · 产品资料 {assets.length} 份</span></div>
-          <p className={styles.panelDescription}>只把知识库中已归档、可读取的文本文件作为本轮上下文。未选择文件时，模型不会假装看过附件。</p>
-          {knowledgeLoading && <p className={styles.muted}>正在读取知识库文件…</p>}
-          {!knowledgeLoading && knowledgeError && <p className={styles.muted} role="alert">{knowledgeError}。你仍可以粘贴聊天记录继续工作。</p>}
-          {!knowledgeLoading && !knowledgeError && knowledgeDocuments.length === 0 && <p className={styles.muted}>知识库暂无可选文本文件。请先在知识库归档文件。</p>}
-          <div className={styles.documentList}>{knowledgeDocuments.map((document) => <label key={document.id} className={cx(styles.documentRow, selectedDocumentIds.includes(document.id) && styles.documentSelected, !document.selectable && styles.documentDisabled)} title={document.unavailableReason}>
-            <input type="checkbox" aria-label={`选择 ${document.title}`} checked={selectedDocumentIds.includes(document.id)} disabled={!document.selectable || busy || (!selectedDocumentIds.includes(document.id) && selectedDocumentIds.length >= 5)} onChange={() => toggleDocument(document)} />
-            <span className={styles.checkbox}>{selectedDocumentIds.includes(document.id) && <Check size={12} />}</span>
-            <span className={styles.documentCopy}><strong>{document.title}</strong><small>{document.category} · {document.status} · {document.updatedAt}{document.size ? ` · ${document.size}` : ""}</small>{document.summary && <em>{document.summary}</em>}{!document.selectable && <i>{document.unavailableReason}</i>}</span>
-          </label>)}</div>
-          {selectedDocuments.length > 0 && <div className={styles.selectedFiles}><span>本轮已选</span>{selectedDocuments.map((document) => <em key={document.id}><Paperclip size={12} /> {document.title}</em>)}</div>}
-        </section>
+          {contextOpen && <section className={styles.contextPanel} data-testid="knowledge-picker" aria-label="参考资料与客户">
+            <div className={styles.panelHeading}><h3>本轮参考资料</h3><span>{selectedDocumentIds.length} / 5</span>{onOpenKnowledge && <button type="button" onClick={onOpenKnowledge}><Upload size={14} /> 去知识库上传</button>}</div>
+            <p className={styles.muted}>仅选择你希望本轮读取的文件；长文件按预算节选，覆盖范围随答案返回。产品资料共 {assets.length} 份。</p>
+            {knowledgeLoading && <p className={styles.muted}>正在读取知识库文件…</p>}
+            {!knowledgeLoading && knowledgeError && <p className={styles.errorBox} role="alert">{knowledgeError}。仍可粘贴记录。</p>}
+            {!knowledgeLoading && !knowledgeError && knowledgeDocuments.length === 0 && <p className={styles.muted}>暂无文件，请先到知识库上传。</p>}
+            <div className={styles.documentList}>{knowledgeDocuments.map((document) => <label key={document.id} className={cx(styles.documentRow, selectedDocumentIds.includes(document.id) && styles.documentSelected, !document.selectable && styles.documentDisabled)} title={document.unavailableReason}>
+              <input type="checkbox" aria-label={`选择 ${document.title}`} checked={selectedDocumentIds.includes(document.id)} disabled={!document.selectable || busy || (!selectedDocumentIds.includes(document.id) && selectedDocumentIds.length >= 5)} onChange={() => toggleDocument(document)} />
+              <span><strong>{document.title}</strong><small>{document.category} · {document.status}{!document.selectable ? ` · ${document.unavailableReason}` : ""}</small></span>
+            </label>)}</div>
+            {customers.length > 0 && <label className={styles.customerSelect}><UserRound size={14} /><select aria-label="选择客户" value={customerId} disabled={busy} onChange={(event) => setCustomerId(event.target.value)}><option value="">不绑定客户上下文</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}</select>{selectedCustomer && onOpenCustomer && <button type="button" onClick={() => onOpenCustomer(selectedCustomer.id)}>查看档案</button>}</label>}
+          </section>}
+
+          {!question && <div className={styles.suggestions} aria-label="提问示例">{(experience === "chat" ? QUICK_QUESTIONS : role.useCases.map((item) => `${item}：请根据我提供的资料整理`)).map((item) => <button key={item} type="button" disabled={busy} onClick={() => { setInput(item); inputRef.current?.focus(); }}><MessageCircle size={14} /><span>{item}</span><ArrowRight size={13} /></button>)}</div>}
+          <p className={styles.disclaimer}><ShieldCheck size={12} />{experience === "work" ? role.outputHint : "内容由本地模型生成，请核对重要信息。"} 每次独立提问，不自动引用上一轮。{health?.connectionKind === "protocol-mock" ? "当前为协议模拟连接。" : ""}</p>
+        </div>
       </div>
 
-      <section className={styles.outputPanel} data-testid="agent-output">
-        <div className={styles.panelHeading}><div><span className={styles.kicker}>04 · Agent 输出</span><h2>{role.outputLabel}</h2></div><div className={styles.outputStatus}>{busy ? <><Clock3 size={14} /> 生成中 · {elapsed} 秒</> : exhausted ? "预算已用尽 · 结果可能不完整" : confirmed ? <><CheckCircle2 size={14} /> 已人工核对</> : result.text ? "待人工核对" : "尚未运行"}</div></div>
-        <InferenceReceiptView receipt={receipt} />
-        {exhausted && <p className={styles.errorBox} role="alert">本轮生成预算已用尽。请缩小任务范围或调整档位后重试，当前内容不作为完整复盘。</p>}
-        {!question && <div className={styles.outputEmpty}><Sparkles size={25} /><strong>发送工作输入后，这里才会出现模型输出</strong><span>当前角色：{role.name} · 不预填规则答案、不伪造聊天或资料引用</span></div>}
-        {question && <div className={styles.outputBody}>
-          <div className={styles.questionStrip}><span>本轮输入</span><p>{question}</p></div>
-          {busy && <p className={styles.generating} role="status">{toolParts.length ? `已观察到 ${toolParts.length} 次真实工具调用，正在整理…` : "正在等待本地模型，首次加载可能需要一些时间…"}</p>}
-          {result.text && <p className={styles.answer} data-testid="agent-answer">{result.text}</p>}
-          {!busy && error && <p className={styles.muted}>本轮没有可用输出，请修正输入或连接后重试。</p>}
-          {!busy && !error && !result.text && <p className={styles.muted}>{cancelled ? "本次生成已停止，内容可能不完整。" : "模型没有返回文字输出；不会使用本地规则冒充回答。"}</p>}
-          {toolParts.length > 0 && <div className={styles.toolTrace} aria-label="本轮工具调用"><span>真实工具轨迹</span>{toolParts.map((part) => <em key={part.toolCallId}>{part.type.replace(/^tool-/, "")} · {part.state === "output-available" ? "已返回" : part.state === "output-error" ? "失败" : "执行中"}</em>)}</div>}
-          {result.products.length > 0 && <div className={styles.productResults}><span>工具返回产品</span>{result.products.map((record) => { const product = products.find((item) => item.id === record.id); return <button type="button" key={record.id} disabled={!product} onClick={() => product && onOpenProduct?.({ ...product, ...record })}><span><strong>{record.name}</strong><small>{record.sku} · {record.power} · {record.status}</small></span><ArrowRight size={15} /></button>; })}</div>}
-          {result.evidence.length > 0 && <div className={styles.evidence}><span>本轮实际引用</span>{result.evidence.map((entry, index) => <div key={`${entry.title}-${index}`}><FileText size={14} /><span><strong>{entry.title}</strong><small>{entry.detail}</small></span></div>)}</div>}
-          {knowledgeCoverage.length > 0 && <div className={styles.coverage} data-testid="knowledge-coverage"><span>本轮知识上下文覆盖</span>{knowledgeCoverage.map((entry) => <div key={entry.id}><strong>{entry.name}</strong><small>{entry.hasText ? `已纳入 ${entry.includedCharacters.toLocaleString()} / ${entry.totalCharacters.toLocaleString()} 字` : "没有可读正文"}{entry.truncated ? " · 已截断" : ""}</small></div>)}</div>}
-          {result.text && <div className={styles.outputActions}><button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => void copyOutput()}><Copy size={14} /> 复制草稿</button><button type="button" className={styles.primaryButton} disabled={busy || confirmed} onClick={confirmOutput}><CheckCircle2 size={14} /> {confirmed ? "已人工核对" : "标记人工核对"}</button></div>}
-          <p className={styles.disclaimer}><ShieldCheck size={14} /> {role.outputHint} {health?.connectionKind === "protocol-mock" ? "当前为协议模拟连接，不能作为真实业务结论。" : "请以实际业务资料和人工判断为准。"}</p>
-        </div>}
-      </section>
-
-      {wechatDialogOpen && <div className={styles.dialogLayer} role="presentation"><button type="button" className={styles.dialogScrim} aria-label="关闭微信导入说明" onClick={() => setWechatDialogOpen(false)} /><section className={styles.dialog} role="dialog" aria-modal="true" aria-label="导入微信记录"><div className={styles.dialogHeading}><div><span className={styles.kicker}>微信记录导入</span><h2>先使用导出的聊天和文件</h2></div><button type="button" aria-label="关闭" onClick={() => setWechatDialogOpen(false)}><X size={17} /></button></div><p>个人微信：尚未连接；当前只读取你主动导出的内容。请把导出的聊天记录粘贴到输入区，或选择可读文本文件导入。</p><p>图片、PDF和其他附件请先在知识库归档，再回到本页选择；本入口不会生成二维码、索取密码或自动发送消息。</p><label className={styles.fileImport}><Upload size={16} /><span>选择导出的文本记录（TXT / Markdown / CSV / JSON）</span><input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,text/plain,text/markdown" onChange={(event) => void importTextFiles(event.target.files)} /></label><button type="button" className={styles.secondaryButton} onClick={() => setWechatDialogOpen(false)}>返回工作台</button></section></div>}
+      <dialog ref={importDialog} className={styles.dialog} aria-label="导入微信记录" onCancel={() => setWechatDialogOpen(false)} onClose={() => setWechatDialogOpen(false)}>
+        <header><h2>导入微信记录</h2><button type="button" aria-label="关闭微信导入说明" onClick={() => setWechatDialogOpen(false)}><X size={18} /></button></header>
+        <p>个人微信：尚未连接；当前只读取你主动导出的内容。请粘贴聊天记录，或选择可读文本文件导入。</p><p>图片、PDF 和其他附件请先在知识库归档，再选择作为上下文。本入口不会生成二维码、索取密码或自动发送消息。</p>
+        <label className={styles.fileImport}><Upload size={16} /><span>选择导出的文本记录（TXT / Markdown / CSV / JSON）</span><input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,text/plain,text/markdown" onChange={(event) => void importTextFiles(event.target.files)} /></label>
+        <button type="button" onClick={() => setWechatDialogOpen(false)}>返回 Chat-AI</button>
+      </dialog>
     </div>
   );
 }
+
+function ChevronIcon() { return <span aria-hidden="true">⌄</span>; }

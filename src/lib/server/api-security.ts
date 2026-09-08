@@ -39,6 +39,25 @@ function safeTokenEqual(received: string, expected: string) {
   return receivedBuffer.length === expectedBuffer.length && timingSafeEqual(receivedBuffer, expectedBuffer);
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Next's production adapter may normalize Request.url to localhost. Honor
+ * the browser-facing Host only for a strict loopback host on the same port.
+ * Never trust Forwarded headers or arbitrary DNS names for local access. */
+function browserRequestOrigin(request: Request) {
+  const url = new URL(request.url);
+  const host = request.headers.get("host");
+  if (!host || !LOOPBACK_HOSTS.has(url.hostname)) return url.origin;
+  let presented: URL;
+  try { presented = new URL(`${url.protocol}//${host}`); }
+  catch { throw new ApiHttpError(403, "ORIGIN_DENIED", "Invalid local request host."); }
+  if (!LOOPBACK_HOSTS.has(presented.hostname) || presented.port !== url.port ||
+    presented.username || presented.password || presented.pathname !== "/" || presented.search || presented.hash) {
+    throw new ApiHttpError(403, "ORIGIN_DENIED", "Untrusted local request host.");
+  }
+  return presented.origin;
+}
+
 export function authorizeWrite(request: Request) {
   const configuredToken = process.env.API_WRITE_TOKEN;
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
@@ -50,7 +69,7 @@ export function authorizeWrite(request: Request) {
 
   const origin = request.headers.get("origin");
   if (!origin) throw new ApiHttpError(403, "ORIGIN_REQUIRED", "A same-origin request is required.");
-  const expectedOrigin = new URL(request.url).origin;
+  const expectedOrigin = browserRequestOrigin(request);
   if (origin !== expectedOrigin) throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin writes are not allowed.");
 }
 
@@ -61,7 +80,7 @@ export function authorizeAssistantRequest(request: Request) {
 
   const origin = request.headers.get("origin");
   if (!origin) throw new ApiHttpError(403, "ORIGIN_REQUIRED", "A same-origin assistant request is required.");
-  if (origin !== new URL(request.url).origin) {
+  if (origin !== browserRequestOrigin(request)) {
     throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin model requests are not allowed.");
   }
 }
@@ -73,11 +92,12 @@ export function authorizeLocalKnowledgeRead(request: Request) {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (configuredToken && bearer && safeTokenEqual(bearer, configuredToken)) return;
   const url = new URL(request.url);
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) throw new ApiHttpError(403, "LOCAL_ONLY", "知识库目前仅允许本机访问，远程部署前需配置身份权限。");
+  if (!LOOPBACK_HOSTS.has(url.hostname)) throw new ApiHttpError(403, "LOCAL_ONLY", "知识库目前仅允许本机访问，远程部署前需配置身份权限。");
+  const expectedOrigin = browserRequestOrigin(request);
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
-  if ((origin && origin !== url.origin) || (site && site !== "same-origin")) throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin knowledge access is not allowed.");
-  if (origin === url.origin || site === "same-origin") return;
+  if ((origin && origin !== expectedOrigin) || (site && site !== "same-origin")) throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin knowledge access is not allowed.");
+  if (origin === expectedOrigin || site === "same-origin") return;
   throw new ApiHttpError(403, "ORIGIN_REQUIRED", "请从本机知识库页面访问文件，或使用已配置的 API token。");
 }
 

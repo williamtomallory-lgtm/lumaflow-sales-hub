@@ -4,7 +4,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "LumaFlow · 销售资料工作台",
+  title: "LumaFlow · Chat-AI",
   description: "为销售团队打造的产品知识、智能问答与资料包工作台",
 };
 
