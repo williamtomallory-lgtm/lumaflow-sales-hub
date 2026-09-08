@@ -240,6 +240,45 @@ export const listQuerySchema = z.object({
 export const productListQuerySchema = listQuerySchema.extend({ category: z.string().trim().max(80).optional() });
 export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum(["open", "completed"]).optional() });
 
+export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep"]);
+
+const assistantUiMessageSchema = z.object({
+  id: idSchema,
+  role: z.literal("user"),
+  parts: z.array(z.object({
+    type: z.literal("text"),
+    text: z.string().trim().min(1).max(20_000),
+  }).strict()).length(1),
+});
+
+export const assistantRequestSchema = z.object({
+  // Until conversation history is persisted on the server, only a fresh user turn is accepted.
+  // Client-supplied assistant messages and tool outputs must never become trusted model history.
+  messages: z.array(assistantUiMessageSchema).length(1),
+  mode: assistantReasoningModeSchema.default("normal"),
+  customerId: idSchema.optional(),
+});
+
+export const assistantHealthResponseSchema = z.object({
+  data: z.object({
+    configured: z.boolean(),
+    reachable: z.boolean(),
+    provider: z.literal("vllm-openai-compatible"),
+    connectionKind: z.enum(["live", "protocol-mock"]),
+    model: z.string(),
+    latencyMs: z.number().int().nonnegative().nullable(),
+  }),
+  meta: z.object({
+    apiVersion: z.literal("v1"),
+    requestId: nonEmptyString,
+    checkedAt: z.string().datetime(),
+  }),
+});
+
+export type AssistantReasoningMode = z.infer<typeof assistantReasoningModeSchema>;
+export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
+export type AssistantHealthResponse = z.infer<typeof assistantHealthResponseSchema>;
+
 export type ApiErrorBody = {
   error: { code: string; message: string; details?: unknown };
   meta: { requestId: string };

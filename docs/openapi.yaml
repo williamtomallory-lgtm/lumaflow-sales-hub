@@ -107,6 +107,59 @@ paths:
       responses:
         "200": { description: Updated follow-up }
         "404": { $ref: "#/components/responses/NotFound" }
+  /assistant/health:
+    get:
+      summary: Check private Qwen/vLLM configuration and reachability
+      responses:
+        "200": { description: Model service health without exposing its URL or key }
+  /assistant/chat:
+    post:
+      summary: Stream the grounded sales agent and its controlled tool calls
+      security: [{ assistantBearer: [] }, { sameOriginAssistant: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 1
+                  items:
+                    type: object
+                    required: [id, role, parts]
+                    properties:
+                      id: { type: string, minLength: 1, maxLength: 120 }
+                      role: { const: user }
+                      parts:
+                        type: array
+                        minItems: 1
+                        maxItems: 1
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [type, text]
+                          properties:
+                            type: { const: text }
+                            text: { type: string, minLength: 1, maxLength: 20000 }
+                mode: { type: string, enum: [fast, normal, deep], default: normal }
+                customerId: { type: string, maxLength: 120, description: Server resolves the authoritative customer context by id. }
+      responses:
+        "200":
+          description: AI SDK UI message event stream containing text and tool parts
+          content:
+            text/event-stream: {}
+        "403": { description: Same-origin or bearer authorization failed }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "503": { description: Qwen/vLLM is not configured }
+  /assistant/skills:
+    get:
+      summary: Inspect the application-owned skills actually loaded from local files
+      responses:
+        "200": { description: Agent identity, skill versions and tools. Memory persistence is explicitly not implemented. }
 components:
   securitySchemes:
     bearerAuth:
@@ -117,6 +170,14 @@ components:
       in: header
       name: Origin
       description: Development-only same-origin mode; requires DEMO_WRITES_ENABLED=true.
+    assistantBearer:
+      type: http
+      scheme: bearer
+    sameOriginAssistant:
+      type: apiKey
+      in: header
+      name: Origin
+      description: Browser model calls must be same-origin. This is a local prototype protection, not user authentication.
   parameters:
     Id:
       name: id

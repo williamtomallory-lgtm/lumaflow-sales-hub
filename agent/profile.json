@@ -1,0 +1,6 @@
+{
+  "id": "lumaflow-sales",
+  "version": "1.0.0",
+  "name": "LumaFlow 本地销售 Agent",
+  "skills": ["product-advisor", "reply-drafter", "quote-drafter", "custom-handoff"]
+}

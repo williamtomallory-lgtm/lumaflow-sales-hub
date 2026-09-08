@@ -184,6 +184,7 @@
 
 .demoPill,
 .countPill {
+  border: 0;
   padding: 5px 8px;
   border-radius: 14px;
   color: var(--crm-green-2);
@@ -191,6 +192,8 @@
   font-size: 8px;
   font-weight: 750;
 }
+
+button.demoPill { cursor: pointer; }
 
 .demoPill span {
   width: 5px;
@@ -321,6 +324,33 @@
   font-size: 9px;
 }
 
+.messageFooter select {
+  margin-left: 4px;
+  border: 1px solid #dfe5df;
+  border-radius: 6px;
+  padding: 3px 5px;
+  color: var(--crm-green);
+  background: #fff;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.modelError {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid #f0d4d0;
+  border-radius: 8px;
+  color: #9a5148;
+  background: #fff7f5;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.modelError svg { flex: 0 0 auto; }
+
 .tipLine,
 .disclaimer {
   display: flex;
@@ -377,6 +407,14 @@
 .primaryButton:hover {
   background: #103e2c;
   transform: translateY(-1px);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.iconButton:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .secondaryButton {
@@ -520,6 +558,30 @@
   color: var(--crm-subtle);
   font-size: 9px;
   line-height: 1.5;
+}
+
+.toolTrace {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--crm-soft-line);
+}
+
+.toolTrace > div:not(.subheading) {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  color: #4d765f;
+  background: #f4faf5;
+  font-size: 8px;
+}
+
+.toolTrace > div:not(.subheading) em {
+  color: var(--crm-muted);
+  font-style: normal;
 }
 
 .nextAction {

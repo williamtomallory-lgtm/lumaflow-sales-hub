@@ -2,6 +2,8 @@
 
 面向照明销售团队的产品知识、客户协作与报价工作台。当前版本把“客户咨询 → 找产品与资料 → 生成待审回复 → 报价 → 跟进 → 管理复盘”做成一个无需外部 AI Key 即可完整运行的本地演示闭环。
 
+产品目标是可自行部署、可持续积累的本地销售 Agent。两张业务截图对应的 Agent/Skill 拆解、长期记忆、数据库、部署和验收方案见 [`docs/local-agent-blueprint.md`](docs/local-agent-blueprint.md)。当前已经接通模型协议与业务 Skill；永久客户记忆、真实工作簿导入和完整 CRM 写入仍待实现。
+
 ## 已实现
 
 - 产品中心：结构化管理产品、型号、SKU、参数、材质、尺寸、场景、供应商、成本、MOQ、库存、状态与关联产品，支持筛选和 PostgreSQL 新增 API
@@ -34,6 +36,7 @@ npm run dev
 ```
 
 打开 [http://localhost:3000](http://localhost:3000)。
+开发和生产启动命令默认只监听 `127.0.0.1`。多人/内网部署须先补登录、客户级权限和访问网关；当前同源检查不等同于身份认证。
 
 ## 数据文件
 
@@ -58,6 +61,9 @@ npm run dev
 - `GET/POST /api/v1/products`、`GET/PATCH /api/v1/products/{id}`
 - `GET /api/v1/customers`
 - `GET /api/v1/followups`、`PATCH /api/v1/followups/{id}`
+- `GET /api/v1/assistant/health`：Qwen/vLLM 配置与可达性
+- `GET /api/v1/assistant/skills`：从文件实际加载的 Agent/Skill 版本及工具清单
+- `POST /api/v1/assistant/chat`：Qwen 流式 Agent、工具调用和真实产品卡片
 
 架构、数据库与安全设计见 [`docs/backend-architecture.md`](docs/backend-architecture.md)，机器可读接口契约见 [`docs/openapi.yaml`](docs/openapi.yaml)。
 
@@ -89,8 +95,59 @@ npm run verify:api
 
 `verify:api` 需在本地服务运行时执行；它会把 API 返回的产品数量、首条 ID 和 SKU 与 JSON 种子逐项比对，并检查筛选、输入拒绝、默认禁写、请求 ID、无缓存和安全响应头。
 
+## 接入 Qwen / vLLM
+
+模型通过 OpenAI-compatible vLLM 私有端点接入，浏览器不会获得模型地址或密钥：
+
+```env
+LLM_BACKEND=vllm
+LLM_BASE_URL=http://127.0.0.1:8000/v1
+LLM_API_KEY=local
+LLM_MODEL=lumaflow-qwen
+LLM_MAX_OUTPUT_TOKENS=8192
+```
+
+销售 Agent 使用 Vercel AI SDK `ToolLoopAgent`，最多执行 5 步，只开放 `searchProducts`、`getProductDetails`、`checkInventory`、`searchKnowledge`、`getProductAssets` 和 `createQuoteDraft` 六个受控工具。模型没有 SQL、任意 HTTP 或直接写数据库的能力；成本与供应商字段不会进入模型工具结果；报价工具只生成未持久化草稿。
+
+当前 Agent Controller 放在已有 Next.js BFF 中，避免原型阶段再复制一套 FastAPI 鉴权和数据层；vLLM 始终是独立私网服务。工具逻辑保持无框架，后续加入 pgvector/后台文档 Worker 时可平移到 FastAPI，而不改变前端接口。
+
+`ai` 和 `@ai-sdk/*` 在这里是本机运行的代码库，不需要 Vercel 云部署、AI Gateway 或付费 OpenAI API。调用目标由服务器的 `LLM_BASE_URL` 决定。使用者需要自己安装模型及其运行环境，模型推理所需硬件和电力并非零成本。
+
+对于 Ollama、llama.cpp 等经过验证的兼容服务，设置 `LLM_BACKEND=openai-compatible` 和实际的 `/v1` 地址、模型名称。该模式不会发送 vLLM 专用参数；FAST/NORMAL/DEEP 仅调整输出预算，不承诺切换模型的 thinking。特定 Qwen3.8 量化版本、视觉和工具模板须另做实机验证，当前没有完成普通电脑上的真实 27B 推理验收。
+
+当前 API 每次只接受一条用户文本；拒绝浏览器提交的 assistant/tool 历史，防止伪造数据库查询结果。后续多轮历史必须从服务端持久化会话加载。
+
+### 你自己的业务 Skill
+
+`agent/profile.json` 选择启用的流程，`agent/skills/*.json` 保存 `id`、`version`、`name`、`description`、`tools` 和 `instructions`。现在启用产品顾问、回复草拟、报价草稿、定制交接草拟四个 Skill。后端每次调用读取并校验文件，把指令与工具白名单真正用于 Agent；修改文件后下一次调用即生效，前端无需重新构建。返回头 `X-Agent-Profile`、`X-Agent-Skills` 可核对当前版本。
+
+这些是 LumaFlow 应用自己的流程配置，使用者无需安装 Codex 或 Codex Skills。配置只能引用代码已注册的六个工具，不能通过新增 JSON 获得任意 SQL、脚本执行或文件访问能力。当前四个流程只能查询或生成草稿；客户记忆、跟进写入等必须先实现并验证对应后端工具才能开放。
+
+没有真实 GPU 服务时，可验证完整 OpenAI-compatible 流式工具协议：
+
+```bash
+npm run mock:vllm
+```
+
+第二个 PowerShell 终端启动应用（模拟端口是 **8010**，不是实际 vLLM 示例端口 8000）：
+
+```powershell
+$env:LLM_BASE_URL="http://127.0.0.1:8010/v1"
+$env:LLM_BACKEND="vllm"
+$env:LLM_MODEL="lumaflow-qwen"
+$env:LLM_CONNECTION_KIND="protocol-mock"
+npm run dev
+```
+
+第三个终端运行 `npm run verify:assistant`。脚本验证 Skill 已进入模型请求、产品与库存两次工具调用、流式结果、跨域拒绝以及伪造工具历史拒绝。模拟文本读取工具结果，不内置产品答复。
+
+模拟器只验证协议、工具执行、真实 SKU 回传和 SSE 流，不代表真实 Qwen 模型质量。真实上线前必须连接实际 vLLM，并运行公司问题评测集。
+验证时把 `LLM_CONNECTION_KIND=protocol-mock` 传给开发服务，页面会明确显示“协议模拟已连接”；正式环境不要设置该值。
+
 ## 当前数据边界
 
 当前目录内的数据仍是可替换的演示数据，但读取入口已经统一为“PostgreSQL 优先、JSON 兜底”的服务端数据仓库。产品新增表单在 PostgreSQL 数据源下已调用持久化 API；其他尚未接写 API 的编辑交互会明确保持在当前会话。身份认证与细粒度权限校验仍须在正式上线前完成。
+
+目前 Repository 的空表会回填 JSON 演示记录，初始化脚本也会按种子 ID 更新数据。因此接真实公司数据前，还必须拆开数据库迁移与演示导入、允许正式空集合并取消自动混入演示数据。不要把当前种子初始化脚本直接用于已有业务数据库。
 
 进入生产使用前，还应接入企业对象存储、真实消息渠道、审批通知和财务汇率。销售助手的“确认并记录”不会自动向外部客户发送消息；图片/附件检索使用文件名与目录特征，不做未经验证的视觉诊断；正式报价不能直接依赖演示价格或固定汇率。

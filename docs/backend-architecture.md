@@ -26,6 +26,9 @@ flowchart LR
   DAL --> PG[(PostgreSQL)]
   DAL -.开发回退/初始化.-> JSON[JSON Seed Files]
   SVC --> AUDIT[(Audit Events)]
+  API --> AGENT[Qwen ToolLoopAgent]
+  AGENT -->|受控只读工具| SVC
+  AGENT -->|OpenAI-compatible 私网| VLLM[vLLM / Qwen]
 ```
 
 代码分层：
@@ -36,6 +39,7 @@ flowchart LR
 - `src/lib/server`：`server-only` 数据访问、安全门禁和 PostgreSQL 连接。
 - `src/lib/*.ts`：无 I/O 的领域类型和纯业务计算。
 - `src/hooks`：浏览器 API 客户端和加载/失败/刷新状态。
+- `src/lib/ai`：Qwen 模型适配器、Agent 系统规则、工具定义与可独立测试的纯工具逻辑。
 
 ## 3. 技术栈
 
@@ -50,6 +54,10 @@ flowchart LR
 - 观测建议：结构化日志 + OpenTelemetry + Sentry；多实例限流接 Redis/Upstash。
 
 不建议现阶段引入独立 Express/Nest 服务：它会复制鉴权、DTO、部署和错误处理，但还没有形成需要独立扩缩容的服务边界。当消息接入、AI 检索或报价计算形成独立负载后，再分别拆出 worker/service。
+
+### Qwen 服务边界决策
+
+当前代码库已经以 Next.js Route Handler 作为 BFF，因此第一版 Agent Controller 直接放在该服务内，避免同时维护两套鉴权、契约与 Repository。模型本身仍是独立的 vLLM 服务，二者只通过 OpenAI-compatible HTTP 通信。`src/lib/ai/product-tooling.ts` 是无框架纯函数，工具和模型适配也各自独立；当文档 Worker、pgvector RAG 或高并发推理需要独立扩缩容时，可把 Agent Controller 平移到 FastAPI，而前端的 `/api/v1/assistant/chat` 契约不变。
 
 ## 4. PostgreSQL 数据设计
 
@@ -82,6 +90,8 @@ v1 采用聚合根 JSONB：`products`、`customers` 等表以 `id` 为关系主�
 | GET | `/api/v1/customers` | 客户查询 | 已实现 |
 | GET | `/api/v1/followups` | 跟进任务查询 | 已实现 |
 | PATCH | `/api/v1/followups/{id}` | 更新任务状态 | 已实现 |
+| GET | `/api/v1/assistant/health` | 检查 Qwen/vLLM 配置与可达性 | 已实现 |
+| POST | `/api/v1/assistant/chat` | SSE 流式 Agent 与受控工具调用 | 已实现 |
 
 读取端点可在本地演示环境使用 JSON 回退；写入端点只允许写 PostgreSQL，不会修改 Git 中的 JSON 种子文件。
 
@@ -96,6 +106,10 @@ v1 采用聚合根 JSONB：`products`、`customers` 等表以 `id` 为关系主�
 - 写入记录 `audit_events`，并关联 Request ID。
 - 单实例内存限流，错误响应不泄露堆栈或数据库凭据。
 - 默认同源，无宽泛 CORS；响应包含防嗅探、防嵌入、Referrer 和 Permissions Policy 等安全头。
+- 模型端点和密钥只存在服务端；Assistant POST 要求同源或服务器 Bearer Token，并单独限流。
+- 前端只提交 `customerId`，客户名称、公司、行业和阶段由后端 Repository 重新解析，拒绝客户端伪造上下文。
+- 模型没有任意 SQL/HTTP 工具。产品工具剔除成本和供应商字段；报价仅生成未持久化草稿。
+- RAG/工具返回被系统提示明确标记为不可信数据，不能覆盖系统规则或触发额外权限。
 - `.env.local` 被 Git 忽略，仓库只保存无秘密的 `.env.example`。
 
 上线前必须补齐：
@@ -117,5 +131,7 @@ v1 采用聚合根 JSONB：`products`、`customers` 等表以 `id` 为关系主�
 ## 8. 当前边界
 
 - 已实现真实的前后端读取通信和 PostgreSQL 写入端点。
+- 已实现 Qwen/vLLM OpenAI-compatible 流式适配、五步 Agent Loop、六个受控工具及页面工具轨迹。
 - 当前本机未提供真实 `DATABASE_URL`，因此只能验证 JSON 读取和数据库故障回退，不能声称已连接用户的 PostgreSQL。
+- 当前本机未提供真实 Qwen/vLLM GPU 服务，因此协议可用模拟服务完整验证，但不能声称已验证真实模型输出质量或吞吐。
 - 现有 UI 的新增/编辑交互仍以本地会话为主；API 已具备持久化端点，下一步逐模块把表单提交切到写 API，并接入真实身份授权。

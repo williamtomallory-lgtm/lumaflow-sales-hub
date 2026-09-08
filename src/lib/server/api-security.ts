@@ -54,6 +54,18 @@ export function authorizeWrite(request: Request) {
   if (origin !== expectedOrigin) throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin writes are not allowed.");
 }
 
+export function authorizeAssistantRequest(request: Request) {
+  const configuredToken = process.env.ASSISTANT_API_TOKEN;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (configuredToken && bearer && safeTokenEqual(bearer, configuredToken)) return;
+
+  const origin = request.headers.get("origin");
+  if (!origin) throw new ApiHttpError(403, "ORIGIN_REQUIRED", "A same-origin assistant request is required.");
+  if (origin !== new URL(request.url).origin) {
+    throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin model requests are not allowed.");
+  }
+}
+
 export async function readValidatedJson<T>(request: Request, schema: ZodType<T>): Promise<T> {
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
   if (declaredLength > MAX_JSON_BYTES) throw new ApiHttpError(413, "PAYLOAD_TOO_LARGE", "JSON body exceeds 256 KB.");
@@ -87,6 +99,8 @@ export function apiError(error: unknown, id: string) {
     ? error
     : error instanceof ZodError
       ? new ApiHttpError(422, "VALIDATION_FAILED", "Data failed validation.", error.flatten())
+      : error instanceof Error && error.name === "ModelNotConfiguredError"
+        ? new ApiHttpError(503, "MODEL_NOT_CONFIGURED", error.message)
       : error instanceof Error && error.name === "PersistenceUnavailableError"
         ? new ApiHttpError(503, "PERSISTENCE_UNAVAILABLE", error.message)
         : typeof error === "object" && error !== null && "code" in error && error.code === "23505"

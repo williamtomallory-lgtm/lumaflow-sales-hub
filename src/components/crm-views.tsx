@@ -33,7 +33,12 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, isToolUIPart } from "ai";
 import { useMemo, useState } from "react";
+import { useModelHealth } from "@/hooks/use-model-health";
+import type { SalesAgentUIMessage } from "@/lib/ai/sales-agent";
+import type { AssistantReasoningMode } from "@/lib/contracts/api";
 import type { Product } from "@/lib/catalog";
 import {
   analyzeCustomerMessage,
@@ -184,8 +189,8 @@ function EmptyPanel({ icon: Icon, title, detail }: { icon: LucideIcon; title: st
   return <div className={styles.emptyPanel}><Icon size={24} /><strong>{title}</strong><p>{detail}</p></div>;
 }
 
-function CustomerSelect({ customers, value, onChange }: { customers: Customer[]; value: string; onChange: (id: string) => void }) {
-  return <label className={styles.selectField}><UserRound size={16} /><select value={value} onChange={(event) => onChange(event.target.value)} aria-label="选择客户">{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.company} · {customer.name}</option>)}</select><ChevronDown size={16} /></label>;
+function CustomerSelect({ customers, value, onChange, disabled = false }: { customers: Customer[]; value: string; onChange: (id: string) => void; disabled?: boolean }) {
+  return <label className={styles.selectField}><UserRound size={16} /><select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} aria-label="选择客户">{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.company} · {customer.name}</option>)}</select><ChevronDown size={16} /></label>;
 }
 
 export function SalesAssistantView({ customers, products, assets, initialCustomerId, initialMessage, onConfirmReply, onOpenCustomer, onOpenProduct, onToast }: SalesAssistantViewProps) {
@@ -197,12 +202,45 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
   const [draft, setDraft] = useState(analysis.replyDraft);
   const [selectedAssets, setSelectedAssets] = useState<string[]>(analysis.recommendedAssets.slice(0, 4).map((asset) => asset.id));
   const [confirmed, setConfirmed] = useState(false);
+  const [draftEdited, setDraftEdited] = useState(false);
+  const [reasoningMode, setReasoningMode] = useState<AssistantReasoningMode>("normal");
+  const transport = useMemo(() => new DefaultChatTransport<SalesAgentUIMessage>({ api: "/api/v1/assistant/chat" }), []);
+  const { messages: modelMessages, sendMessage, status: modelStatus, error: modelError, stop, setMessages } = useChat<SalesAgentUIMessage>({ transport, throttle: 40 });
+  const { health: modelHealth, checking: checkingModel, refresh: refreshModelHealth } = useModelHealth();
+  const modelBusy = modelStatus === "streaming" || modelStatus === "submitted";
   const customer = getCustomerById(customerId, customers) ?? initialCustomer;
 
-  function updateAnalysis(nextMessage = message, nextCustomer = customer) {
+  const modelText = useMemo(() => modelMessages
+    .filter((entry) => entry.role === "assistant")
+    .flatMap((entry) => entry.parts)
+    .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim(), [modelMessages]);
+
+  const toolParts = useMemo(() => modelMessages
+    .filter((entry) => entry.role === "assistant")
+    .flatMap((entry) => entry.parts)
+    .filter(isToolUIPart), [modelMessages]);
+
+  const toolProductRecommendations = useMemo(() => {
+    const byId = new Map(products.map((product) => [product.id, product]));
+    return modelMessages.flatMap((entry) => entry.parts).flatMap((part) => {
+      if (part.type !== "tool-searchProducts" || part.state !== "output-available") return [];
+      return part.output.products.flatMap((record) => {
+        const product = byId.get(record.id);
+        return product ? [{ product: { ...product, ...record }, score: record.matchScore, reasons: record.matchedFields }] : [];
+      });
+    });
+  }, [modelMessages, products]);
+
+  const visibleDraft = modelText && !draftEdited ? modelText : draft;
+
+  function updateLocalAnalysis(nextMessage = message, nextCustomer = customer) {
     const next = analyzeCustomerMessage(nextMessage, nextCustomer.name, products, assets);
     setAnalysis(next);
     setDraft(next.replyDraft);
+    setDraftEdited(false);
     setSelectedAssets(next.recommendedAssets.slice(0, 4).map((asset) => asset.id));
     setConfirmed(false);
   }
@@ -213,7 +251,26 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
     const nextMessage = inbound?.content ?? "";
     setCustomerId(nextCustomer.id);
     setMessage(nextMessage);
-    updateAnalysis(nextMessage, nextCustomer);
+    updateLocalAnalysis(nextMessage, nextCustomer);
+    setMessages([]);
+  }
+
+  async function runModelAnalysis() {
+    if (modelBusy) return;
+    const cleanMessage = message.trim();
+    if (!cleanMessage) {
+      onToast?.("请先输入客户消息");
+      return;
+    }
+    updateLocalAnalysis(cleanMessage, customer);
+    setMessages([]);
+    setConfirmed(false);
+    await sendMessage({ text: cleanMessage }, {
+      body: {
+        mode: reasoningMode,
+        customerId: customer.id,
+      },
+    });
   }
 
   function toggleAsset(assetId: string) {
@@ -222,55 +279,58 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
   }
 
   function confirmReply() {
-    if (!draft.trim()) {
+    if (!visibleDraft.trim()) {
       onToast?.("请先填写回复内容");
       return;
     }
     setConfirmed(true);
-    onConfirmReply?.({ customer, message: draft.trim(), assetIds: selectedAssets });
-    onToast?.(`已记录给${customer.name}的待发送回复`);
+    onConfirmReply?.({ customer, message: visibleDraft.trim(), assetIds: selectedAssets });
+    onToast?.(onConfirmReply ? `已交给回复记录流程：${customer.name}` : `已在本页面确认给${customer.name}的草稿，尚未保存到数据库`);
   }
 
-  const analysisProducts = analysis.recommendedProducts;
+  const hasModelProductSearch = toolParts.some((part) => part.type === "tool-searchProducts" && part.state === "output-available");
+  const analysisProducts = hasModelProductSearch ? toolProductRecommendations : analysis.recommendedProducts;
   const selectedAssetObjects = analysis.recommendedAssets.filter((asset) => selectedAssets.includes(asset.id));
 
   return (
     <div className={styles.root} data-testid="sales-assistant-view">
       <div className={styles.viewHeader}>
         <div><span className={styles.eyebrow}>Sales Assistant · 二期</span><h1>把客户消息变成下一步动作</h1><p>识别意图和紧急度，引用产品资料，生成一份可编辑、待确认的回复草稿。</p></div>
-        <CustomerSelect customers={customers} value={customerId} onChange={selectCustomer} />
+        <CustomerSelect customers={customers} value={customerId} onChange={selectCustomer} disabled={modelBusy} />
       </div>
 
       <div className={styles.metricStrip} aria-label="销售助手指标">
-        <Metric icon={MessageSquareText} label="待处理消息" value="08" detail="较昨日 -2" tone="gold" />
-        <Metric icon={Sparkles} label="今日辅助回复" value="24" detail="节省约 46 分钟" tone="green" />
-        <Metric icon={Paperclip} label="资料推荐命中" value="91%" detail="基于已审核资料" tone="blue" />
-        <Metric icon={CheckCircle2} label="待确认草稿" value={confirmed ? "00" : "03"} detail={confirmed ? "当前已完成 1 条" : "需人工确认"} tone="rose" />
+        <Metric icon={MessageSquareText} label="模型服务" value={modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "模拟" : "在线" : "离线"} detail={modelHealth?.model ?? "等待检测"} tone="gold" />
+        <Metric icon={Sparkles} label="本轮模型状态" value={modelBusy ? "生成中" : modelError ? "失败" : modelText ? "已完成" : "待开始"} detail={`${toolParts.length} 次受控工具调用`} tone="green" />
+        <Metric icon={Paperclip} label="资料候选" value={String(analysis.recommendedAssets.length).padStart(2, "0")} detail="来自后端产品资料" tone="blue" />
+        <Metric icon={CheckCircle2} label="人工确认" value={confirmed ? "已确认" : "待确认"} detail="模型不能自动发送" tone="rose" />
       </div>
 
       <div className={styles.assistantLayout}>
         <section className={cx(styles.card, styles.messageCard)}>
-          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>01 · 客户消息</span><h2>先听懂客户在说什么</h2></div><span className={styles.demoPill}><span /> 演示数据</span></div>
+          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>01 · 客户消息</span><h2>发送给 Qwen 销售 Agent</h2></div><button className={styles.demoPill} onClick={() => void refreshModelHealth()}><span /> {checkingModel ? "检测中" : modelHealth?.reachable ? modelHealth.connectionKind === "protocol-mock" ? "协议模拟已连接" : "Qwen 已连接" : "Qwen 未连接"}</button></div>
           <div className={styles.customerBanner}><Avatar customer={customer} /><div><strong>{customer.name} · {customer.company}</strong><span>{customer.role} · {customer.lastContactLabel}</span></div><button className={styles.linkButton} onClick={() => onOpenCustomer?.(customer.id)}>查看档案 <ArrowRight size={13} /></button><StageBadge stage={customer.stage} /></div>
           <label className={styles.textareaLabel} htmlFor="crm-customer-message">客户原消息</label>
           <textarea id="crm-customer-message" className={styles.messageTextarea} value={message} onChange={(event) => { setMessage(event.target.value); setConfirmed(false); }} placeholder="粘贴客户的微信、邮件或电话纪要…" />
-          <div className={styles.messageFooter}><span>{message.length} 字 · 修改后点击分析</span><button className={styles.primaryButton} onClick={() => updateAnalysis()}><Sparkles size={15} /> 分析客户消息</button></div>
+          <div className={styles.messageFooter}><span>{message.length} 字 · 模型档位 <select aria-label="模型推理档位" value={reasoningMode} onChange={(event) => setReasoningMode(event.target.value as AssistantReasoningMode)}><option value="fast">FAST</option><option value="normal">NORMAL</option><option value="deep">DEEP</option></select></span>{modelStatus === "streaming" || modelStatus === "submitted" ? <button className={styles.secondaryButton} onClick={() => void stop()}><X size={15} /> 停止</button> : <button className={styles.primaryButton} disabled={!modelHealth?.reachable} onClick={() => void runModelAnalysis()}><Sparkles size={15} /> 调用 Qwen 分析</button>}</div>
+          {modelError && <div className={styles.modelError}><AlertCircle size={14} /><span>{modelError.message}</span></div>}
           <div className={styles.tipLine}><ShieldCheck size={14} /><span>分析只引用当前产品资料，不会替客户承诺未经审批的正式价格。</span></div>
         </section>
 
         <section className={cx(styles.card, styles.analysisCard)}>
-          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>02 · 识别结果</span><h2>意图与优先级</h2></div><span className={styles.confidence}><ShieldCheck size={14} /> {analysis.confidence}% 可信</span></div>
+          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>02 · 本地预检</span><h2>规则初筛与 Agent 轨迹</h2></div><span className={styles.confidence}><ShieldCheck size={14} /> {analysis.confidence}% 规则匹配</span></div>
           <div className={styles.analysisSummary}><MessageCircle size={17} /><p>{analysis.summary || "等待客户消息"}</p></div>
           <div className={styles.signalGrid}>
             <div><span>客户意图</span><strong>{analysis.intentLabel}</strong><small>{analysis.intent}</small></div>
             <div><span>紧急程度</span><strong className={urgencyClass(analysis.urgency)}>{analysis.urgency}优先</strong><small>{analysis.urgencyReason}</small></div>
           </div>
           <div className={styles.signalSection}><div className={styles.subheading}><span>识别到的信号</span><em>{analysis.signals.length} 项</em></div>{analysis.signals.length > 0 ? <div className={styles.signalChips}>{analysis.signals.map((signal) => <span key={signal}><Check size={12} /> {signal}</span>)}</div> : <p className={styles.mutedText}>还没有足够的关键词，建议补充场景、数量或时间。</p>}</div>
+          <div className={styles.toolTrace}><div className={styles.subheading}><span>受控工具调用</span><em>{toolParts.length} 次</em></div>{toolParts.length ? toolParts.map((part) => <div key={part.toolCallId}><CheckCircle2 size={13} /><span>{part.type.replace(/^tool-/, "")}</span><em>{part.state === "output-available" ? "已核对后端数据" : part.state === "output-error" ? "执行失败" : "执行中"}</em></div>) : <p className={styles.mutedText}>模型运行后，产品搜索、库存和资料核对会显示在这里。</p>}</div>
           <div className={styles.nextAction}><div><CalendarClock size={16} /><span><strong>建议下一步</strong><small>{analysis.urgency === "高" ? "优先在今天内回复并锁定库存" : "补齐项目参数后再给方案或报价"}</small></span></div><ArrowRight size={16} /></div>
         </section>
 
         <section className={cx(styles.card, styles.recommendationCard)}>
-          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>03 · 产品与资料</span><h2>推荐给业务员的依据</h2></div><span className={styles.countPill}>{analysisProducts.length} 款产品 · {analysis.recommendedAssets.length} 份资料</span></div>
+          <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>03 · 产品与资料</span><h2>{hasModelProductSearch ? "模型工具查询的产品" : "后端数据的本地规则候选"}</h2></div><span className={styles.countPill}>{analysisProducts.length} 款产品 · {analysis.recommendedAssets.length} 份资料</span></div>
           {analysisProducts.length > 0 ? <div className={styles.recommendationList}>{analysisProducts.map((recommendation) => <button className={styles.recommendationRow} key={recommendation.product.id} onClick={() => onOpenProduct?.(recommendation.product)}><ProductVisual product={recommendation.product} compact /><span className={styles.recommendationCopy}><strong>{recommendation.product.name}</strong><small>{recommendation.product.model} · {recommendation.product.power} · {recommendation.product.status}</small><em>{recommendation.reasons.join("、")}</em></span><span className={styles.matchScore}>{Math.min(99, recommendation.score + 48)}<small>匹配</small></span><ChevronRight size={16} /></button>)}</div> : <EmptyPanel icon={Search} title="暂未匹配产品" detail="补充品类、功率、颜色或使用场景，才能给出可靠推荐。" />}
           {analysis.recommendedAssets.length > 0 && <div className={styles.assetPick}><div className={styles.subheading}><span>建议随回复发送的附件</span><em>{selectedAssets.length} 份已选</em></div><div className={styles.assetPickList}>{analysis.recommendedAssets.map((asset) => { const Icon = assetIcon(asset.type); const selected = selectedAssets.includes(asset.id); return <label key={asset.id} className={cx(styles.assetPickRow, selected && styles.assetSelected)}><input type="checkbox" checked={selected} onChange={() => toggleAsset(asset.id)} /><span className={styles.checkbox}>{selected && <Check size={12} />}</span><Icon size={15} /><span><strong>{asset.name}</strong><small>{asset.productName} · {asset.type} · {asset.size}</small></span>{selected && <CheckCircle2 className={styles.assetCheck} size={15} />}</label>; })}</div></div>}
           {selectedAssetObjects.length === 0 && analysis.recommendedAssets.length > 0 && <p className={styles.mutedText}>尚未选择附件，发送前可以勾选需要的资料。</p>}
@@ -278,10 +338,10 @@ export function SalesAssistantView({ customers, products, assets, initialCustome
 
         <section className={cx(styles.card, styles.draftCard)}>
           <div className={styles.cardHeader}><div><span className={styles.sectionKicker}>04 · 回复草稿</span><h2>业务员确认后再发送</h2></div>{confirmed ? <span className={styles.confirmedPill}><CheckCircle2 size={14} /> 已确认待发送</span> : <span className={styles.reviewPill}><AlertCircle size={14} /> 待人工确认</span>}</div>
-          <div className={styles.draftMeta}><div className={styles.aiMark}><Sparkles size={15} /></div><span><strong>AI 草稿 · 可直接编辑</strong><small>已引用 {analysis.recommendedProducts.length} 款产品和 {selectedAssetObjects.length} 份资料</small></span><button className={styles.iconButton} onClick={() => updateAnalysis()} aria-label="重新生成回复"><RefreshCw size={15} /></button></div>
-          <textarea className={styles.draftTextarea} value={draft} onChange={(event) => { setDraft(event.target.value); setConfirmed(false); }} aria-label="可编辑回复草稿" />
-          <div className={styles.draftActions}><button className={styles.secondaryButton} onClick={() => copyText(draft, onToast, "回复草稿已复制") }><Copy size={15} /> 复制草稿</button><button className={styles.primaryButton} onClick={confirmReply}><CheckCircle2 size={15} /> 确认并记录</button></div>
-          <p className={styles.disclaimer}><ShieldCheck size={14} /> 确认只会记录为待发送草稿，不会自动向客户发消息。</p>
+          <div className={styles.draftMeta}><div className={styles.aiMark}><Sparkles size={15} /></div><span><strong>{modelText ? modelHealth?.connectionKind === "protocol-mock" ? "协议模拟草稿" : "模型流式草稿" : "本地规则草稿"} · 可直接编辑</strong><small>{modelText ? `Agent 已调用 ${toolParts.length} 次受控工具` : "尚未调用模型，不冒充 AI 输出"}</small></span><button className={styles.iconButton} disabled={!modelHealth?.reachable || modelBusy} onClick={() => void runModelAnalysis()} aria-label="重新生成回复"><RefreshCw size={15} /></button></div>
+          <textarea className={styles.draftTextarea} value={visibleDraft} onChange={(event) => { setDraft(event.target.value); setDraftEdited(true); setConfirmed(false); }} aria-label="可编辑回复草稿" />
+          <div className={styles.draftActions}><button className={styles.secondaryButton} disabled={modelBusy} onClick={() => copyText(visibleDraft, onToast, "回复草稿已复制") }><Copy size={15} /> 复制草稿</button><button className={styles.primaryButton} disabled={modelBusy} onClick={confirmReply}><CheckCircle2 size={15} /> 确认本次草稿</button></div>
+          <p className={styles.disclaimer}><ShieldCheck size={14} /> 当前确认保留在本页面，尚未保存到数据库；请复制后人工发送。</p>
         </section>
       </div>
     </div>

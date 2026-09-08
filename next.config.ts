@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  outputFileTracingIncludes: {
+    "/api/v1/assistant/*": ["./agent/**/*.json"],
+  },
   async headers() {
     return [{
       source: "/(.*)",
