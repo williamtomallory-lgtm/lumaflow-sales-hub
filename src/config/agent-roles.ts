@@ -48,7 +48,7 @@ export const AGENT_ROLES: readonly AgentRoleOption[] = [
     inputLabel: "粘贴微信聊天记录",
     inputPlaceholder: "粘贴导出的聊天记录；文件请先归档到知识库后在下方选择…",
     outputLabel: "客服总结与回复草稿",
-    outputHint: "不会登录、读取或自动发送本机微信；回复需要人工核对。",
+    outputHint: "桌面连接仅读取你确认的会话；不自动发送微信，回复需要人工核对。",
   },
   {
     id: "sales-review",

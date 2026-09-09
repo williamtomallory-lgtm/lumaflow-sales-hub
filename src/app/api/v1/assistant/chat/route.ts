@@ -1,4 +1,5 @@
 import { createAgentUIStreamResponse } from "ai";
+import { authorizeWechatModel } from "@/lib/server/wechat-desktop";
 import { assistantRequestSchema } from "@/lib/contracts/api";
 import { salesAgent } from "@/lib/ai/sales-agent";
 import { assertModelConfigured, getAssistantTimeoutMs, getModelHealth } from "@/lib/ai/model-config";
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
       if (error instanceof InferencePolicyError) throw new ApiHttpError(error.status, error.code, error.message);
       throw error;
     }
+    if (body.wechatSnapshotId) authorizeWechatModel(body.wechatSnapshotId, policy.resolvedModelProfileId);
     const modelConfig = assertModelConfigured(policy.resolvedModelProfileId);
     const generationOptions = getModelGenerationOptions(policy.resolvedMode, modelConfig.backend, modelConfig.maxOutputTokens);
     const resolvedPolicy = withModelOutputBudget(policy, modelConfig.maxOutputTokens);
@@ -64,7 +66,7 @@ export async function POST(request: Request) {
       ...baseProfile,
       id: role.id,
       name: role.name,
-      instructions: role.instructions,
+      instructions: role.instructions + (body.wechatSnapshotId ? "\n本轮含用户确认的本机微信桌面只读快照。只能分析提交的条目，不代表全部历史；身份和附件正文未经解析，切勿声称自己登录、发送或读取了数据库。" : ""),
       toolNames: baseProfile.toolNames.filter((name) => role.toolNames.includes(name)),
     } : baseProfile;
     // Local 8K models need space for role instructions, tool schemas and output.
@@ -107,6 +109,7 @@ export async function POST(request: Request) {
         "X-Output-Policy": "attachment-names-v1",
         "X-Agent-Profile": `${profile.id}@${profile.version}`,
         "X-Agent-Role": role?.id ?? "sales-consultant",
+        "X-Wechat-Source": body.wechatSnapshotId ? "desktop-readonly" : "none",
         "X-Knowledge-Coverage": encodeURIComponent(JSON.stringify(knowledge.coverage)),
         "X-Agent-Skills": profile.skills.map((skill) => `${skill.id}@${skill.version}`).join(","),
       },

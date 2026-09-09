@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentWorkspace } from "./agent-workspace";
 import { testAssets, testCustomers, testProducts } from "../test/fixtures";
@@ -180,14 +180,15 @@ describe("Agent workspace", () => {
     expect(screen.getByText("选一位 Agent，一起把工作做好。")).toBeInTheDocument();
   });
 
-  it("explains that personal WeChat is not connected instead of showing fake login", async () => {
+  it("keeps export import separate from desktop connection without showing fake login", async () => {
     render(<AgentWorkspace {...props} />);
     await ready();
     fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
     fireEvent.click(screen.getByRole("button", { name: "导入微信记录" }));
-    expect(screen.getByRole("dialog", { name: "导入微信记录" })).toHaveTextContent("个人微信：尚未连接");
-    expect(screen.getByRole("dialog", { name: "导入微信记录" })).toHaveTextContent("不会生成二维码、索取密码或自动发送消息");
-    expect(screen.queryByText(/扫码|登录成功/)).not.toBeInTheDocument();
+    const importDialog = screen.getByRole("dialog", { name: "导入微信记录" });
+    expect(importDialog).toHaveTextContent("与桌面只读连接分开");
+    expect(importDialog).toHaveTextContent("不会生成二维码、索取密码或自动发送消息");
+    expect(within(importDialog).queryByText(/扫码|登录成功/)).not.toBeInTheDocument();
   });
 
   it("clears output and persists the selected model when switching models", async () => {
@@ -201,6 +202,33 @@ describe("Agent workspace", () => {
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     expect(localStorage.getItem("lumaflow.assistant.model-profile")).toBe("configured");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
+  });
+
+  it("passes a confirmed WeChat snapshot into a local Agent request and blocks external model selection", async () => {
+    const originalFetch = fetch;
+    const snapshotId = "33333333-3333-4333-8333-333333333333";
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (!url.endsWith("/integrations/wechat")) return originalFetch(url, init);
+      const action = init?.body ? JSON.parse(String(init.body)).action : "probe";
+      if (action === "connect") return Response.json({ data: { connectionId: documentId, chatLabel: "虚构测试", loadedItems: 1 } });
+      if (action === "read") return Response.json({ data: { id: snapshotId, chatLabel: "虚构测试", loadedItems: 1, capturedAt: new Date().toISOString(), entries: [{ kind: "text", text: "需要30套轨道灯" }] } });
+      return Response.json({ data: { running: true, canRead: false, windows: [{ processId: 123, version: "4.1", application: "Weixin" }] } });
+    }));
+    render(<AgentWorkspace {...props} />); await ready();
+    fireEvent.click(await screen.findByRole("button", { name: "检测到微信 · 连接" }));
+    fireEvent.click(screen.getByRole("button", { name: "连接当前微信会话" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /我确认这是要分析的会话/ }));
+    fireEvent.click(screen.getByRole("button", { name: "只读预览当前会话" }));
+    fireEvent.click(await screen.findByRole("button", { name: "把选中记录放入任务" }));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("需要30套");
+    fireEvent.click(screen.getByRole("button", { name: /^选择模型 / }));
+    fireEvent.click(screen.getByRole("button", { name: /自定义模型/ }));
+    expect(screen.getByRole("button", { name: /选择模型 本地 Qwen3 8B/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts.at(-1)).toMatchObject({ wechatSnapshotId: snapshotId, modelProfileId: "local-qwen3-8b" }));
+    await screen.findByTestId("agent-answer");
+    fireEvent.click(screen.getByRole("button", { name: "新问题" }));
+    expect(screen.queryByText(/已附加微信只读快照/)).not.toBeInTheDocument();
   });
 
   it("imports a short UTF-8 WeChat TXT, rejects over-budget input, malformed UTF-8, and more than five files", async () => {

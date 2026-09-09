@@ -1,0 +1,21 @@
+.root { display:flex; align-items:center; }
+.trigger { display:flex; align-items:center; gap:7px; border:1px solid #cee0d5; background:#f3f8f5; color:#285d45; border-radius:999px; cursor:pointer; font:inherit; font-size:12px; padding:7px 11px; }
+.trigger[data-connected="true"] { background:#e5f4eb; border-color:#a8d0b8; color:#185a39; }
+.trigger:disabled { opacity:.55; cursor:not-allowed; }
+.dot { width:7px; height:7px; border-radius:50%; background:#9aaba1; box-shadow:0 0 0 3px #fff8; }
+.trigger[data-connected="true"] .dot { background:#20a162; }
+.dialog { position:fixed; inset:0; margin:auto; width:min(540px,calc(100vw - 28px)); max-height:88dvh; overflow:auto; padding:24px; border:1px solid #dce5df; border-radius:20px; color:#233b30; background:#fff; box-shadow:0 20px 80px #18392a40; }
+.dialog:not([open]) { display:none; }
+.dialog::backdrop { background:#14271f66; }
+.dialog header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.dialog h2 { margin:0; font-size:20px; }
+.dialog p,.dialog small { font-size:12px; line-height:1.75; color:#64776c; }
+.close,.actions button { border:1px solid #d3dfd6; border-radius:9px; background:#f2f6f3; color:inherit; padding:8px 11px; font:inherit; font-size:12px; cursor:pointer; }
+.close { display:grid; place-items:center; padding:7px; }
+.actions { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:9px; margin-top:16px; }
+.actions button:disabled { opacity:.5; cursor:not-allowed; }
+.status { margin:18px 0; padding:13px 14px; border:1px solid #dfe9e2; background:#f7faf8; border-radius:12px; display:flex; align-items:center; gap:9px; font-size:13px; }
+.qr { width:min(300px,80vw); height:auto; display:block; margin:18px auto 8px; border:10px solid #fff; border-radius:12px; box-shadow:0 8px 28px #18392a1f; image-rendering:pixelated; }
+.success { border:1px solid #b8ddc6; background:#ecf8f0; color:#17613b; border-radius:12px; padding:16px; text-align:center; }
+.error { color:#a03226 !important; background:#fff5f3; border:1px solid #f0cbc5; border-radius:10px; padding:10px 12px; }
+.boundary { display:block; margin-top:18px; padding-top:14px; border-top:1px solid #e6ece7; }

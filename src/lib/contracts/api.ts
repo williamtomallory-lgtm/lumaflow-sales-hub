@@ -263,6 +263,7 @@ export const assistantRequestSchema = z.object({
   mode: assistantReasoningModeSchema.default("instant"),
   modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
+  wechatSnapshotId: z.string().uuid().optional(),
   agentRoleId: z.enum(["sales-consultant", "wechat-service", "sales-review", "moments-operator"]).optional(),
   knowledgeDocumentIds: z.array(z.string().uuid()).max(5).refine((ids) => new Set(ids).size === ids.length, "Duplicate document IDs").default([]),
 });

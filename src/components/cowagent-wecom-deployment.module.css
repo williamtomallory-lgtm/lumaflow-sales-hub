@@ -1,0 +1,27 @@
+.root { display: block; }
+.trigger { width: 100%; border: 1px solid #cfe2d8; background: #eff8f3; color: #14563e; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: center; gap: 7px; font-weight: 700; cursor: pointer; }
+.trigger[data-connected="true"] { background: #e2f5e9; border-color: #84c7a0; }
+.dialog { width: min(620px, calc(100vw - 28px)); max-height: 88vh; overflow: auto; border: 0; border-radius: 18px; padding: 0; box-shadow: 0 24px 80px #0b2d2070; color: #17241e; }
+.dialog::backdrop { background: #071a1299; backdrop-filter: blur(3px); }
+.dialog > header { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: flex-start; padding: 20px 22px; background: #fff; border-bottom: 1px solid #e5ece8; }
+.dialog h2, .dialog h3, .dialog p { margin: 0; }
+.dialog header p, .section p { color: #68766f; margin-top: 5px; font-size: 13px; }
+.dialog header button, .titleRow button { border: 0; background: transparent; cursor: pointer; }
+.section { margin: 18px 22px; padding: 16px; border: 1px solid #dfe8e3; border-radius: 13px; display: grid; gap: 12px; }
+.section label { display: grid; gap: 6px; font-size: 13px; font-weight: 650; }
+.section input, .section select, .section textarea { width: 100%; box-sizing: border-box; border: 1px solid #bdcbc4; border-radius: 9px; padding: 9px 10px; font: inherit; background: #fff; }
+.section textarea { min-height: 76px; resize: vertical; }
+.section > button, .task button { border: 0; border-radius: 9px; padding: 10px 12px; background: #175e44; color: #fff; font-weight: 700; cursor: pointer; }
+.section button:disabled { opacity: .5; cursor: not-allowed; }
+.check { display: flex !important; grid-template-columns: none; align-items: center; gap: 8px !important; }
+.check input { width: auto; }
+.row { display: grid; grid-template-columns: 160px 1fr; gap: 10px; }
+.titleRow, .task { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.titleRow button { display: flex; align-items: center; gap: 5px; color: #175e44; }
+.task { padding: 10px; background: #f5f8f6; border-radius: 9px; }
+.task span { display: grid; gap: 3px; }
+.task small { color: #718078; }
+.danger { margin: 0 22px 16px; border: 1px solid #d88; background: #fff5f5; color: #a22; border-radius: 9px; padding: 9px 12px; cursor: pointer; }
+.error { margin: 0 22px 12px !important; color: #b42318; }
+.dialog > small { display: block; padding: 0 22px 20px; color: #718078; }
+@media (max-width: 560px) { .row { grid-template-columns: 1fr; } }

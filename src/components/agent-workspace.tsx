@@ -1,6 +1,8 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
+import { WechatConnection } from "./wechat-connection";
+import { CowAgentWeixinDeployment } from "./cowagent-weixin-deployment";
 import { DefaultChatTransport, isToolUIPart } from "ai";
 import {
   ArrowRight,
@@ -215,6 +217,7 @@ export function AgentWorkspace({
   const [knowledgeLoading, setKnowledgeLoading] = useState(true);
   const [knowledgeError, setKnowledgeError] = useState("");
   const [wechatDialogOpen, setWechatDialogOpen] = useState(false);
+  const [wechatSnapshotId, setWechatSnapshotId] = useState<string | null>(null);
   const submitting = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -321,6 +324,7 @@ export function AgentWorkspace({
   function newQuestion() {
     if (busy || submitting.current) return;
     resetOutput(); setInput(""); setCustomerId(""); setSelectedDocumentIds([]);
+    setWechatSnapshotId(null);
     setContextOpen(false); inputRef.current?.focus();
   }
 
@@ -340,6 +344,7 @@ export function AgentWorkspace({
 
   function changeModel(value: string) {
     if (busy || submitting.current || value === catalog.modelProfileId) return;
+    if (wechatSnapshotId && value === "configured") { onToast?.("微信快照仅允许使用本机 8B / 14B；开始新问题后可切换其他服务。"); return; }
     catalog.selectModel(value);
     setMode("instant");
     persistInferenceMode("instant");
@@ -397,6 +402,7 @@ export function AgentWorkspace({
           knowledgeDocumentIds: selectedDocumentIds,
           modelProfileId: catalog.modelProfileId,
           mode,
+          ...(wechatSnapshotId ? { wechatSnapshotId } : {}),
           ...(customerId ? { customerId } : {}),
         },
       });
@@ -481,6 +487,7 @@ export function AgentWorkspace({
           <button type="button" aria-pressed={experience === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
           <button type="button" aria-pressed={experience === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
         </div>
+        <CowAgentWeixinDeployment agentId="wechat-service" agentName="微信客服 Agent" disabled={busy} />
         <button type="button" className={styles.iconButton} aria-label="新问题" title="清空本轮输入与资料" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button>
       </header>
 
@@ -516,6 +523,12 @@ export function AgentWorkspace({
 
         <div className={styles.composerArea}>
           <div className={styles.composer}>
+            {experience === "work" && <WechatConnection roleId={roleId} disabled={busy} onImport={(snapshotId, text) => {
+              if (text.length > inputBudget) { onToast?.(`选中记录超过当前 ${inputBudget} 字符预算，请减少选中条数。`); return false; }
+              if (catalog.modelProfileId === "configured") { onToast?.("请先选择本机 8B 或 14B；实时微信记录不发送到自定义服务。"); return false; }
+              resetOutput(); setInput(text); setWechatSnapshotId(snapshotId); return true;
+            }} />}
+            {wechatSnapshotId && <p className={styles.muted}>已附加微信只读快照 · 仅本机模型 · 请检查后发送（新问题可清除）</p>}
             {experience === "work" && <div className={styles.roleRow}>
               <label><Sparkles size={14} /><select aria-label="选择 Agent 角色" value={roleId} disabled={busy} onChange={(event) => changeRole(event.target.value)}>{AGENT_ROLES.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
               {roleId === "wechat-service" && <button type="button" disabled={busy} onClick={() => setWechatDialogOpen(true)}><Upload size={14} /> 导入微信记录</button>}
@@ -554,7 +567,7 @@ export function AgentWorkspace({
 
       <dialog ref={importDialog} className={styles.dialog} aria-label="导入微信记录" onCancel={() => setWechatDialogOpen(false)} onClose={() => setWechatDialogOpen(false)}>
         <header><h2>导入微信记录</h2><button type="button" aria-label="关闭微信导入说明" onClick={() => setWechatDialogOpen(false)}><X size={18} /></button></header>
-        <p>个人微信：尚未连接；当前只读取你主动导出的内容。请粘贴聊天记录，或选择可读文本文件导入。</p><p>图片、PDF 和其他附件请先在知识库归档，再选择作为上下文。本入口不会生成二维码、索取密码或自动发送消息。</p>
+        <p>这是微信导出文件入口，与桌面只读连接分开。请粘贴聊天记录，或选择可读文本文件导入。</p><p>图片、PDF 和其他附件请先在知识库归档，再选择作为上下文。本入口不会生成二维码、索取密码或自动发送消息。</p>
         <label className={styles.fileImport}><Upload size={16} /><span>选择导出的文本记录（TXT / Markdown / CSV / JSON）</span><input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,text/plain,text/markdown" onChange={(event) => void importTextFiles(event.target.files)} /></label>
         <button type="button" onClick={() => setWechatDialogOpen(false)}>返回 Chat-AI</button>
       </dialog>

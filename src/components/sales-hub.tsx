@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  Bot,
   BellRing,
   BookOpen,
   Box,
@@ -53,6 +54,7 @@ import { CustomersView, FollowupView } from "./crm-views";
 import { AdminView, QuotationView } from "./operations-views";
 import { KnowledgeHub as KnowledgeBaseView } from "./knowledge-hub";
 import { AgentWorkspace } from "./agent-workspace";
+import { AgentManagement } from "./agent-management";
 
 type CatalogAsset = Asset & { productId: string; productName: string };
 
@@ -63,6 +65,7 @@ const navIcons: Record<View, LucideIcon> = {
   products: Box,
   assets: FolderOpen,
   knowledge: BookOpen,
+  agents: Bot,
   assistant: ScanSearch,
   kit: BriefcaseBusiness,
   salesAssistant: MessageCircleMore,
@@ -188,6 +191,7 @@ function SalesHubWorkspace({ initialData, dashboard, generatedAt, refreshing, on
           {view === "products" && <ProductsView products={catalog} dataSource={initialData.source} initialQuery={globalQuery} onProduct={setSelectedProduct} onToast={showToast} />}
           {view === "assets" && <AssetsView assets={catalogAssets} onNavigate={navigate} onToast={showToast} />}
           {view === "knowledge" && <KnowledgeBaseView initialEntries={initialData.knowledgeEntries} onToast={showToast} />}
+          {view === "agents" && <AgentManagement onToast={showToast} />}
           {isChat && <AgentWorkspace key={view} products={catalog} assets={catalogAssets} customers={initialData.customers} initialExperience={view === "salesAssistant" ? "work" : "chat"} initialMessage={globalQuery} initialCustomerId={view === "salesAssistant" ? crmCustomerId : undefined} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onOpenKnowledge={() => navigate("knowledge")} onToast={showToast} onAddToKit={(id) => { setKitProductId(id); navigate("kit"); }} />}
           {view === "kit" && <SalesKitView products={catalog} initialProductId={kitProductId} onProduct={setSelectedProduct} onToast={showToast} />}
           {view === "customers" && <CustomersView customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenCustomer={setCrmCustomerId} onAnalyzeCustomer={(customer) => { setCrmCustomerId(customer.id); navigate("salesAssistant"); }} onCreateQuote={() => navigate("quotation")} onToast={showToast} />}
