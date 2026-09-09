@@ -7,7 +7,8 @@ import { ApiHttpError, apiError, authorizeAssistantRequest, authorizeLocalKnowle
 import { getDataSnapshot } from "@/lib/server/data-repository";
 import { loadSalesProfile } from "@/lib/ai/skill-profile";
 import { attachmentTextTransform } from "@/lib/ai/attachment-text";
-import { loadAgentRole } from "@/lib/ai/agent-roles";
+import { loadAgentRole, loadCowAgentRole } from "@/lib/ai/agent-roles";
+import { getCowAgentProfile } from "@/lib/server/cowagent-client";
 import { buildKnowledgeContext } from "@/lib/ai/knowledge-context";
 import { getModelGenerationOptions } from "@/lib/ai/model-options";
 import { InferencePolicyError, inputBudgetDetailsHeader, inputBudgetHeader, resolveInferencePolicy, withModelOutputBudget } from "@/lib/ai/inference-policy";
@@ -61,7 +62,8 @@ export async function POST(request: Request) {
       }
     }
     const baseProfile = await loadSalesProfile();
-    const role = body.agentRoleId ? loadAgentRole(body.agentRoleId) : undefined;
+    const backendAgent = body.agentId ? await getCowAgentProfile(body.agentId) : undefined;
+    const role = backendAgent ? loadCowAgentRole(backendAgent) : body.agentRoleId ? loadAgentRole(body.agentRoleId) : undefined;
     const profile = role ? {
       ...baseProfile,
       id: role.id,

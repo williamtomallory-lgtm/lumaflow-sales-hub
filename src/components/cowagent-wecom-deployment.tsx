@@ -49,11 +49,10 @@ export function CowAgentWecomDeployment({ agentId, agentName, disabled = false }
 
   useEffect(() => { if (open && !dialog.current?.open) dialog.current?.showModal(); if (!open && dialog.current?.open) dialog.current.close(); }, [open]);
   useEffect(() => {
-    if (!open) return;
     const controller = new AbortController();
     const timer = setTimeout(() => { void refresh(controller.signal); }, 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [open, refresh]);
+  }, [refresh]);
 
   async function run(body: Record<string, unknown>) {
     if (pending || disabled) return;
@@ -71,7 +70,7 @@ export function CowAgentWecomDeployment({ agentId, agentName, disabled = false }
   }
 
   return <div className={styles.root}>
-    <button type="button" className={styles.trigger} data-connected={state.active} disabled={disabled} onClick={() => setOpen(true)}><Bot size={14} /> 企业微信群 Agent · {state.active ? "已连接" : "配置"}</button>
+    <button type="button" className={styles.trigger} data-connected={state.active} disabled={disabled} onClick={() => { setOpen(true); void refresh(); }}><Bot size={14} /> 企业微信群 Agent · {state.active ? "已连接" : "配置"}</button>
     <dialog ref={dialog} className={styles.dialog} aria-label={`配置企业微信群 Agent ${agentName}`} onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
       <header><div><h2>企业微信群 Agent · {agentName}</h2><p>实例 {state.instanceId} · 只处理群聊</p></div><button type="button" aria-label="关闭" onClick={() => setOpen(false)}><X size={18} /></button></header>
       {!state.active ? <section className={styles.section}><h3>连接企业微信智能机器人</h3><p>在企业微信工作台创建“API 模式、长连接”智能机器人，然后填写凭据。</p><label>Bot ID<input value={botId} onChange={(event) => setBotId(event.target.value)} autoComplete="off" /></label><label>Secret<input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="new-password" /></label><button type="button" disabled={pending || !botId.trim() || !secret.trim()} onClick={() => void run({ action: "connect", botId: botId.trim(), botSecret: secret.trim(), keywordEnabled, keywords: keywordList() })}>连接并绑定 Agent</button></section> : <>

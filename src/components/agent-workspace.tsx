@@ -2,7 +2,6 @@
 
 import { useChat } from "@ai-sdk/react";
 import { WechatConnection } from "./wechat-connection";
-import { CowAgentWeixinDeployment } from "./cowagent-weixin-deployment";
 import { DefaultChatTransport, isToolUIPart } from "ai";
 import {
   ArrowRight,
@@ -24,7 +23,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QUICK_QUESTIONS } from "@/config/ui-static";
-import { DEFAULT_AGENT_ROLE_ID, AGENT_ROLES, getAgentRoleOption, isAgentRoleId, type AgentRoleId } from "@/config/agent-roles";
+import { DEFAULT_AGENT_ROLE_ID, getAgentRoleOption, isAgentRoleId, type AgentRoleId } from "@/config/agent-roles";
 import { useModelCatalog } from "@/hooks/use-model-catalog";
 import { useModelHealth } from "@/hooks/use-model-health";
 import type { SalesAgentUIMessage } from "@/lib/ai/sales-agent";
@@ -35,6 +34,7 @@ import styles from "./agent-workspace.module.css";
 import { ModelRuntimeControls, InferenceReceiptView } from "./model-runtime-controls";
 import { parseInferenceReceipt, persistInferenceMode, savedInferenceMode, type InferenceMode, type InferenceReceipt } from "@/config/inference-ui";
 import { getInferenceProfileInputBudget } from "@/lib/ai/inference-policy";
+import type { CowAgentProfile, CowAgentRoster } from "@/lib/contracts/cowagent-agent";
 
 export type AgentReplyConfirmation = {
   customer: Customer;
@@ -80,7 +80,7 @@ export type KnowledgeCoverage = {
   hasText: boolean;
 };
 
-const rolePreferenceKey = "lumaflow.agent.role";
+const agentPreferenceKey = "lumaflow.agent.id";
 
 function cx(...names: Array<string | false | undefined>) {
   return names.filter(Boolean).join(" ");
@@ -167,14 +167,20 @@ export function parseKnowledgeCoverageHeader(value: string | null): KnowledgeCov
   }
 }
 
-function savedRole(): AgentRoleId {
-  if (typeof window === "undefined") return DEFAULT_AGENT_ROLE_ID;
+function savedAgentId(): string {
+  if (typeof window === "undefined") return "";
   try {
-    const value = localStorage.getItem(rolePreferenceKey);
-    return value && isAgentRoleId(value) ? value : DEFAULT_AGENT_ROLE_ID;
+    return localStorage.getItem(agentPreferenceKey)?.trim() || "";
   } catch {
-    return DEFAULT_AGENT_ROLE_ID;
+    return "";
   }
+}
+
+function presentationRole(agent?: CowAgentProfile): AgentRoleId {
+  if (!agent) return DEFAULT_AGENT_ROLE_ID;
+  if (isAgentRoleId(agent.id)) return agent.id;
+  if (agent.botType === "weixin_personal") return "wechat-service";
+  return DEFAULT_AGENT_ROLE_ID;
 }
 
 function customerLabel(customer: Customer) {
@@ -196,8 +202,10 @@ export function AgentWorkspace({
   onToast,
 }: AgentWorkspaceProps) {
   const [experience, setExperience] = useState(initialExperience);
-  const [workRoleId, setWorkRoleId] = useState<AgentRoleId>(savedRole);
-  const roleId = experience === "chat" ? DEFAULT_AGENT_ROLE_ID : workRoleId;
+  const [workAgentId, setWorkAgentId] = useState(savedAgentId);
+  const [agentRoster, setAgentRoster] = useState<CowAgentRoster>({ agents: [], defaultAgentId: "", revision: "" });
+  const [agentLoading, setAgentLoading] = useState(true);
+  const [agentError, setAgentError] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
   const [input, setInput] = useState(initialMessage ?? "");
   // Do not silently attach an arbitrary demo customer to a free-form chat.
@@ -224,7 +232,11 @@ export function AgentWorkspace({
   const importDialog = useRef<HTMLDialogElement>(null);
   const catalog = useModelCatalog();
   const { health, checking, refresh: refreshHealth } = useModelHealth(catalog.modelProfileId);
-  const role = getAgentRoleOption(roleId);
+  const enabledAgents = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled), [agentRoster.agents]);
+  const selectedWorkAgent = enabledAgents.find((agent) => agent.id === workAgentId);
+  const rolePresetId = experience === "chat" ? DEFAULT_AGENT_ROLE_ID : presentationRole(selectedWorkAgent);
+  const baseRole = getAgentRoleOption(rolePresetId);
+  const role = experience === "work" && selectedWorkAgent ? { ...baseRole, name: selectedWorkAgent.name, description: selectedWorkAgent.description || baseRole.description } : baseRole;
   const transport = useMemo(() => new DefaultChatTransport<SalesAgentUIMessage>({
     api: "/api/v1/assistant/chat",
     prepareSendMessagesRequest: ({ messages, body, ...rest }) => ({
@@ -257,7 +269,7 @@ export function AgentWorkspace({
   }), []);
   const { messages, sendMessage, status, error, stop, setMessages, clearError } = useChat<SalesAgentUIMessage>({ transport, throttle: 40, onFinish: ({ finishReason }) => setExhausted(finishReason === "length") });
   const busy = status === "submitted" || status === "streaming";
-  const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable);
+  const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable && (experience === "chat" || selectedWorkAgent));
   const result = useMemo(() => projectAgentSearch(messages), [messages]);
   const toolParts = useMemo(() => messages
     .filter((message) => message.role === "assistant")
@@ -266,6 +278,22 @@ export function AgentWorkspace({
   const selectedCustomer = customers.find((customer) => customer.id === customerId);
   const selectedDocuments = knowledgeDocuments.filter((document) => selectedDocumentIds.includes(document.id));
   const selectedModelName = health?.model ?? catalog.selectedModel?.model ?? "等待读取模型";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/v1/cowagent/agents", { cache: "no-store", headers: { Accept: "application/json" }, signal: controller.signal }).then(async (response) => {
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error?.message || "无法读取 CowAgent Agent 名单");
+      const next = payload.data as CowAgentRoster;
+      if (controller.signal.aborted) return;
+      setAgentRoster(next); setAgentError("");
+      const candidates = next.agents.filter((agent) => agent.enabled);
+      setWorkAgentId((current) => candidates.some((agent) => agent.id === current) ? current : candidates.find((agent) => agent.id === next.defaultAgentId)?.id || candidates[0]?.id || "");
+    }).catch((issue) => {
+      if (!controller.signal.aborted) { setAgentRoster({ agents: [], defaultAgentId: "", revision: "" }); setAgentError(issue instanceof Error ? issue.message : "CowAgent 后端未连接"); }
+    }).finally(() => { if (!controller.signal.aborted) setAgentLoading(false); });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -328,9 +356,9 @@ export function AgentWorkspace({
     setContextOpen(false); inputRef.current?.focus();
   }
 
-  function changeRole(value: string) {
-    if (busy || !isAgentRoleId(value)) return;
-    setWorkRoleId(value);
+  function changeAgent(value: string) {
+    if (busy || !enabledAgents.some((agent) => agent.id === value)) return;
+    setWorkAgentId(value);
     setReceipt(null);
     setExhausted(false);
     setMessages([]);
@@ -339,7 +367,7 @@ export function AgentWorkspace({
     setCancelled(false);
     setConfirmed(false);
     setKnowledgeCoverage([]);
-    try { localStorage.setItem(rolePreferenceKey, value); } catch { /* persistence is optional */ }
+    try { localStorage.setItem(agentPreferenceKey, value); } catch { /* persistence is optional */ }
   }
 
   function changeModel(value: string) {
@@ -398,7 +426,7 @@ export function AgentWorkspace({
     try {
       await sendMessage({ text: cleanValue }, {
         body: {
-          agentRoleId: roleId,
+          ...(experience === "work" && selectedWorkAgent ? { agentId: selectedWorkAgent.id } : { agentRoleId: DEFAULT_AGENT_ROLE_ID }),
           knowledgeDocumentIds: selectedDocumentIds,
           modelProfileId: catalog.modelProfileId,
           mode,
@@ -424,7 +452,7 @@ export function AgentWorkspace({
   function confirmOutput() {
     if (!result.text) return;
     setConfirmed(true);
-    if (onConfirmReply && selectedCustomer && (roleId === "sales-consultant" || roleId === "wechat-service")) {
+    if (onConfirmReply && selectedCustomer && (rolePresetId === "sales-consultant" || rolePresetId === "wechat-service")) {
       onConfirmReply({ customer: selectedCustomer, message: result.text, assetIds: [] });
     }
     onToast?.("已标记为人工核对；不会自动发送");
@@ -487,7 +515,6 @@ export function AgentWorkspace({
           <button type="button" aria-pressed={experience === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
           <button type="button" aria-pressed={experience === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
         </div>
-        <CowAgentWeixinDeployment agentId="wechat-service" agentName="微信客服 Agent" disabled={busy} />
         <button type="button" className={styles.iconButton} aria-label="新问题" title="清空本轮输入与资料" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button>
       </header>
 
@@ -523,16 +550,17 @@ export function AgentWorkspace({
 
         <div className={styles.composerArea}>
           <div className={styles.composer}>
-            {experience === "work" && <WechatConnection roleId={roleId} disabled={busy} onImport={(snapshotId, text) => {
+            {experience === "work" && <WechatConnection roleId={selectedWorkAgent?.id || rolePresetId} disabled={busy} onImport={(snapshotId, text) => {
               if (text.length > inputBudget) { onToast?.(`选中记录超过当前 ${inputBudget} 字符预算，请减少选中条数。`); return false; }
               if (catalog.modelProfileId === "configured") { onToast?.("请先选择本机 8B 或 14B；实时微信记录不发送到自定义服务。"); return false; }
               resetOutput(); setInput(text); setWechatSnapshotId(snapshotId); return true;
             }} />}
             {wechatSnapshotId && <p className={styles.muted}>已附加微信只读快照 · 仅本机模型 · 请检查后发送（新问题可清除）</p>}
             {experience === "work" && <div className={styles.roleRow}>
-              <label><Sparkles size={14} /><select aria-label="选择 Agent 角色" value={roleId} disabled={busy} onChange={(event) => changeRole(event.target.value)}>{AGENT_ROLES.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
-              {roleId === "wechat-service" && <button type="button" disabled={busy} onClick={() => setWechatDialogOpen(true)}><Upload size={14} /> 导入微信记录</button>}
+              <label><Sparkles size={14} /><select aria-label="选择后端 Agent" value={selectedWorkAgent?.id || ""} disabled={busy || agentLoading || !enabledAgents.length} onChange={(event) => changeAgent(event.target.value)}>{!enabledAgents.length && <option value="">{agentLoading ? "正在读取 CowAgent…" : "没有可用 Agent"}</option>}{enabledAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.botType === "wecom_group" ? "群聊" : agent.botType === "weixin_personal" ? "个人微信" : "通用"}</option>)}</select></label>
+              {(selectedWorkAgent?.botType === "weixin_personal" || rolePresetId === "wechat-service") && <button type="button" disabled={busy} onClick={() => setWechatDialogOpen(true)}><Upload size={14} /> 导入微信记录</button>}
             </div>}
+            {experience === "work" && agentError && <p className={styles.errorBox} role="alert">{agentError}。请在“智能体”页面确认 CowAgent 后端。</p>}
             {selectedDocuments.length > 0 && <div className={styles.selectedFiles}>{selectedDocuments.map((document) => <button type="button" key={document.id} disabled={busy} onClick={() => toggleDocument(document)} aria-label={`移除 ${document.title}`}><Paperclip size={12} /><span>{document.title}</span><X size={12} /></button>)}</div>}
             {selectedCustomer && <div className={styles.selectedCustomer}><UserRound size={13} />{customerLabel(selectedCustomer)}<button type="button" aria-label="取消客户上下文" disabled={busy} onClick={() => setCustomerId("")}><X size={13} /></button></div>}
             <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={4_000} disabled={busy} aria-label={inputLabel} placeholder={experience === "chat" ? "向 Chat-AI 提问…" : role.inputPlaceholder} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />

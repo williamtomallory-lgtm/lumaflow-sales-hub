@@ -27,7 +27,8 @@ describe("assistant input provenance", () => {
   it("accepts only allowed Agent roles and bounded unique knowledge document IDs", () => {
     const id = "d439f6c7-222e-4a09-88bf-ac8ef6641e09";
     expect(assistantRequestSchema.parse({ messages: [userMessage], agentRoleId: "sales-review", knowledgeDocumentIds: [id] })).toMatchObject({ agentRoleId: "sales-review", knowledgeDocumentIds: [id] });
-    for (const extra of [{ agentRoleId: "admin" }, { knowledgeDocumentIds: ["../../secret"] }, { knowledgeDocumentIds: [id, id] }]) {
+    expect(assistantRequestSchema.parse({ messages: [userMessage], agentId: "wechat-service" })).toMatchObject({ agentId: "wechat-service" });
+    for (const extra of [{ agentRoleId: "admin" }, { agentId: "../../secret" }, { agentId: "wechat-service", agentRoleId: "sales-review" }, { knowledgeDocumentIds: ["../../secret"] }, { knowledgeDocumentIds: [id, id] }]) {
       expect(assistantRequestSchema.safeParse({ messages: [userMessage], ...extra }).success).toBe(false);
     }
   });

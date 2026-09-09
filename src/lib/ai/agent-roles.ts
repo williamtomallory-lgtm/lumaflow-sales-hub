@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import { AGENT_ROLE_IDS, DEFAULT_AGENT_ROLE_ID, type AgentRoleId } from "@/config/agent-roles";
+import type { CowAgentProfile } from "@/lib/contracts/cowagent-agent";
 import type { SalesToolName } from "./skill-profile";
 
 /**
@@ -11,7 +12,7 @@ import type { SalesToolName } from "./skill-profile";
 export const agentRoleIdSchema = z.enum(AGENT_ROLE_IDS);
 
 export type AgentRole = {
-  id: AgentRoleId;
+  id: string;
   name: string;
   instructions: string;
   toolNames: readonly SalesToolName[];
@@ -72,4 +73,32 @@ export function loadAgentRole(roleId?: unknown): AgentRole {
 
 export function listAgentRoles(): AgentRole[] {
   return AGENT_ROLE_IDS.map((id) => loadAgentRole(id));
+}
+
+/**
+ * Build an execution policy from a profile that was read from CowAgent on the
+ * server. The profile may define identity and responsibilities, but the
+ * browser cannot provide either of them and the profile never grants tools.
+ * Tool access always comes from one of the reviewed policies above.
+ */
+export function loadCowAgentRole(profile: CowAgentProfile): AgentRole {
+  const presetId: AgentRoleId = agentRoleIdSchema.safeParse(profile.id).success
+    ? profile.id as AgentRoleId
+    : profile.botType === "weixin_personal"
+      ? "wechat-service"
+      : DEFAULT_AGENT_ROLE_ID;
+  const preset = loadAgentRole(presetId);
+  const channelBoundary = profile.botType === "wecom_group"
+    ? "渠道边界：这是企业微信群聊 Agent。仅处理后端已路由给你的群消息；不要绕过 @、关键词或定时任务开关，也不要声称自己是个人微信联系人。"
+    : profile.botType === "weixin_personal"
+      ? "渠道边界：这是个人微信私聊 Agent。当前 Weixin 通道不支持群聊；不要声称自己已经加入或处理微信群。"
+      : "渠道边界：这是通用 Agent，不得声称已经绑定、登录或操作任何微信渠道。";
+  const responsibility = profile.description?.trim() || "按用户提供的销售任务进行分析并生成待人工确认的结果。";
+  return {
+    ...preset,
+    id: profile.id,
+    name: profile.name,
+    instructions: `你当前运行的是由本机 CowAgent 管理的 Agent“${profile.name}”（ID: ${profile.id}）。\n职责：${responsibility}\n${channelBoundary}\n\n${preset.instructions}`,
+    toolNames: [...preset.toolNames],
+  };
 }

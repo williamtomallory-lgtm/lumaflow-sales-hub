@@ -178,6 +178,14 @@ export async function getCowAgentRoster(): Promise<CowAgentRoster> {
   };
 }
 
+export async function getCowAgentProfile(agentId: string): Promise<CowAgentProfile> {
+  const roster = await getCowAgentRoster();
+  const profile = roster.agents.find((agent) => agent.id === agentId);
+  if (!profile) throw new ApiHttpError(404, "COWAGENT_AGENT_NOT_FOUND", "这个 Agent 不存在或已被删除，请刷新后重新选择。");
+  if (!profile.enabled) throw new ApiHttpError(409, "COWAGENT_AGENT_DISABLED", "这个 Agent 已停用，请在智能体页面启用后再使用。");
+  return profile;
+}
+
 export async function createCowAgentProfile(input: {
   id: string;
   name: string;

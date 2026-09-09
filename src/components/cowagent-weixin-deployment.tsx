@@ -23,13 +23,14 @@ async function request(agentId: string, action?: "create-qr" | "poll" | "disconn
   return payload.data as CowAgentWeixinState;
 }
 
-export function CowAgentWeixinDeployment({ agentId, agentName, disabled = false }: { agentId: string; agentName: string; disabled?: boolean }) {
+export function CowAgentWeixinDeployment({ agentId, agentName, disabled = false, autoStart = false, onAutoStartHandled }: { agentId: string; agentName: string; disabled?: boolean; autoStart?: boolean; onAutoStartHandled?: () => void }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<CowAgentWeixinState>({ engine: "CowAgent", phase: "idle", active: false });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [pollTick, setPollTick] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
+  const autoStartConsumed = useRef(false);
   const polling = state.phase === "waiting" || state.phase === "scanned";
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
@@ -43,11 +44,26 @@ export function CowAgentWeixinDeployment({ agentId, agentName, disabled = false 
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (autoStart || autoStartConsumed.current) return;
     const controller = new AbortController();
     const timer = setTimeout(() => { void refreshStatus(controller.signal); }, 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [open, refreshStatus]);
+  }, [autoStart, refreshStatus]);
+
+  useEffect(() => {
+    if (!autoStart || disabled || autoStartConsumed.current) return;
+    autoStartConsumed.current = true;
+    const controller = new AbortController();
+    setOpen(true); setPending(true); setError("");
+    void request(agentId, "create-qr", controller.signal).then((next) => {
+      if (!controller.signal.aborted) setState(next);
+    }).catch((issue) => {
+      if (!controller.signal.aborted) setError(issue instanceof Error ? issue.message : "微信二维码生成失败");
+    }).finally(() => {
+      if (!controller.signal.aborted) { setPending(false); onAutoStartHandled?.(); }
+    });
+    return () => controller.abort();
+  }, [agentId, autoStart, disabled, onAutoStartHandled]);
 
   useEffect(() => {
     if (!open || !polling) return;
@@ -79,7 +95,7 @@ export function CowAgentWeixinDeployment({ agentId, agentName, disabled = false 
   const connected = state.phase === "connected" && (!state.boundAgentId || state.boundAgentId === agentId);
   const occupied = state.phase === "connected" && Boolean(state.boundAgentId) && state.boundAgentId !== agentId;
   return <div className={styles.root}>
-    <button type="button" className={styles.trigger} data-connected={connected} disabled={disabled} onClick={() => setOpen(true)}>
+    <button type="button" className={styles.trigger} data-connected={connected} disabled={disabled} onClick={() => { setOpen(true); void refreshStatus(); }}>
       <span className={styles.dot} /> <MessageCircle size={14} /> {connected ? "微信已绑定" : occupied ? "微信已被其他 Agent 使用" : "绑定微信"}
     </button>
     <dialog ref={dialog} className={styles.dialog} aria-label="部署微信客服 Agent" onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>

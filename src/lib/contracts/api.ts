@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AppDataSnapshot } from "../data-snapshot";
 import type { Product } from "../catalog";
 import type { FollowupTask } from "../crm";
+import { cowAgentIdSchema } from "./cowagent-agent";
 
 const nonEmptyString = z.string().trim().min(1);
 const idSchema = nonEmptyString.max(120);
@@ -264,9 +265,14 @@ export const assistantRequestSchema = z.object({
   modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
   wechatSnapshotId: z.string().uuid().optional(),
+  // Work mode selects an administrator-owned CowAgent profile. The server
+  // resolves its role, workspace and enabled state; the browser cannot submit
+  // instructions or tool permissions.
+  agentId: cowAgentIdSchema.optional(),
+  // Kept for the generic Chat experience and backward-compatible callers.
   agentRoleId: z.enum(["sales-consultant", "wechat-service", "sales-review", "moments-operator"]).optional(),
   knowledgeDocumentIds: z.array(z.string().uuid()).max(5).refine((ids) => new Set(ids).size === ids.length, "Duplicate document IDs").default([]),
-});
+}).refine((body) => !(body.agentId && body.agentRoleId), { message: "Choose either a backend Agent or a built-in role", path: ["agentId"] });
 
 export const assistantHealthResponseSchema = z.object({
   data: z.object({

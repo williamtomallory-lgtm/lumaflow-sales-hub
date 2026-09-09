@@ -57,6 +57,12 @@ beforeEach(() => {
       posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return modelReply();
     }
+    if (url.endsWith("/cowagent/agents")) return Response.json({ data: { defaultAgentId: "sales-consultant", revision: "test-roster", agents: [
+      { id: "sales-consultant", name: "产品销售顾问", description: "查产品和库存", enabled: true, workspace: "agents/sales-consultant", knowledgeMode: "shared" },
+      { id: "wechat-service", name: "微信客服 Agent", description: "整理微信私聊", enabled: true, workspace: "agents/wechat-service", knowledgeMode: "shared", botType: "weixin_personal" },
+      { id: "sales-review", name: "销售复盘 Agent", description: "复盘销售记录", enabled: true, workspace: "agents/sales-review", knowledgeMode: "own" },
+      { id: "moments-operator", name: "朋友圈运营 Agent", description: "生成待审核内容", enabled: true, workspace: "agents/moments-operator", knowledgeMode: "shared" },
+    ] } });
     if (url.endsWith("/knowledge")) return Response.json({ data: [{
       id: documentId,
       originalName: "已分类知识.md",
@@ -110,13 +116,13 @@ describe("Agent workspace", () => {
     render(<AgentWorkspace {...props} initialExperience="chat" />);
     await ready();
     expect(screen.getByRole("heading", { name: "Chat-AI" })).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "选择 Agent 角色" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "选择后端 Agent" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Work" }));
-    const role = screen.getByRole("combobox", { name: "选择 Agent 角色" });
+    const role = await screen.findByRole("combobox", { name: "选择后端 Agent" });
     expect(role.querySelectorAll("option")).toHaveLength(4);
     fireEvent.change(role, { target: { value: "sales-review" } });
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(posts[0]).toMatchObject({ agentRoleId: "sales-review", modelProfileId: "local-qwen3-8b" }));
+    await waitFor(() => expect(posts[0]).toMatchObject({ agentId: "sales-review", modelProfileId: "local-qwen3-8b" }));
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
@@ -161,7 +167,7 @@ describe("Agent workspace", () => {
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("模型生成的客服草稿"));
     expect(screen.getByTestId("knowledge-coverage")).toHaveTextContent("已纳入 120 / 120 字");
     expect(posts[0]).toMatchObject({
-      agentRoleId: "sales-consultant",
+      agentId: "sales-consultant",
       knowledgeDocumentIds: ["33333333-3333-4333-8333-333333333333"],
       modelProfileId: "local-qwen3-8b",
       mode: "instant",
@@ -175,7 +181,7 @@ describe("Agent workspace", () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toBeInTheDocument());
-    fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "选择后端 Agent" }), { target: { value: "wechat-service" } });
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     expect(screen.getByText("选一位 Agent，一起把工作做好。")).toBeInTheDocument();
   });
@@ -183,7 +189,7 @@ describe("Agent workspace", () => {
   it("keeps export import separate from desktop connection without showing fake login", async () => {
     render(<AgentWorkspace {...props} />);
     await ready();
-    fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "选择后端 Agent" }), { target: { value: "wechat-service" } });
     fireEvent.click(screen.getByRole("button", { name: "导入微信记录" }));
     const importDialog = screen.getByRole("dialog", { name: "导入微信记录" });
     expect(importDialog).toHaveTextContent("与桌面只读连接分开");
@@ -236,7 +242,7 @@ describe("Agent workspace", () => {
     onToast.mockClear();
     render(<AgentWorkspace {...props} />);
     await ready();
-    fireEvent.change(screen.getByRole("combobox", { name: "选择 Agent 角色" }), { target: { value: "wechat-service" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "选择后端 Agent" }), { target: { value: "wechat-service" } });
     fireEvent.click(screen.getByRole("button", { name: "导入微信记录" }));
     const importInput = () => screen.getByLabelText("选择导出的文本记录（TXT / Markdown / CSV / JSON）") as HTMLInputElement;
     const shortFile = utf8File("wechat.txt", "客户：请发一份轨道灯参数\n销售：我先帮您确认。");
