@@ -69,7 +69,7 @@ async function cowAgentJson(path: string, init?: CowAgentRequestInit, timeoutMs 
 type CowAgentRawResponse = { status: number; headers: Headers; body: Buffer };
 
 function cowAgentRaw(path: string, init: CowAgentRequestInit = {}, timeoutMs = 15_000, maxBytes = MAX_RESPONSE_BYTES): Promise<CowAgentRawResponse> {
-  const url = new URL(path, `${baseUrl().toString()}/`);
+  const url = new URL(path.replace(/^\/+/, ""), baseUrl());
   const headers = new Headers(init.headers ?? cowAgentHeaders(Boolean(init.body)));
   const body = Buffer.isBuffer(init.body) ? init.body : typeof init.body === "string" ? Buffer.from(init.body, "utf8") : Buffer.alloc(0);
   if (body.byteLength && !headers.has("content-length")) headers.set("content-length", String(body.byteLength));
