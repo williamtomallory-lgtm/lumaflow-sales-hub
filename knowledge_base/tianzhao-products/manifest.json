@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-09-21T07:19:43-04:00",
+  "source_folder": "E:\\DataDocument\\ChatGPT\\NewProject\\outputs\\01a0b6ce-ef4f-70c1-a93f-356639863e1d\\天昭灯网现有资料_719款_20260919",
+  "product_count": 1887,
+  "image_count": 7674,
+  "ocr_sidecar_count": 7645,
+  "status_counts": {
+    "详情不可用": 4,
+    "详情加载超时": 2,
+    "详情可用": 1714,
+    "详情字段残缺": 167
+  },
+  "source_audit": {
+    "exported_at": "2026-09-20",
+    "product_json_count": 1887,
+    "product_image_count": 7674,
+    "raw_ocr_file_count": 7645,
+    "expected_product_count": 1887,
+    "expected_image_count": 7674,
+    "missing_files": [],
+    "json_parse_errors": [],
+    "duplicate_models": [],
+    "duplicate_product_codes": [],
+    "blank_product_code_count": 173,
+    "status": "PASS"
+  },
+  "database_integrity": "ok",
+  "knowledge_files": [
+    "tianzhao_products.sqlite",
+    "products.jsonl",
+    "images.jsonl",
+    "README.md",
+    "search.py"
+  ],
+  "image_storage": "Images stay in the canonical export folder and are indexed by absolute path; no duplicate image copy is stored here."
+}
