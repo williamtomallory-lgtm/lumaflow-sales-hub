@@ -122,6 +122,7 @@ describe("model health must verify the configured model", () => {
     vi.stubEnv("LLM_MAX_OUTPUT_TOKENS", "8192");
     vi.stubEnv("LLM_BASE_URL", "http://model.test/v1");
     vi.stubEnv("LLM_MODEL", "local-qwen");
+    vi.stubEnv("LLM_API_KEY", "test-only");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(payload)));
     expect(await getModelHealth()).toMatchObject({ configured: true, reachable: false, model: "local-qwen" });
   });
@@ -131,6 +132,7 @@ describe("model health must verify the configured model", () => {
     vi.stubEnv("LLM_MAX_OUTPUT_TOKENS", "8192");
     vi.stubEnv("LLM_BASE_URL", "http://model.test/v1");
     vi.stubEnv("LLM_MODEL", "local-qwen");
+    vi.stubEnv("LLM_API_KEY", "test-only");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "local-qwen" }] })));
     expect(await getModelHealth()).toMatchObject({ configured: true, reachable: true, model: "local-qwen" });
   });

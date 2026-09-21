@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getModelConfig,
+  getDefaultModelProfileId,
   getModelHealth,
   getModelOptions,
   LOCAL_MODEL_ID,
@@ -18,6 +19,14 @@ beforeEach(() => {
   vi.stubEnv("LLM_API_KEY", "server-secret-do-not-expose");
   vi.stubEnv("LLM_MAX_OUTPUT_TOKENS", "8192");
   vi.stubEnv("LLM_CONNECTION_KIND", "protocol-mock");
+  vi.stubEnv("LLM_DEFAULT_PROFILE", undefined);
+  vi.stubEnv("LLM_VISIBLE_PROFILES", undefined);
+  vi.stubEnv("LLM_DISPLAY_NAME", undefined);
+  vi.stubEnv("LLM_DESCRIPTION", undefined);
+  vi.stubEnv("LLM_FAMILY", undefined);
+  vi.stubEnv("LLM_PARAMETER_SIZE_B", undefined);
+  vi.stubEnv("LLM_CONTEXT_TOKENS", undefined);
+  vi.stubEnv("LLM_SUPPORTED_MODES", undefined);
 });
 
 afterEach(() => {
@@ -62,6 +71,37 @@ describe("allowlisted model profiles", () => {
       apiKey: "",
     });
     expect(getModelConfig().label).toContain("Vercel AI Gateway");
+  });
+
+  it("publishes an explicitly selected Bonsai service as the only visible default", async () => {
+    vi.stubEnv("LLM_DEFAULT_PROFILE", "configured");
+    vi.stubEnv("LLM_VISIBLE_PROFILES", "configured");
+    vi.stubEnv("LLM_DISPLAY_NAME", "Ternary Bonsai 2 27B");
+    vi.stubEnv("LLM_FAMILY", "Ternary Bonsai 2");
+    vi.stubEnv("LLM_PARAMETER_SIZE_B", "27");
+    vi.stubEnv("LLM_CONTEXT_TOKENS", "8192");
+    vi.stubEnv("LLM_SUPPORTED_MODES", "instant");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "custom-model" }] })));
+    expect(getDefaultModelProfileId()).toBe("configured");
+    expect(await getModelOptions()).toEqual([
+      expect.objectContaining({
+        id: "configured",
+        label: "Ternary Bonsai 2 27B",
+        family: "Ternary Bonsai 2",
+        parameterSizeB: 27,
+        contextTokens: 8192,
+        supportedModes: ["instant"],
+        reachable: true,
+      }),
+    ]);
+  });
+
+  it("does not mark a remote OpenAI-compatible endpoint configured without its API key", async () => {
+    vi.stubEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1");
+    vi.stubEnv("LLM_API_KEY", undefined);
+    vi.stubGlobal("fetch", vi.fn());
+    expect(await getModelHealth()).toMatchObject({ configured: false, reachable: false });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("reports unavailable when Ollama responds but the requested alias is not installed", async () => {

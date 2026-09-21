@@ -94,7 +94,7 @@ export function authorizeLocalKnowledgeRead(request: Request) {
   if (configuredToken && bearer && safeTokenEqual(bearer, configuredToken)) return;
   const url = new URL(request.url);
   const isLoopback = LOOPBACK_HOSTS.has(url.hostname);
-  if (!isLoopback && process.env.REMOTE_KNOWLEDGE_ENABLED !== "true") {
+  if (!isLoopback && process.env.REMOTE_KNOWLEDGE_ENABLED?.trim() !== "true") {
     throw new ApiHttpError(403, "LOCAL_ONLY", "远程知识库访问尚未启用。");
   }
   const expectedOrigin = browserRequestOrigin(request);
