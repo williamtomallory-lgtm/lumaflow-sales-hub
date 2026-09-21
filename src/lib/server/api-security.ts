@@ -85,20 +85,24 @@ export function authorizeAssistantRequest(request: Request) {
   }
 }
 
-// Private uploaded files have stricter reads than the demo catalog. This is a
-// loopback workstation boundary, not multi-user authentication.
+// Private uploaded files require either a server token or an explicitly enabled
+// same-origin browser boundary. Cross-origin and direct unauthenticated reads
+// remain blocked in both local and remote deployments.
 export function authorizeLocalKnowledgeRead(request: Request) {
   const configuredToken = process.env.ASSISTANT_API_TOKEN;
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (configuredToken && bearer && safeTokenEqual(bearer, configuredToken)) return;
   const url = new URL(request.url);
-  if (!LOOPBACK_HOSTS.has(url.hostname)) throw new ApiHttpError(403, "LOCAL_ONLY", "知识库目前仅允许本机访问，远程部署前需配置身份权限。");
+  const isLoopback = LOOPBACK_HOSTS.has(url.hostname);
+  if (!isLoopback && process.env.REMOTE_KNOWLEDGE_ENABLED !== "true") {
+    throw new ApiHttpError(403, "LOCAL_ONLY", "远程知识库访问尚未启用。");
+  }
   const expectedOrigin = browserRequestOrigin(request);
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
   if ((origin && origin !== expectedOrigin) || (site && site !== "same-origin")) throw new ApiHttpError(403, "ORIGIN_DENIED", "Cross-origin knowledge access is not allowed.");
   if (origin === expectedOrigin || site === "same-origin") return;
-  throw new ApiHttpError(403, "ORIGIN_REQUIRED", "请从本机知识库页面访问文件，或使用已配置的 API token。");
+  throw new ApiHttpError(403, "ORIGIN_REQUIRED", "请从当前知识库页面访问文件，或使用已配置的 API token。");
 }
 
 export async function readValidatedJson<T>(request: Request, schema: ZodType<T>): Promise<T> {

@@ -4,7 +4,8 @@ import { assistantModelProfileIdSchema, type AssistantModelProfileId } from "../
 import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS, type ModelBackend } from "./model-options";
 
 export const QWEN_PROVIDER_NAME = "vllm";
-export const DEFAULT_MODEL_PROFILE_ID: AssistantModelProfileId = "local-qwen3-8b";
+export const DEFAULT_MODEL_PROFILE_ID: AssistantModelProfileId = process.env.LLM_BACKEND === "vercel-ai-gateway" ? "configured" : "local-qwen3-8b";
+export const VERCEL_AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
 export const LOCAL_QWEN3_8B_MODEL_ID = "lumaflow-qwen3-8b:latest";
 // Keep the official Ollama tag for 14B so setup can pull it without creating a
 // second alias or duplicating the roughly 9 GB base weight on disk.
@@ -29,7 +30,7 @@ const MODEL_PROFILES = {
     supportedModes: ["instant", "medium", "high", "extra-high", "pro"] as const,
   },
   configured: {
-    description: "由服务器 LLM_* 环境变量配置的模型服务。",
+    description: "由服务器 LLM_* 环境变量配置的远程模型服务。",
     family: "custom",
     parameterSizeB: null,
     supportedModes: ["instant"] as const,
@@ -62,11 +63,12 @@ export function getModelConfig(profileId: AssistantModelProfileId = "configured"
       contextTokens: 8_192,
     };
   }
-  const baseURL = process.env.LLM_BASE_URL?.trim().replace(/\/$/, "") || null;
+  const configuredBaseURL = process.env.LLM_BASE_URL?.trim().replace(/\/$/, "") || null;
   const backend = process.env.LLM_BACKEND?.trim() || "vllm";
-  if (backend !== "vllm" && backend !== "openai-compatible" && backend !== "ollama") {
-    throw configurationError("LLM_BACKEND must be vllm or openai-compatible or ollama.");
+  if (backend !== "vllm" && backend !== "openai-compatible" && backend !== "ollama" && backend !== "vercel-ai-gateway") {
+    throw configurationError("LLM_BACKEND must be vllm, openai-compatible, ollama, or vercel-ai-gateway.");
   }
+  const baseURL = backend === "vercel-ai-gateway" ? configuredBaseURL || VERCEL_AI_GATEWAY_BASE_URL : configuredBaseURL;
   const configuredBudget = process.env.LLM_MAX_OUTPUT_TOKENS?.trim();
   const maxOutputTokens = configuredBudget ? Number(configuredBudget) : DEFAULT_MAX_OUTPUT_TOKENS;
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
@@ -75,12 +77,12 @@ export function getModelConfig(profileId: AssistantModelProfileId = "configured"
   const model = process.env.LLM_MODEL?.trim() || "lumaflow-qwen";
   return {
     profileId,
-    label: `${model} · 自定义服务`,
-    description: MODEL_PROFILES.configured.description,
+    label: backend === "vercel-ai-gateway" ? `${model} · Vercel AI Gateway` : `${model} · 自定义服务`,
+    description: backend === "vercel-ai-gateway" ? "Vercel 托管的 Qwen 远程推理服务；凭据由部署环境的 OIDC 管理。" : MODEL_PROFILES.configured.description,
     baseURL,
     backend: backend as ModelBackend,
     maxOutputTokens,
-    apiKey: process.env.LLM_API_KEY?.trim() || "local",
+    apiKey: process.env.LLM_API_KEY?.trim() || (backend === "vercel-ai-gateway" ? "" : "local"),
     model,
     connectionKind: process.env.LLM_CONNECTION_KIND === "protocol-mock" ? "protocol-mock" as const : "live" as const,
     contextTokens: null,
@@ -115,7 +117,7 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
   const startedAt = performance.now();
   try {
     const response = await fetch(`${config.baseURL}/models`, {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
+      headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : undefined,
       cache: "no-store",
       signal: AbortSignal.timeout(3_000),
     });

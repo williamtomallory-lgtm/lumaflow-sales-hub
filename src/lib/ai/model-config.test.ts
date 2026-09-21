@@ -50,6 +50,20 @@ describe("allowlisted model profiles", () => {
     expect(getModelConfig("local-qwen3-14b").description).toContain("CPU/GPU 混合");
   });
 
+  it("configures Vercel AI Gateway without exposing or requiring a static API key", () => {
+    vi.stubEnv("LLM_BACKEND", "vercel-ai-gateway");
+    vi.stubEnv("LLM_BASE_URL", undefined);
+    vi.stubEnv("LLM_MODEL", "alibaba/qwen-3-14b");
+    vi.stubEnv("LLM_API_KEY", undefined);
+    expect(getModelConfig()).toMatchObject({
+      backend: "vercel-ai-gateway",
+      baseURL: "https://ai-gateway.vercel.sh/v1",
+      model: "alibaba/qwen-3-14b",
+      apiKey: "",
+    });
+    expect(getModelConfig().label).toContain("Vercel AI Gateway");
+  });
+
   it("reports unavailable when Ollama responds but the requested alias is not installed", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "qwen3:8b" }] })));
     expect(await getModelHealth("local-qwen3-8b")).toMatchObject({

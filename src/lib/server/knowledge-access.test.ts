@@ -8,9 +8,18 @@ describe("local uploaded file boundary", () => {
     const url = "http://localhost:3000/api/v1/knowledge";
     expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { "sec-fetch-site": "same-origin" } }))).not.toThrow();
     expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { origin: "http://localhost:3000" } }))).not.toThrow();
-    expect(() => authorizeLocalKnowledgeRead(new Request(url))).toThrow("本机知识库页面");
+    expect(() => authorizeLocalKnowledgeRead(new Request(url))).toThrow("当前知识库页面");
     expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { origin: "https://evil.invalid" } }))).toThrow("Cross-origin");
-    expect(() => authorizeLocalKnowledgeRead(new Request("http://rebind.invalid/api/v1/knowledge", { headers: { origin: "http://rebind.invalid" } }))).toThrow("仅允许本机");
+    expect(() => authorizeLocalKnowledgeRead(new Request("https://app.example/api/v1/knowledge", { headers: { origin: "https://app.example" } }))).toThrow("尚未启用");
+  });
+  it("allows only same-origin browser access when remote knowledge is enabled", () => {
+    vi.stubEnv("REMOTE_KNOWLEDGE_ENABLED", "true");
+    const url = "https://app.example/api/v1/knowledge";
+    expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { origin: "https://app.example" } }))).not.toThrow();
+    expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { "sec-fetch-site": "same-origin" } }))).not.toThrow();
+    expect(() => authorizeLocalKnowledgeRead(new Request(url))).toThrow("当前知识库页面");
+    expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { origin: "https://evil.invalid" } }))).toThrow("Cross-origin");
+    expect(() => authorizeLocalKnowledgeRead(new Request(url, { headers: { "sec-fetch-site": "cross-site" } }))).toThrow("Cross-origin");
   });
   it("allows an explicit server API token, not arbitrary bearer text", () => {
     vi.stubEnv("ASSISTANT_API_TOKEN", "test-only-token");

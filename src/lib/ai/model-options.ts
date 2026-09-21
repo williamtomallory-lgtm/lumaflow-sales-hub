@@ -1,7 +1,7 @@
 import type { AssistantReasoningMode } from "../contracts/api";
 import { INFERENCE_PROFILE_SETTINGS, isCurrentInferenceProfile } from "./inference-policy";
 
-export type ModelBackend = "vllm" | "openai-compatible" | "ollama";
+export type ModelBackend = "vllm" | "openai-compatible" | "ollama" | "vercel-ai-gateway";
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 export const MIN_MAX_OUTPUT_TOKENS = 256;
@@ -23,7 +23,7 @@ export function getModelGenerationOptions(
     const settings = INFERENCE_PROFILE_SETTINGS[mode];
     const thinkingEnabled = settings.thinkingEnabled;
     const budget = Math.min(settings.maxOutputTokens, maxOutputTokens);
-    if (backend === "openai-compatible") {
+    if (backend === "openai-compatible" || backend === "vercel-ai-gateway") {
       return {
         temperature: thinkingEnabled ? 1 : 0.7,
         topP: thinkingEnabled ? 0.95 : 0.8,
@@ -57,7 +57,7 @@ export function getModelGenerationOptions(
     };
   }
 
-  if (backend === "openai-compatible") {
+  if (backend === "openai-compatible" || backend === "vercel-ai-gateway") {
     const budget = mode === "fast" ? 2_048 : mode === "normal" ? 4_096 : maxOutputTokens;
     return {
       temperature: 0.7,

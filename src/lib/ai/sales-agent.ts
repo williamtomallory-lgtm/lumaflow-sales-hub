@@ -53,17 +53,19 @@ export const salesAgent = new ToolLoopAgent({
   callOptionsSchema,
   prepareCall: ({ options, ...settings }) => {
     const config = assertModelConfigured(options.modelProfileId);
-    const provider = createOpenAICompatible({
-      name: QWEN_PROVIDER_NAME,
-      baseURL: config.baseURL,
-      apiKey: config.apiKey,
-    });
+    const model = config.backend === "vercel-ai-gateway"
+      ? config.model
+      : createOpenAICompatible({
+          name: QWEN_PROVIDER_NAME,
+          baseURL: config.baseURL,
+          apiKey: config.apiKey,
+        }).chatModel(config.model);
     const customerContext = options.customer
       ? `\n当前客户上下文（仅用于称呼和场景，不得据此推断未提供的事实）：${JSON.stringify(options.customer)}`
       : "";
     return {
       ...settings,
-      model: provider.chatModel(config.model),
+      model,
       instructions: `${settings.instructions}\n\n${options.profile.instructions}${customerContext}`,
       // Preserve the UI's complete tool-result type union, but only install enabled tools at runtime.
       tools: Object.fromEntries(options.profile.toolNames.map((name) => [name, salesTools[name]])) as typeof salesTools,

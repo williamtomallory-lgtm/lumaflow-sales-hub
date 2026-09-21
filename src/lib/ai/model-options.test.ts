@@ -82,7 +82,7 @@ describe("local model backend options", () => {
   });
 
   it("respects the configured ceiling for every mode and backend", () => {
-    for (const backend of ["vllm", "openai-compatible"] as const) {
+    for (const backend of ["vllm", "openai-compatible", "vercel-ai-gateway"] as const) {
       for (const mode of ["fast", "normal", "deep"] as const) {
         expect(getModelGenerationOptions(mode, backend, 1_024).maxOutputTokens).toBe(1_024);
       }
@@ -92,7 +92,7 @@ describe("local model backend options", () => {
 
   it("rejects unknown backend configuration and invalid output ceilings", () => {
     vi.stubEnv("LLM_BACKEND", "ollma-typo");
-    expect(getModelConfig).toThrow("LLM_BACKEND must be vllm or openai-compatible");
+    expect(getModelConfig).toThrow("LLM_BACKEND must be vllm, openai-compatible, ollama, or vercel-ai-gateway");
     vi.stubEnv("LLM_BACKEND", "openai-compatible");
     for (const invalid of ["NaN", "255", "32769", "1024.5"]) {
       vi.stubEnv("LLM_MAX_OUTPUT_TOKENS", invalid);
