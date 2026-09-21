@@ -1,0 +1,7 @@
+knowledge_base/
+release-assets/
+outputs/
+artifact-export-work/
+artifacts/
+.local-data/
+.local-runtime/
