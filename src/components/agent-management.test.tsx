@@ -16,7 +16,7 @@ const baseAgents = [
 ];
 
 beforeEach(() => {
-  const created = { id: "north-wechat", name: "北区客服", description: "负责北区客户私聊", enabled: true, workspace: "agents/north-wechat", knowledgeMode: "shared" as const, botType: "weixin_personal" };
+  const created = { id: "north-wechat", name: "北区客服", description: "负责北区客户私聊", enabled: true, workspace: "agents/north-wechat", knowledgeMode: "shared" as const, agentType: "weixin_personal" };
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === "POST") return Response.json({ data: { agents: [...baseAgents, created], defaultAgentId: "default", revision: "r2" } }, { status: 201 });
     return Response.json({ data: { agents: baseAgents, defaultAgentId: "default", revision: "r1" } });

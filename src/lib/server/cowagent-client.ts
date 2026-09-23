@@ -7,6 +7,7 @@ import { ApiHttpError } from "./api-security";
 import type { CowAgentWeixinState } from "../contracts/cowagent-weixin";
 import type { CowAgentWecomState } from "../contracts/cowagent-wecom";
 import type { CowAgentProfile, CowAgentRoster } from "../contracts/cowagent-agent";
+import { AGENT_ROLE_IDS, type AgentRoleId } from "@/config/agent-roles";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const MAX_RESPONSE_BYTES = 1_500_000;
@@ -151,6 +152,9 @@ function parseAgent(value: unknown): CowAgentProfile | null {
   const workspace = asString(item.workspace);
   if (!id || !name || !workspace) return null;
   const knowledgeMode = item.knowledge_mode === "own" ? "own" : "shared";
+  const roleIds = Array.isArray(item.role_ids)
+    ? item.role_ids.filter((role): role is AgentRoleId => typeof role === "string" && (AGENT_ROLE_IDS as readonly string[]).includes(role))
+    : [];
   return {
     id,
     name,
@@ -160,6 +164,8 @@ function parseAgent(value: unknown): CowAgentProfile | null {
     ...(asString(item.description) ? { description: asString(item.description) } : {}),
     ...(asString(item.model) ? { model: asString(item.model) } : {}),
     ...(asString(item.bot_type) ? { botType: asString(item.bot_type) } : {}),
+    ...(item.agent_type === "weixin_personal" || item.agent_type === "wecom_group" ? { agentType: item.agent_type } : {}),
+    ...(roleIds.length ? { roleIds } : {}),
     ...(asString(item.avatar) ? { avatar: asString(item.avatar) } : {}),
     ...(asString(item.avatar_rev) ? { avatarRev: asString(item.avatar_rev) } : {}),
   };
@@ -201,6 +207,7 @@ export async function createCowAgentProfile(input: {
   cloneFrom: string | null;
   knowledgeMode: "shared" | "own";
   agentType: "weixin_personal" | "wecom_group";
+  roleIds: AgentRoleId[];
   revision?: string;
 }): Promise<CowAgentRoster> {
   const payload = await cowAgentJson("api/agents", {
@@ -213,12 +220,36 @@ export async function createCowAgentProfile(input: {
       description: input.description,
       clone_from: input.cloneFrom,
       knowledge_mode: input.knowledgeMode,
-      bot_type: input.agentType,
+      agent_type: input.agentType,
+      role_ids: input.roleIds,
       ...(input.revision ? { revision: input.revision } : {}),
     }),
   }, 30_000);
   if (payload.status !== "success") {
     throw new ApiHttpError(payload.code === "stale_roster" ? 409 : 422, "COWAGENT_CREATE_FAILED", publicAgentError(asString(payload.message)));
+  }
+  return getCowAgentRoster();
+}
+
+export async function deleteCowAgentProfile(input: { id: string; revision?: string }): Promise<CowAgentRoster> {
+  const payload = await cowAgentJson("api/agents", {
+    method: "POST",
+    headers: cowAgentHeaders(true),
+    body: JSON.stringify({
+      action: "delete",
+      id: input.id,
+      ...(input.revision ? { revision: input.revision } : {}),
+    }),
+  }, 30_000);
+  if (payload.status !== "success") {
+    const message = asString(payload.message);
+    const status = payload.code === "stale_roster" ? 409 : /default/i.test(message) ? 409 : 422;
+    const publicMessage = payload.code === "stale_roster"
+      ? "智能体列表已变化，请刷新后重试。"
+      : /default/i.test(message)
+        ? "默认智能体不能删除。"
+        : "CowAgent 删除智能体失败。";
+    throw new ApiHttpError(status, "COWAGENT_DELETE_FAILED", publicMessage);
   }
   return getCowAgentRoster();
 }

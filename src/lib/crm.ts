@@ -279,30 +279,36 @@ export function isTaskOverdue(task: FollowupTask, referenceDate: Date | string =
   return new Date(task.dueAt).getTime() < new Date(referenceDate).getTime();
 }
 
-function dateKey(value: Date | string): string {
-  if (typeof value === "string") {
-    const isoDate = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-    if (isoDate) return isoDate;
-  }
+function dateKey(value: Date | string, timeZone?: string): string {
   const date = value instanceof Date ? value : new Date(value);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  if (Number.isNaN(date.getTime())) return "";
+  // Convert both the deadline and the reference instant to the same viewing
+  // timezone. Slicing an ISO string incorrectly uses its original offset.
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
-export function filterFollowupTasks(tasks: FollowupTask[], filter: FollowupFilter = "all", query = "", referenceDate: Date | string = new Date()): FollowupTask[] {
+export function formatFollowupDate(value: Date | string, timeZone?: string, includeTime = true): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "截止日期未设置";
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric", month: "long", day: "numeric", weekday: "long",
+    ...(includeTime ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" as const } : {}),
+  }).format(date);
+}
+
+export function filterFollowupTasks(tasks: FollowupTask[], filter: FollowupFilter = "all", query = "", referenceDate: Date | string = new Date(), timeZone?: string): FollowupTask[] {
   const normalizedQuery = normalize(query);
   const reference = new Date(referenceDate);
-  const today = dateKey(reference);
+  const today = dateKey(reference, timeZone);
   return tasks
     .filter((task) => {
       const queryMatch = !normalizedQuery || normalize(`${task.customerName}${task.company}${task.title}${task.description}${task.type}`).includes(normalizedQuery);
       if (!queryMatch) return false;
       if (filter === "completed") return task.status === "completed";
       if (filter === "overdue") return isTaskOverdue(task, reference);
-      if (filter === "today") return task.status === "open" && dateKey(task.dueAt) === today;
-      if (filter === "upcoming") return task.status === "open" && !isTaskOverdue(task, reference) && dateKey(task.dueAt) !== today;
+      if (filter === "today") return task.status === "open" && dateKey(task.dueAt, timeZone) === today;
+      if (filter === "upcoming") return task.status === "open" && !isTaskOverdue(task, reference) && dateKey(task.dueAt, timeZone) !== today;
       return true;
     })
     .sort((a, b) => {

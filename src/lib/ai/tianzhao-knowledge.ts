@@ -52,6 +52,13 @@ type TianzhaoKnowledgeBase = {
 };
 
 const knowledgeBase = deployedKnowledgeBase as TianzhaoKnowledgeBase;
+const catalogCategories = [...new Map(knowledgeBase.products.reduce((counts, product) => {
+  const name = product.category.trim() || "未分类";
+  counts.set(name, (counts.get(name) ?? 0) + 1);
+  return counts;
+}, new Map<string, number>())).entries()]
+  .map(([name, count]) => ({ name, count }))
+  .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
 
 export type TianzhaoSearchResult = {
   id: string;
@@ -149,4 +156,56 @@ export function searchTianzhaoProducts(query: string, limit = 5) {
 
 export function getTianzhaoKnowledgeMetadata() {
   return knowledgeBase.metadata;
+}
+
+export type TianzhaoCatalogProduct = Pick<TianzhaoProduct,
+  "id" | "name" | "model" | "productCode" | "category" | "style" | "materialTag" |
+  "priceCny" | "priceScope" | "unit" | "selectedSpecification" | "specifications" |
+  "color" | "colorOptions" | "dimensions" | "lightSource" | "material" |
+  "applicableArea" | "scene" | "availabilityStatus" | "reviewStatus" | "reviewNote"
+>;
+
+/** Public, paginated view of the verified snapshot. Image evidence remains in the release archive. */
+export function listTianzhaoProducts(input: { query?: string; category?: string; offset?: number; limit?: number } = {}) {
+  const query = input.query?.trim() ?? "";
+  const category = input.category?.trim() ?? "";
+  const offset = Math.max(0, Math.floor(input.offset ?? 0));
+  const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 24)));
+  const filtered = knowledgeBase.products.filter((product) =>
+    (!category || product.category === category) && (!query || productScore(product, query) > 0));
+  const products: TianzhaoCatalogProduct[] = filtered.slice(offset, offset + limit).map((product) => ({
+    id: product.id,
+    name: product.name,
+    model: product.model,
+    productCode: product.productCode,
+    category: product.category,
+    style: product.style,
+    materialTag: product.materialTag,
+    priceCny: product.priceCny,
+    priceScope: product.priceScope,
+    unit: product.unit,
+    selectedSpecification: product.selectedSpecification,
+    specifications: product.specifications,
+    color: product.color,
+    colorOptions: product.colorOptions,
+    dimensions: product.dimensions,
+    lightSource: product.lightSource,
+    material: product.material,
+    applicableArea: product.applicableArea,
+    scene: product.scene,
+    availabilityStatus: product.availabilityStatus,
+    reviewStatus: product.reviewStatus,
+    reviewNote: product.reviewNote,
+  }));
+  return {
+    products,
+    total: filtered.length,
+    offset,
+    limit,
+    metadata: {
+      ...knowledgeBase.metadata,
+      categories: catalogCategories,
+      spreadsheetUrl: `${knowledgeBase.metadata.releaseUrl.replace(/\/tag\/[^/]+$/, "")}/download/tianzhao-20260920/tianzhao-products-1887-20260920.xlsx`,
+    },
+  };
 }

@@ -2,6 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/server/data-repository", async () => {
+  const { testSnapshot } = await import("../../test/fixtures");
+  return { getDataSnapshot: async () => structuredClone(testSnapshot) };
+});
 
 type WireMessage = { role: string; content: string };
 type WireRequest = { model: string; max_tokens: number; reasoning_effort?: string; messages: WireMessage[]; tools: Array<{ function: { name: string } }> };

@@ -43,6 +43,10 @@
 .profileFields > div:first-child,.profileFields > div:last-child { grid-column:1/-1; }
 .profileFields dt { margin-bottom:7px; color:#7d8a83; font-size:9px; font-weight:700; }
 .profileFields dd { margin:0; color:#35493e; font-size:11px; line-height:1.65; overflow-wrap:anywhere; }
+.detailActions { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+.danger { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:39px; padding:0 14px; border:1px solid #e6bdb7; border-radius:10px; color:#a2382d; background:#fff7f5; cursor:pointer; font:inherit; font-size:11px; font-weight:700; }
+.danger:hover { border-color:#d8978e; background:#fff0ed; }
+.danger:disabled { opacity:.5; cursor:not-allowed; }
 .monospace { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:9px !important; }
 .channelNotice { display:flex; flex-direction:column; gap:5px; margin-bottom:16px; padding:13px 14px; border:1px solid #ead8b7; border-radius:11px; color:#765622; background:#fffaf0; }
 .channelNotice strong { font-size:11px; }
@@ -51,6 +55,7 @@
 .bindingCard > div:nth-child(2) { min-width:0; flex:1; }
 .bindingCard strong { color:#2b4437; font-size:12px; }
 .bindingCard p { margin:5px 0 0; color:#77867e; font-size:9px; line-height:1.5; }
+.channelActions { display:flex; justify-content:flex-end; margin-top:16px; padding-top:16px; border-top:1px solid #e7ece9; }
 .channelIcon { width:42px; height:42px; display:grid; place-items:center; flex:none; border-radius:12px; color:#1d6847; background:#e5f2e9; }
 .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
 .card { min-height:190px; display:flex; flex-direction:column; gap:13px; padding:18px; border:1px solid #e0e6e2; border-radius:15px; background:#fff; box-shadow:0 8px 25px #253d3009; }
@@ -87,10 +92,14 @@
 .segments { display:flex; width:max-content; padding:3px; border:1px solid #d5ddd8; border-radius:10px; background:#f3f5f3; }
 .segments button { min-width:92px; border:0; border-radius:7px; padding:8px 13px; color:#6f7c74; background:transparent; cursor:pointer; font:inherit; font-size:11px; }
 .segments button[data-active="true"] { color:#18563c; background:#fff; box-shadow:0 2px 7px #1a382616; font-weight:700; }
+.roleGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.roleGrid button { display:grid; gap:5px; min-height:86px; padding:13px; text-align:left; color:#20352d; background:#fff; border:1px solid #dce7e1; border-radius:14px; cursor:pointer; font:inherit; }
+.roleGrid button[data-active="true"] { background:#eff8f3; border-color:#3c9b70; box-shadow:0 0 0 1px #3c9b70 inset; }
+.roleGrid button small { color:#6f7f78; line-height:1.45; }
 .templates { display:flex; flex-wrap:wrap; gap:7px; }
 .templates button { border:1px solid #d6e2da; border-radius:999px; padding:7px 10px; color:#3f6d56; background:#f5faf7; cursor:pointer; font:inherit; font-size:10px; }
 .footer { position:sticky; bottom:0; z-index:2; display:flex; justify-content:flex-end; gap:9px; padding:16px 22px; border-top:1px solid #e8ece9; background:#fff; }
 .secondary { min-height:39px; padding:0 15px; border:1px solid #d8e0db; border-radius:10px; color:#5e6d65; background:#fff; cursor:pointer; font:inherit; font-size:12px; }
 .primary:disabled,.secondary:disabled { opacity:.5; cursor:not-allowed; }
 @media(max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}.workspace{grid-template-columns:225px minmax(0,1fr)}.profileFields{grid-template-columns:1fr}.profileFields>div{grid-column:1/-1}.bindingCard{align-items:flex-start;flex-wrap:wrap}.bindingCard>div:nth-child(2){min-width:180px}}
-@media(max-width:650px){.hero{align-items:flex-start;flex-direction:column}.viewBar{align-items:stretch;flex-direction:column}.viewTabs{width:100%}.viewTabs button{flex:1;justify-content:center}.workspace{grid-template-columns:1fr}.roster{border-right:0;border-bottom:1px solid #e4eae6}.detail{padding:20px 17px}.detailHeading{align-items:flex-start;flex-wrap:wrap}.runState{margin-left:67px}.grid{grid-template-columns:1fr}.twoColumns{grid-template-columns:1fr}.panel{border-radius:14px}.form{padding:17px}.footer{padding:14px 17px}}
+@media(max-width:650px){.hero{align-items:flex-start;flex-direction:column}.viewBar{align-items:stretch;flex-direction:column}.viewTabs{width:100%}.viewTabs button{flex:1;justify-content:center}.workspace{grid-template-columns:1fr}.roster{border-right:0;border-bottom:1px solid #e4eae6}.detail{padding:20px 17px}.detailHeading{align-items:flex-start;flex-wrap:wrap}.runState{margin-left:67px}.grid,.roleGrid{grid-template-columns:1fr}.twoColumns{grid-template-columns:1fr}.panel{border-radius:14px}.form{padding:17px}.footer{padding:14px 17px}}

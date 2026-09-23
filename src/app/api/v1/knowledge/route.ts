@@ -91,6 +91,13 @@ export async function GET(request: Request) {
     enforceRateLimit(request, 120);
     authorizeKnowledgeRead(request);
     const query = knowledgeListQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
+    if (process.env.VERCEL === "1") {
+      return apiJson({
+        data: [],
+        summary: buildKnowledgeSummary([]),
+        meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, archiveAvailable: false, limit: query.limit, offset: query.offset },
+      }, 200, id);
+    }
     const allRecords = await listKnowledgeRecords();
     const normalized = query.q.toLowerCase();
     const filtered = allRecords.filter((record) => {
@@ -103,7 +110,7 @@ export async function GET(request: Request) {
     return apiJson({
       data,
       summary: buildKnowledgeSummary(allRecords),
-      meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, limit: query.limit, offset: query.offset },
+      meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, archiveAvailable: true, limit: query.limit, offset: query.offset },
     }, 200, id);
   } catch (error) {
     return knowledgeError(error, id);
@@ -116,6 +123,7 @@ export async function POST(request: Request) {
     enforceRateLimit(request, 10);
     authorizeKnowledgeRead(request);
     authorizeAssistantRequest(request);
+    if (process.env.VERCEL === "1") throw new ApiHttpError(503, "LOCAL_ARCHIVE_UNAVAILABLE", "云端尚未配置持久文件存储。请在本机站点上传，或先配置云端存储。");
     const formData = await boundedMultipartRequest(request).formData();
     const file = formData.get("file");
     if (!(file instanceof File)) throw new ApiHttpError(400, "FILE_REQUIRED", "请选择一个文件。");

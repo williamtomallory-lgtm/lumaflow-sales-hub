@@ -4,7 +4,7 @@
  * Nothing in this file is business state. Product, customer, inventory,
  * quotation, activity, and analytics values must come from the backend API.
  */
-export type View = "overview" | "products" | "assets" | "knowledge" | "agents" | "assistant" | "kit" | "salesAssistant" | "customers" | "quotation" | "followup" | "admin";
+export type View = "knowledge" | "agents" | "assistant" | "salesAssistant" | "customers" | "followup";
 
 export type StaticNavItem = {
   id: View;
@@ -13,35 +13,23 @@ export type StaticNavItem = {
 };
 
 export const PRIMARY_NAV: readonly StaticNavItem[] = [
-  { id: "overview", label: "工作台" },
-  { id: "products", label: "产品中心" },
-  { id: "assets", label: "资料中心" },
   { id: "knowledge", label: "知识库" },
   { id: "agents", label: "智能体" },
   { id: "assistant", label: "Chat-AI", badge: "AI" },
-  { id: "kit", label: "销售资料包" },
 ] as const;
 
 export const SECONDARY_NAV: readonly StaticNavItem[] = [
   { id: "customers", label: "客户与会话" },
-  { id: "quotation", label: "报价系统" },
   { id: "followup", label: "跟进提醒" },
-  { id: "admin", label: "管理后台" },
 ] as const;
 
 export const VIEW_META: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
-  overview: { eyebrow: "销售工作台", title: "下午好，Junjun", subtitle: "这里是今天最值得你关注的产品与销售资料。" },
-  products: { eyebrow: "产品中心", title: "把每个型号讲清楚", subtitle: "型号、参数、场景、库存和资料都在同一个视图里。" },
-  assets: { eyebrow: "资料中心", title: "找到，选中，直接发", subtitle: "按产品归档的最新图片、参数表、证书与案例。" },
-  knowledge: { eyebrow: "知识库 · 本地归档", title: "文件归档，知识一目了然", subtitle: "上传文件、提取正文、模型分类；原件与分类持久保存在本机，未理解的内容明确标记。" },
+  knowledge: { eyebrow: "统一知识库 · 产品 · 资料 · 文档", title: "所有销售知识，一个入口管理", subtitle: "产品档案、天昭灯网快照、图片资料与上传文件统一分类检索。" },
   agents: { eyebrow: "CowAgent · Agent Team", title: "智能体", subtitle: "创建角色、分配知识库，并把指定智能体部署到微信。" },
   assistant: { eyebrow: "Chat-AI", title: "Chat-AI", subtitle: "问答、资料检索和销售 Agent，共用本地模型。" },
-  kit: { eyebrow: "销售资料包", title: "十秒拼好一套客户资料", subtitle: "选择产品与附件，生成推荐话术并下载交付清单。" },
   salesAssistant: { eyebrow: "Chat-AI · Work", title: "Chat-AI", subtitle: "选择 Agent，开始工作。" },
-  customers: { eyebrow: "客户与会话", title: "每次沟通都带着完整上下文", subtitle: "客户档案、联系人、需求、聊天、历史报价和记忆统一管理。" },
-  quotation: { eyebrow: "报价系统 · CPQ", title: "准确报价，也能快速推进", subtitle: "价格阶梯、折扣、币种、审批、PDF 与版本历史完整联动。" },
-  followup: { eyebrow: "跟进系统", title: "不错过该推进的客户", subtitle: "未回复提醒、下一步行动、自动话术和销售任务集中处理。" },
-  admin: { eyebrow: "管理后台", title: "让知识、权限和 AI 持续可信", subtitle: "用户权限、数据质量、AI 日志、使用统计与效果评估。" },
+  customers: { eyebrow: "客户与会话 · 复盘 Agent", title: "让复盘 Agent 读懂每次沟通", subtitle: "客户档案、完整聊天记录与知识库文件一起交给复盘 Agent 分析。" },
+  followup: { eyebrow: "销售 Todo", title: "今天要跟进什么，一眼看清", subtitle: "用待办清单管理逾期、今日、稍后和已完成的销售动作。" },
 };
 
 export const QUICK_QUESTIONS = [

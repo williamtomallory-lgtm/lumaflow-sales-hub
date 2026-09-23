@@ -21,6 +21,14 @@ describe("JSON data snapshot", () => {
     expect(validateDataSnapshot(snapshot)).toEqual(snapshot);
   });
 
+  it("accepts an empty real workspace without inserting demo products", () => {
+    const snapshot = structuredClone(testSnapshot);
+    snapshot.products = [];
+    snapshot.customers = [];
+    snapshot.followupTasks = [];
+    expect(validateDataSnapshot(snapshot).products).toEqual([]);
+  });
+
   it("rejects a follow-up task that points to a missing customer", () => {
     const snapshot = structuredClone(testSnapshot);
     const invalid = {

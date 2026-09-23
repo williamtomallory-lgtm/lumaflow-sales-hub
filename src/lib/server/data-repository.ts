@@ -2,11 +2,12 @@ import "server-only";
 
 import { Pool, type PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
-import { followupTaskSchema, productSchema } from "../contracts/api";
+import { customerSchema, followupTaskSchema, productSchema } from "../contracts/api";
 import { validateDataSnapshot, type AppDataSnapshot } from "../data-snapshot";
-import { getJsonDataSnapshot } from "./json-data";
+import { getEmptyDataSnapshot } from "./runtime-data";
+import { mutateLocalBusinessData, readLocalBusinessData } from "./local-business-store";
 import type { Product } from "../catalog";
-import type { FollowupTask, FollowupTaskStatus } from "../crm";
+import type { Customer, FollowupTask, FollowupTaskStatus } from "../crm";
 
 type DataRow = { data: unknown };
 type SettingRow = { key: string; data: unknown };
@@ -34,7 +35,14 @@ async function rows(pool: Pool, table: DataTable) {
 
 export async function getDataSnapshot(): Promise<AppDataSnapshot> {
   const pool = getPool();
-  if (!pool) return validateDataSnapshot(getJsonDataSnapshot());
+  if (!pool) {
+    const snapshot = getEmptyDataSnapshot("local");
+    const local = await readLocalBusinessData();
+    snapshot.products = local.products;
+    snapshot.customers = local.customers;
+    snapshot.followupTasks = local.followups;
+    return validateDataSnapshot(snapshot);
+  }
 
   try {
     const [
@@ -58,25 +66,24 @@ export async function getDataSnapshot(): Promise<AppDataSnapshot> {
       rows(pool, "followup_tasks"),
       pool.query<SettingRow>("SELECT key, data FROM app_settings WHERE key = 'currency_rates'"),
     ]);
-    const fallback = getJsonDataSnapshot();
-    const hasCompletePostgresData = [productRows, knowledgeRows, quoteRows, userRows, logRows, issueRows, customerRows, taskRows].every((collection) => collection.length > 0) && settingResult.rows.length > 0;
     const snapshot: AppDataSnapshot = {
-      source: hasCompletePostgresData ? "postgres" : "json-fallback",
-      products: (productRows.length ? productRows : fallback.products) as AppDataSnapshot["products"],
-      knowledgeEntries: (knowledgeRows.length ? knowledgeRows : fallback.knowledgeEntries) as AppDataSnapshot["knowledgeEntries"],
-      currencyRates: (settingResult.rows[0]?.data ?? fallback.currencyRates) as AppDataSnapshot["currencyRates"],
-      quoteHistory: (quoteRows.length ? quoteRows : fallback.quoteHistory) as AppDataSnapshot["quoteHistory"],
-      adminUsers: (userRows.length ? userRows : fallback.adminUsers) as AppDataSnapshot["adminUsers"],
-      aiLogs: (logRows.length ? logRows : fallback.aiLogs) as AppDataSnapshot["aiLogs"],
-      qualityIssues: (issueRows.length ? issueRows : fallback.qualityIssues) as AppDataSnapshot["qualityIssues"],
-      customers: (customerRows.length ? customerRows : fallback.customers) as AppDataSnapshot["customers"],
-      followupTasks: (taskRows.length ? taskRows : fallback.followupTasks) as AppDataSnapshot["followupTasks"],
+      source: "postgres",
+      products: productRows as AppDataSnapshot["products"],
+      knowledgeEntries: knowledgeRows as AppDataSnapshot["knowledgeEntries"],
+      currencyRates: (settingResult.rows[0]?.data ?? {}) as AppDataSnapshot["currencyRates"],
+      quoteHistory: quoteRows as AppDataSnapshot["quoteHistory"],
+      adminUsers: userRows as AppDataSnapshot["adminUsers"],
+      aiLogs: logRows as AppDataSnapshot["aiLogs"],
+      qualityIssues: issueRows as AppDataSnapshot["qualityIssues"],
+      customers: customerRows as AppDataSnapshot["customers"],
+      followupTasks: taskRows as AppDataSnapshot["followupTasks"],
     };
     return validateDataSnapshot(snapshot);
   } catch (error) {
     if (process.env.POSTGRES_REQUIRED === "true") throw error;
-    console.warn("PostgreSQL data load failed; using JSON fallback:", error instanceof Error ? error.message : "unknown error");
-    return validateDataSnapshot(getJsonDataSnapshot("json-fallback"));
+    console.warn("PostgreSQL data load failed; using the server-side local store without sample rows:", error instanceof Error ? error.message : "unknown error");
+    const local = await readLocalBusinessData();
+    return validateDataSnapshot({ ...getEmptyDataSnapshot("local-fallback"), products: local.products, customers: local.customers, followupTasks: local.followups });
   }
 }
 
@@ -128,8 +135,9 @@ async function inTransaction<T>(pool: Pool, operation: (client: PoolClient) => P
 }
 
 export async function createProduct(product: Product, requestId: string) {
-  const pool = requirePool();
   const parsed = productSchema.parse(product);
+  if (!getPool()) return mutateLocalBusinessData((data) => { data.products.push(parsed); return parsed; });
+  const pool = requirePool();
   return inTransaction(pool, async (client) => {
     await client.query("INSERT INTO products (id, data, updated_at) VALUES ($1, $2::jsonb, NOW())", [parsed.id, JSON.stringify(parsed)]);
     await insertAuditEvent(client, { action: "product.create", entityType: "product", entityId: parsed.id, requestId });
@@ -138,6 +146,13 @@ export async function createProduct(product: Product, requestId: string) {
 }
 
 export async function updateProduct(productId: string, patch: Partial<Omit<Product, "id">>, requestId: string) {
+  if (!getPool()) return mutateLocalBusinessData((data) => {
+    const current = data.products.find((product) => product.id === productId);
+    if (!current) return null;
+    const parsed = productSchema.parse({ ...current, ...patch, id: productId });
+    data.products = [...data.products.filter((product) => product.id !== productId), parsed];
+    return parsed;
+  });
   const pool = requirePool();
   return inTransaction(pool, async (client) => {
     const current = await client.query<DataRow>("SELECT data FROM products WHERE id = $1 FOR UPDATE", [productId]);
@@ -150,6 +165,13 @@ export async function updateProduct(productId: string, patch: Partial<Omit<Produ
 }
 
 export async function updateFollowupStatus(taskId: string, status: FollowupTaskStatus, requestId: string) {
+  if (!getPool()) return mutateLocalBusinessData((data) => {
+    const current = data.followups.find((task) => task.id === taskId);
+    if (!current) return null;
+    const updated = followupTaskSchema.parse({ ...current, status });
+    data.followups = [...data.followups.filter((task) => task.id !== taskId), updated];
+    return updated;
+  });
   const pool = requirePool();
   return inTransaction(pool, async (client) => {
     const current = await client.query<DataRow>("SELECT data FROM followup_tasks WHERE id = $1 FOR UPDATE", [taskId]);
@@ -162,6 +184,26 @@ export async function updateFollowupStatus(taskId: string, status: FollowupTaskS
     });
     await client.query("UPDATE followup_tasks SET data = $2::jsonb, updated_at = NOW() WHERE id = $1", [taskId, JSON.stringify(parsed)]);
     await insertAuditEvent(client, { action: "followup.status.update", entityType: "followup", entityId: parsed.id, requestId });
+    return parsed;
+  });
+}
+
+export async function createFollowup(task: FollowupTask, requestId: string) {
+  const parsed = followupTaskSchema.parse(task);
+  if (!getPool()) return mutateLocalBusinessData((data) => { data.followups.push(parsed); return parsed; });
+  return inTransaction(requirePool(), async (client) => {
+    await client.query("INSERT INTO followup_tasks (id, data, updated_at) VALUES ($1, $2::jsonb, NOW())", [parsed.id, JSON.stringify(parsed)]);
+    await insertAuditEvent(client, { action: "followup.create", entityType: "followup", entityId: parsed.id, requestId });
+    return parsed;
+  });
+}
+
+export async function createCustomer(customer: Customer, requestId: string) {
+  const parsed = customerSchema.parse(customer);
+  if (!getPool()) return mutateLocalBusinessData((data) => { data.customers.push(parsed); return parsed; });
+  return inTransaction(requirePool(), async (client) => {
+    await client.query("INSERT INTO customers (id, data, updated_at) VALUES ($1, $2::jsonb, NOW())", [parsed.id, JSON.stringify(parsed)]);
+    await insertAuditEvent(client, { action: "customer.create", entityType: "customer", entityId: parsed.id, requestId });
     return parsed;
   });
 }

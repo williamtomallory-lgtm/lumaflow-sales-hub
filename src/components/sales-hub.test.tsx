@@ -14,10 +14,10 @@ vi.mock("@/hooks/use-backend-data", () => ({
 // Verify shell wiring independently of inference: both entry paths use this
 // exact component and pass the intended experience/customer, not two page trees.
 vi.mock("./agent-workspace", () => ({
-  AgentWorkspace: (props: { initialExperience: string; initialCustomerId?: string; onOpenKnowledge: () => void }) => <div data-testid="unified-chat">{props.initialExperience}<span>{props.initialCustomerId}</span><button onClick={props.onOpenKnowledge}>归档资料</button></div>,
+  AgentWorkspace: (props: { initialExperience: string; initialCustomerId?: string; initialMessage?: string; preferredRoleId?: string; selectAllKnowledge?: boolean; onOpenKnowledge: () => void }) => <div data-testid="unified-chat" data-role={props.preferredRoleId} data-all-knowledge={String(props.selectAllKnowledge)}>{props.initialExperience}<span>{props.initialCustomerId}</span><span>{props.initialMessage}</span><button onClick={props.onOpenKnowledge}>归档资料</button></div>,
 }));
 vi.mock("./knowledge-hub", () => ({
-  KnowledgeHub: () => <div data-testid="knowledge-destination">文件归档模块</div>,
+  KnowledgeHub: (props: { section?: string }) => <div data-testid="knowledge-destination" data-section={props.section}>文件归档模块</div>,
 }));
 beforeEach(() => { vi.stubGlobal("scrollTo", vi.fn()); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -26,21 +26,29 @@ describe("unified Chat-AI navigation", () => {
   it("opens customer analysis in Work on the same Chat-AI page", () => {
     render(<SalesHub />);
     fireEvent.click(screen.getByRole("button", { name: "客户与会话" }));
-    fireEvent.click(screen.getByRole("button", { name: "分析最新消息" }));
+    fireEvent.click(screen.getByRole("button", { name: "复盘全部会话" }));
     expect(screen.getByTestId("unified-chat")).toHaveTextContent("work");
     expect(screen.getByTestId("unified-chat")).toHaveTextContent(testSnapshot.customers[0].id);
+    expect(screen.getByTestId("unified-chat")).toHaveAttribute("data-role", "sales-review");
+    expect(screen.getByTestId("unified-chat")).toHaveAttribute("data-all-knowledge", "true");
+    expect(screen.getByTestId("unified-chat")).toHaveTextContent(testSnapshot.customers[0].conversations[0].content);
     expect(screen.getAllByTestId("unified-chat")).toHaveLength(1);
   });
-  it("has one Chat-AI entry, opens it by default, and links to knowledge", () => {
+  it("merges legacy catalog pages into knowledge and removes unused navigation", () => {
     render(<SalesHub />);
     const navigation = within(screen.getByLabelText("主导航"));
     expect(navigation.getAllByRole("button", { name: /Chat-AI/ })).toHaveLength(1);
-    expect(navigation.queryByRole("button", { name: "智能搜索" })).not.toBeInTheDocument();
-    expect(navigation.queryByRole("button", { name: /销售助手/ })).not.toBeInTheDocument();
-    expect(screen.getByTestId("unified-chat")).toHaveTextContent("chat");
-    fireEvent.click(screen.getByRole("button", { name: "归档资料" }));
+    for (const removed of ["工作台", "产品中心", "资料中心", "销售资料包", "报价系统", "管理后台"]) expect(navigation.queryByRole("button", { name: removed })).not.toBeInTheDocument();
     expect(screen.queryByTestId("unified-chat")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "文件归档，知识一目了然" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "所有销售知识，一个入口管理" })).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-destination")).toBeInTheDocument();
+    fireEvent.click(navigation.getByRole("button", { name: /Chat-AI/ }));
+    expect(screen.getByTestId("unified-chat")).toHaveTextContent("chat");
+  });
+  it("opens a new sales kit inside the knowledge page", () => {
+    render(<SalesHub />);
+    fireEvent.click(screen.getByRole("button", { name: "新建资料包" }));
+    expect(screen.getByTestId("knowledge-destination")).toHaveAttribute("data-section", "kit");
+    expect(screen.getByRole("heading", { name: "所有销售知识，一个入口管理" })).toBeInTheDocument();
   });
 });

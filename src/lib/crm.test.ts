@@ -75,10 +75,12 @@ describe("CRM customer records", () => {
 
 describe("CRM follow-up queue", () => {
   it("filters overdue, today, upcoming and completed tasks deterministically", () => {
-    expect(filterFollowupTasks(followupTasks, "overdue", "", referenceDate).map((task) => task.id)).toEqual(["task-nova-quote"]);
-    expect(filterFollowupTasks(followupTasks, "today", "", referenceDate).map((task) => task.id)).toEqual(["task-nova-reply", "task-northstar-need"]);
-    expect(filterFollowupTasks(followupTasks, "upcoming", "", referenceDate).map((task) => task.id)).toEqual(["task-atelier-assets", "task-moss-stock"]);
-    expect(filterFollowupTasks(followupTasks, "completed", "", referenceDate).map((task) => task.id)).toEqual(["task-atelier-call"]);
+    const ids = (filter: Parameters<typeof filterFollowupTasks>[1]) =>
+      filterFollowupTasks(followupTasks, filter, "", referenceDate, "Asia/Shanghai").map((task) => task.id);
+    expect(ids("overdue")).toEqual(["task-nova-quote"]);
+    expect(ids("today")).toEqual(["task-nova-reply", "task-northstar-need"]);
+    expect(ids("upcoming")).toEqual(["task-atelier-assets", "task-moss-stock"]);
+    expect(ids("completed")).toEqual(["task-atelier-call"]);
   });
 
   it("toggles a task immutably and preserves unrelated tasks", () => {

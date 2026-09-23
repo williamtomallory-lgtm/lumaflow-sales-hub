@@ -3,13 +3,13 @@ import type { Product } from "./catalog";
 import type { Customer, FollowupTask } from "./crm";
 import { dataSnapshotSchema, type DashboardSummary } from "./contracts/api";
 
-export type DataSourceKind = "json" | "postgres" | "json-fallback";
+export type DataSourceKind = "json" | "postgres" | "json-fallback" | "local" | "local-fallback";
 
 export type AppDataSnapshot = {
   source: DataSourceKind;
   products: Product[];
   knowledgeEntries: KnowledgeEntry[];
-  currencyRates: Record<Currency, number>;
+  currencyRates: Partial<Record<Currency, number>>;
   quoteHistory: QuoteHistoryRecord[];
   adminUsers: AdminUser[];
   aiLogs: AiLog[];
@@ -38,7 +38,6 @@ export function validateDataSnapshot(snapshot: AppDataSnapshot): AppDataSnapshot
     if (new Set(ids).size !== ids.length) throw new Error(`${name} contains duplicate ids`);
   }
 
-  if (!parsed.products.length) throw new Error("products cannot be empty");
   const productIds = new Set(parsed.products.map((product) => product.id));
   const customerIds = new Set(parsed.customers.map((customer) => customer.id));
 
@@ -53,7 +52,8 @@ export function validateDataSnapshot(snapshot: AppDataSnapshot): AppDataSnapshot
     }
   }
   for (const currency of ["CNY", "USD", "CAD"] as Currency[]) {
-    if (!Number.isFinite(parsed.currencyRates[currency]) || parsed.currencyRates[currency] <= 0) {
+    const rate = parsed.currencyRates[currency];
+    if (rate !== undefined && (!Number.isFinite(rate) || rate <= 0)) {
       throw new Error(`currency rate ${currency} must be positive`);
     }
   }

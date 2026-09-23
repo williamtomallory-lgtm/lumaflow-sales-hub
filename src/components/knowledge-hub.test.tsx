@@ -2,12 +2,15 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KnowledgeHub } from "./knowledge-hub";
-import { testKnowledge } from "../test/fixtures";
+import { testAssets, testProducts } from "../test/fixtures";
 import type { KnowledgeEntry } from "../lib/knowledge/contracts";
 
+vi.mock("./tianzhao-catalog", () => ({ TianzhaoCatalog: () => <div data-testid="tianzhao-catalog" /> }));
+vi.mock("./agent-knowledge-library", () => ({ AgentKnowledgeLibrary: () => <div data-testid="agent-library" /> }));
+
 vi.mock("@/hooks/use-model-catalog", () => ({ useModelCatalog: () => ({
-  models: [{ id: "local-qwen3-8b", label: "本地 8B", configured: true, reachable: true }],
-  modelProfileId: "local-qwen3-8b", selectedModel: { configured: true }, selectModel: vi.fn(), refresh: vi.fn(),
+  models: [{ id: "configured", label: "Ternary Bonsai 2 27B", configured: true, reachable: true }],
+  modelProfileId: "configured", selectedModel: { configured: true }, selectModel: vi.fn(), refresh: vi.fn(),
 }) }));
 vi.mock("@/hooks/use-model-health", () => ({ useModelHealth: () => ({ health: { reachable: true }, refresh: vi.fn() }) }));
 
@@ -53,19 +56,27 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Knowledge hub", () => {
-  it("renders relative-date seed knowledge separately from real upload counts", async () => {
-    render(<KnowledgeHub initialEntries={testKnowledge.map((item) => ({ ...item, updatedAt: "今天" }))} onToast={onToast} />);
+  it("shows products and their former asset-center files in the unified knowledge page", async () => {
+    render(<KnowledgeHub products={testProducts} assets={testAssets} onToast={onToast} />);
     await screen.findByText("还没有真实上传文件");
-    expect(screen.getByText(`${testKnowledge.length} 条演示`)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "统一产品与资料目录" })).toHaveTextContent(testProducts[0].name);
+    expect(screen.getByRole("region", { name: "统一产品与资料目录" })).toHaveTextContent(testAssets[0].name);
+  });
+
+  it("shows an empty runtime state without rendering fixture knowledge", async () => {
+    render(<KnowledgeHub onToast={onToast} />);
+    await screen.findByText("还没有真实上传文件");
     const metrics = screen.getByRole("region", { name: "知识库真实统计" });
     expect(within(metrics).getAllByText("0")).toHaveLength(4);
-    fireEvent.click(screen.getByRole("button", { name: testKnowledge[0].title }));
-    expect(screen.getByText(testKnowledge[0].content)).toBeInTheDocument();
+    expect(screen.getByText(/后端尚未返回产品档案/)).toBeInTheDocument();
+    // The explicit opt-in demo control is visible, but no fixture body is
+    // silently loaded into an empty company library.
+    expect(screen.queryByText(/JSON seed|金桔-739-SAFE|青柠-582-SAFE/)).not.toBeInTheDocument();
   });
 
   it("lets the user confirm a model classification with the backend PATCH", async () => {
     records = [entry];
-    render(<KnowledgeHub initialEntries={[]} onToast={onToast} />);
+    render(<KnowledgeHub onToast={onToast} />);
     fireEvent.click(await screen.findByRole("button", { name: "确认并纳入检索" }));
     await waitFor(() => expect(onToast).toHaveBeenCalledWith(expect.stringContaining("已人工确认")));
     expect(JSON.parse(String(mutations[0].body))).toEqual({ category: "产品知识", status: "classified" });
@@ -74,20 +85,20 @@ describe("Knowledge hub", () => {
 
   it("submits any extension as multipart data and does not fake success on failure", async () => {
     failUpload = true;
-    render(<KnowledgeHub initialEntries={[]} onToast={onToast} />);
+    render(<KnowledgeHub onToast={onToast} />);
     await screen.findByText("还没有真实上传文件");
     const file = new File([new Uint8Array([0, 255, 1])], "unknown.bin", { type: "application/octet-stream" });
     fireEvent.change(screen.getByLabelText("上传知识文件"), { target: { files: [file] } });
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("上传失败，原件未保存"));
     expect(mutations[0].body).toBeInstanceOf(FormData);
-    expect((mutations[0].body as FormData).get("modelProfileId")).toBe("local-qwen3-8b");
+    expect((mutations[0].body as FormData).get("modelProfileId")).toBe("configured");
     expect((mutations[0].body as FormData).get("file")).toBe(file);
     expect(screen.queryByText("unknown.bin")).not.toBeInTheDocument();
   });
 
   it("loads the next page instead of hiding uploaded files after number 200", async () => {
     records = Array.from({ length: 201 }, (_, index) => ({ ...entry, id: `entry-${index}`, title: `文件 ${index}` }));
-    render(<KnowledgeHub initialEntries={[]} onToast={onToast} />);
+    render(<KnowledgeHub onToast={onToast} />);
     expect(await screen.findByText("文件 200")).toBeInTheDocument();
     expect(requests).toContain("/api/v1/knowledge?limit=200&offset=200");
   });

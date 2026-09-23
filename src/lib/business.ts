@@ -1,6 +1,9 @@
 import type { Product } from "./catalog";
 
-export type KnowledgeCategory = "FAQ" | "销售话术" | "产品知识" | "公司知识" | "政策" | "案例" | "文档解析";
+export type KnowledgeCategory =
+  | "产品档案" | "产品图片" | "尺寸图" | "参数表" | "PDF资料" | "证书" | "案例"
+  | "视频" | "说明书" | "聊天记录" | "FAQ" | "销售话术" | "产品知识"
+  | "公司知识" | "政策" | "文档解析";
 
 export type KnowledgeEntry = {
   id: string;
@@ -94,7 +97,7 @@ export function quantityFactor(quantity: number) {
   return 1;
 }
 
-export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog: Product[], currencyRates: Record<Currency, number>): QuoteTotals {
+export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog: Product[], currencyRates: Partial<Record<Currency, number>>): QuoteTotals {
   let subtotal = 0;
   let afterTier = 0;
   let afterDiscount = 0;
@@ -110,12 +113,14 @@ export function calculateQuote(lines: QuoteLine[], currency: Currency, catalog: 
     afterDiscount += discounted;
   }
 
+  const rate = currencyRates[currency];
+  if (rate === undefined) throw new Error(`currency rate ${currency} is unavailable`);
   return {
     subtotal,
     tierSavings: subtotal - afterTier,
     discountSavings: afterTier - afterDiscount,
     totalCny: afterDiscount,
-    total: afterDiscount * currencyRates[currency],
+    total: afterDiscount * rate,
     currency,
   };
 }

@@ -52,6 +52,8 @@ export type AgentWorkspaceProps = {
   initialCustomerId?: string;
   initialMessage?: string;
   initialExperience?: "chat" | "work";
+  preferredRoleId?: AgentRoleId;
+  selectAllKnowledge?: boolean;
   onOpenKnowledge?: () => void;
   onAddToKit?: (id: string) => void;
   onConfirmReply?: (confirmation: AgentReplyConfirmation) => void;
@@ -196,6 +198,8 @@ export function AgentWorkspace({
   initialCustomerId,
   initialMessage,
   initialExperience = "chat",
+  preferredRoleId,
+  selectAllKnowledge = false,
   onOpenKnowledge,
   onAddToKit,
   onConfirmReply,
@@ -236,7 +240,7 @@ export function AgentWorkspace({
   const { health, checking, refresh: refreshHealth } = useModelHealth(catalog.modelProfileId);
   const enabledAgents = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled), [agentRoster.agents]);
   const selectedWorkAgent = enabledAgents.find((agent) => agent.id === workAgentId);
-  const rolePresetId = experience === "chat" ? DEFAULT_AGENT_ROLE_ID : presentationRole(selectedWorkAgent);
+  const rolePresetId = experience === "chat" ? DEFAULT_AGENT_ROLE_ID : preferredRoleId ?? presentationRole(selectedWorkAgent);
   const baseRole = getAgentRoleOption(rolePresetId);
   const role = experience === "work" && selectedWorkAgent ? { ...baseRole, name: selectedWorkAgent.name, description: selectedWorkAgent.description || baseRole.description } : baseRole;
   const transport = useMemo(() => new DefaultChatTransport<SalesAgentUIMessage>({
@@ -291,12 +295,13 @@ export function AgentWorkspace({
       if (controller.signal.aborted) return;
       setAgentRoster(next); setAgentError("");
       const candidates = next.agents.filter((agent) => agent.enabled);
-      setWorkAgentId((current) => candidates.some((agent) => agent.id === current) ? current : candidates.find((agent) => agent.id === next.defaultAgentId)?.id || candidates[0]?.id || "");
+      const preferred = preferredRoleId ? candidates.find((agent) => agent.id === preferredRoleId) : undefined;
+      setWorkAgentId((current) => preferred?.id || (candidates.some((agent) => agent.id === current) ? current : candidates.find((agent) => agent.id === next.defaultAgentId)?.id || candidates[0]?.id || ""));
     }).catch((issue) => {
       if (!controller.signal.aborted) { setAgentRoster({ agents: [], defaultAgentId: "", revision: "" }); setAgentError(issue instanceof Error ? issue.message : "CowAgent 后端未连接"); }
     }).finally(() => { if (!controller.signal.aborted) setAgentLoading(false); });
     return () => controller.abort();
-  }, []);
+  }, [preferredRoleId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -313,7 +318,9 @@ export function AgentWorkspace({
           if (!page.ok) throw new Error(`知识库后续页面返回 ${page.status}`);
           documents.push(...parseKnowledgeDocuments(await page.json()));
         }
-        setKnowledgeDocuments([...new Map(documents.map((document) => [document.id, document])).values()]);
+        const uniqueDocuments = [...new Map(documents.map((document) => [document.id, document])).values()];
+        setKnowledgeDocuments(uniqueDocuments);
+        if (selectAllKnowledge) setSelectedDocumentIds(uniqueDocuments.filter((document) => document.selectable).slice(0, 50).map((document) => document.id));
       } catch (loadError) {
         if (!controller.signal.aborted) {
           setKnowledgeDocuments([]);
@@ -325,7 +332,7 @@ export function AgentWorkspace({
     }
     void loadKnowledge();
     return () => controller.abort();
-  }, []);
+  }, [selectAllKnowledge]);
 
   useEffect(() => {
     if (!busy) return;
@@ -400,8 +407,8 @@ export function AgentWorkspace({
     if (!document.selectable || busy) return;
     setSelectedDocumentIds((current) => {
       if (current.includes(document.id)) return current.filter((id) => id !== document.id);
-      if (current.length >= 5) {
-        onToast?.("每次最多选择 5 份知识库文件");
+      if (current.length >= 50) {
+        onToast?.("每次最多选择 50 份知识库文件");
         return current;
       }
       return [...current, document.id];
@@ -590,13 +597,13 @@ export function AgentWorkspace({
           {!checking && !catalog.loading && !health?.reachable && <p className={styles.errorBox} role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "所选模型尚未连接，请先配置对应的本地服务。"}</p>}
 
           {contextOpen && <section className={styles.contextPanel} data-testid="knowledge-picker" aria-label="参考资料与客户">
-            <div className={styles.panelHeading}><h3>本轮参考资料</h3><span>{selectedDocumentIds.length} / 5</span>{onOpenKnowledge && <button type="button" onClick={onOpenKnowledge}><Upload size={14} /> 去知识库上传</button>}</div>
+            <div className={styles.panelHeading}><h3>本轮参考资料</h3><span>{selectedDocumentIds.length} / 50</span>{onOpenKnowledge && <button type="button" onClick={onOpenKnowledge}><Upload size={14} /> 去知识库上传</button>}</div>
             <p className={styles.muted}>仅选择你希望本轮读取的文件；长文件按预算节选，覆盖范围随答案返回。产品资料共 {assets.length} 份。</p>
             {knowledgeLoading && <p className={styles.muted}>正在读取知识库文件…</p>}
             {!knowledgeLoading && knowledgeError && <p className={styles.errorBox} role="alert">{knowledgeError}。仍可粘贴记录。</p>}
             {!knowledgeLoading && !knowledgeError && knowledgeDocuments.length === 0 && <p className={styles.muted}>暂无文件，请先到知识库上传。</p>}
             <div className={styles.documentList}>{knowledgeDocuments.map((document) => <label key={document.id} className={cx(styles.documentRow, selectedDocumentIds.includes(document.id) && styles.documentSelected, !document.selectable && styles.documentDisabled)} title={document.unavailableReason}>
-              <input type="checkbox" aria-label={`选择 ${document.title}`} checked={selectedDocumentIds.includes(document.id)} disabled={!document.selectable || busy || (!selectedDocumentIds.includes(document.id) && selectedDocumentIds.length >= 5)} onChange={() => toggleDocument(document)} />
+              <input type="checkbox" aria-label={`选择 ${document.title}`} checked={selectedDocumentIds.includes(document.id)} disabled={!document.selectable || busy || (!selectedDocumentIds.includes(document.id) && selectedDocumentIds.length >= 50)} onChange={() => toggleDocument(document)} />
               <span><strong>{document.title}</strong><small>{document.category} · {document.status}{!document.selectable ? ` · ${document.unavailableReason}` : ""}</small></span>
             </label>)}</div>
             {customers.length > 0 && <label className={styles.customerSelect}><UserRound size={14} /><select aria-label="选择客户" value={customerId} disabled={busy} onChange={(event) => setCustomerId(event.target.value)}><option value="">不绑定客户上下文</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}</select>{selectedCustomer && onOpenCustomer && <button type="button" onClick={() => onOpenCustomer(selectedCustomer.id)}>查看档案</button>}</label>}
