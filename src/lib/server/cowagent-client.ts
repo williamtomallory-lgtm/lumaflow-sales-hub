@@ -178,6 +178,14 @@ export async function getCowAgentRoster(): Promise<CowAgentRoster> {
   };
 }
 
+export async function executeCowAgentComputer(agentId: string, operation: Record<string, unknown>) {
+  const payload = await cowAgentJson("api/computer/execute", {
+    method: "POST", headers: cowAgentHeaders(true), body: JSON.stringify({ agentId, operation }),
+  }, 650_000);
+  if (payload.status !== "success" || !payload.receipt) throw new ApiHttpError(502, "COMPUTER_EXECUTION_FAILED", "本机执行器没有返回有效结果。");
+  return payload.receipt;
+}
+
 export async function getCowAgentProfile(agentId: string): Promise<CowAgentProfile> {
   const roster = await getCowAgentRoster();
   const profile = roster.agents.find((agent) => agent.id === agentId);

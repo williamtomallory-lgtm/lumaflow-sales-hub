@@ -139,6 +139,7 @@ export function resolveInferencePolicy(input: {
   modelProfileId?: AssistantModelProfileId;
   configuredTimeoutMs?: number;
   modelMaxOutputTokens?: number;
+  configuredSupportedModes?: string[];
 }): InferencePolicyResolution {
   const mode = assistantReasoningModeSchema.parse(input.mode);
   const requestedModelProfileId = input.modelProfileId ?? "configured";
@@ -166,11 +167,11 @@ export function resolveInferencePolicy(input: {
   }
 
   const settings = INFERENCE_PROFILE_SETTINGS[mode];
-  if (requestedModelProfileId === "configured" && mode !== "instant") {
+  if (requestedModelProfileId === "configured" && !(input.configuredSupportedModes ?? ["instant"]).includes(mode)) {
     if (mode === "pro") {
       throw new InferencePolicyError(503, "PRO_MODEL_REQUIRED", "Pro requires the installed local qwen3:14b model; a custom service cannot be used as a silent fallback.");
     }
-    throw new InferencePolicyError(422, "MODEL_PROFILE_MODE_UNSUPPORTED", `The configured model profile only exposes the instant inference mode.`);
+    throw new InferencePolicyError(422, "MODEL_PROFILE_MODE_UNSUPPORTED", "当前模型未声明支持该强度档位。");
   }
 
   const resolvedModelProfileId = mode === "pro" && requestedModelProfileId === "local-qwen3-8b"

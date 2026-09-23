@@ -32,7 +32,7 @@ function generatedId(name: string) {
   return slug || `agent-${Date.now().toString(36)}`;
 }
 
-export function AgentManagement({ onToast }: { onToast?: (message: string) => void }) {
+export function AgentManagement({ onToast, onOpenWork }: { onToast?: (message: string) => void; onOpenWork?: (agentId: string) => void }) {
   const [roster, setRoster] = useState<CowAgentRoster>({ agents: [], defaultAgentId: "", revision: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -136,10 +136,12 @@ export function AgentManagement({ onToast }: { onToast?: (message: string) => vo
         {view === "agents" ? <>
           <div className={styles.detailTabs}><strong>概况</strong><span>能力由后端职责与受控工具决定</span></div>
           <dl className={styles.profileFields}><div><dt>职责</dt><dd>{selectedAgent.description || "尚未填写职责；当前使用通用销售 Agent 策略。"}</dd></div><div><dt>Agent 类型</dt><dd>{selectedAgent.botType === "wecom_group" ? "群聊 Agent · 企业微信" : selectedAgent.botType === "weixin_personal" ? "个人 Agent · 微信" : "通用 Agent"}</dd></div><div><dt>默认模型</dt><dd>{selectedAgent.model || "跟随本机全局配置 · Qwen3 8B"}</dd></div><div><dt>知识库</dt><dd>{selectedAgent.knowledgeMode === "own" ? "独立知识库" : "共享团队知识库"}</dd></div><div><dt>后端工作空间</dt><dd className={styles.monospace}>{selectedAgent.workspace}</dd></div></dl>
+          {onOpenWork && <button type="button" className={styles.primary} onClick={() => onOpenWork(selectedAgent.id)}>在 Work 中使用</button>}
           {(selectedAgent.botType === "weixin_personal" || selectedAgent.botType === "wecom_group") && <button type="button" className={styles.primary} onClick={() => { setView("wechat"); setSelectedAgentId(selectedAgent.id); }}>管理微信绑定</button>}
         </> : <>
           <div className={styles.detailTabs}><strong>微信绑定</strong><span>{selectedAgent.botType === "wecom_group" ? `实例 wecom-${selectedAgent.id}` : `实例 weixin-${selectedAgent.id}`}</span></div>
           <div className={styles.channelNotice}><strong>创建 ≠ 已成为微信好友</strong><span>{selectedAgent.botType === "wecom_group" ? "群聊 Agent 需要在企业微信创建智能机器人并填写独立 Bot ID / Secret。" : "扫码是让一个真实微信账号登录此 Agent。若要在微信中看到多个不同联系人，每个 Agent 必须绑定不同的真实微信账号。"}</span></div>
+          {onOpenWork && <button type="button" className={styles.primary} onClick={() => onOpenWork(selectedAgent.id)}>用此 Agent 打开 Work</button>}
           <div className={styles.bindingCard}><div className={styles.channelIcon}>{selectedAgent.botType === "wecom_group" ? <Bot size={22} /> : <MessageCircle size={22} />}</div><div><strong>{selectedAgent.botType === "wecom_group" ? "企业微信群通道" : "个人微信通道"}</strong><p>{selectedAgent.enabled ? "Agent 已创建；完成下面的绑定后，消息才会路由到它。" : "请先启用这个 Agent。"}</p></div>{selectedAgent.botType === "wecom_group" ? <CowAgentWecomDeployment key={selectedAgent.id} agentId={selectedAgent.id} agentName={selectedAgent.name} disabled={!selectedAgent.enabled} /> : <CowAgentWeixinDeployment key={selectedAgent.id} agentId={selectedAgent.id} agentName={selectedAgent.name} disabled={!selectedAgent.enabled} autoStart={autoBindAgentId === selectedAgent.id} onAutoStartHandled={() => setAutoBindAgentId("")} />}</div>
         </>}
       </article>

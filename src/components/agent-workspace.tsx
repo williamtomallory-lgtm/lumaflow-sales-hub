@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock3,
   Copy,
+  Download,
   FileText,
   MessageCircle,
   Paperclip,
@@ -34,6 +35,7 @@ import styles from "./agent-workspace.module.css";
 import { ModelRuntimeControls, InferenceReceiptView } from "./model-runtime-controls";
 import { parseInferenceReceipt, persistInferenceMode, savedInferenceMode, type InferenceMode, type InferenceReceipt } from "@/config/inference-ui";
 import { getInferenceProfileInputBudget } from "@/lib/ai/inference-policy";
+import { extractCompleteHtml } from "@/lib/ai/code-artifact";
 import type { CowAgentProfile, CowAgentRoster } from "@/lib/contracts/cowagent-agent";
 
 export type AgentReplyConfirmation = {
@@ -278,6 +280,7 @@ export function AgentWorkspace({
   const selectedCustomer = customers.find((customer) => customer.id === customerId);
   const selectedDocuments = knowledgeDocuments.filter((document) => selectedDocumentIds.includes(document.id));
   const selectedModelName = health?.model ?? catalog.selectedModel?.model ?? "等待读取模型";
+  const htmlArtifact = extractCompleteHtml(result.text);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -408,8 +411,8 @@ export function AgentWorkspace({
   async function submit(value = input) {
     const cleanValue = value.trim();
     if (submitting.current || busy || !ready || !cleanValue) return;
-    if (cleanValue.length > getInferenceProfileInputBudget(mode)) {
-      onToast?.(`当前档位最多接受 ${getInferenceProfileInputBudget(mode).toLocaleString()} 字符，请缩小任务范围或选择 Instant。`);
+    if (cleanValue.length > inputBudget) {
+      onToast?.(`当前模型最多接受 ${inputBudget.toLocaleString()} 字符，请缩小任务范围。`);
       return;
     }
     submitting.current = true;
@@ -426,6 +429,7 @@ export function AgentWorkspace({
     try {
       await sendMessage({ text: cleanValue }, {
         body: {
+          experience,
           ...(experience === "work" && selectedWorkAgent ? { agentId: selectedWorkAgent.id } : { agentRoleId: DEFAULT_AGENT_ROLE_ID }),
           knowledgeDocumentIds: selectedDocumentIds,
           modelProfileId: catalog.modelProfileId,
@@ -447,6 +451,16 @@ export function AgentWorkspace({
     } catch {
       onToast?.("复制失败，请手动选择输出内容");
     }
+  }
+
+  function downloadHtml() {
+    if (!htmlArtifact) return;
+    const url = URL.createObjectURL(new Blob([htmlArtifact], { type: "text/html;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "lumaflow-page.html";
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function confirmOutput() {
@@ -484,8 +498,8 @@ export function AgentWorkspace({
       }
     }
     const merged = `${input.trim()}${input.trim() && chunks.length ? "\n\n" : ""}${chunks.join("\n\n")}`;
-    if (merged.length > getInferenceProfileInputBudget(mode)) {
-      onToast?.(`导入内容超过当前档位 ${getInferenceProfileInputBudget(mode).toLocaleString()} 字，本次未导入；请将完整记录上传到知识库或分段导入`);
+    if (merged.length > inputBudget) {
+      onToast?.(`导入内容超过当前模型 ${inputBudget.toLocaleString()} 字，本次未导入；请将完整记录上传到知识库或分段导入`);
       return;
     }
     if (chunks.length) setInput(merged);
@@ -504,8 +518,8 @@ export function AgentWorkspace({
       ? health.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接"
       : "模型未连接";
 
-  const inputLabel = experience === "chat" ? "输入产品问题" : role.inputLabel;
-  const inputBudget = getInferenceProfileInputBudget(mode);
+  const inputLabel = experience === "chat" ? "输入问题" : role.inputLabel;
+  const inputBudget = catalog.modelProfileId === "configured" ? 4_000 : getInferenceProfileInputBudget(mode);
 
   return (
     <div className={cx(styles.root, Boolean(question) && styles.hasConversation)} data-testid="chat-ai-workspace">
@@ -522,18 +536,18 @@ export function AgentWorkspace({
         {!question && <div className={styles.welcome}>
           <span className={styles.welcomeMark}><Sparkles size={23} /></span>
           <h2>{experience === "chat" ? "你好，今天想解决什么？" : "选一位 Agent，一起把工作做好。"}</h2>
-          <p>{experience === "chat" ? "问产品，找资料，或整理一个想法。" : role.description}</p>
+          <p>{experience === "chat" ? "提问、写代码或查资料。Chat 不会执行电脑命令。" : "选择已授权的本机 Agent，完成文件与电脑任务。"}</p>
         </div>}
 
         {question && <section className={styles.conversation} aria-label="本轮问答" data-testid="agent-output">
           <div className={styles.questionBubble}><span>你</span><p>{question}</p></div>
           <article className={styles.response}>
-            <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong>{experience === "chat" ? "LumaFlow" : role.name}</strong><span className={styles.outputStatus}>{busy ? <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "预算已用尽 · 答案可能不完整" : result.text ? confirmed ? "已人工核对" : "待人工核对" : ""}</span></div>
+            <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong>{experience === "chat" ? "LumaFlow" : role.name}</strong><span className={styles.outputStatus}>{busy ? <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "模型达到单次输出上限 · 内容可能不完整" : result.text ? confirmed ? "已人工核对" : "待人工核对" : ""}</span></div>
             {busy && <p className={styles.generating} role="status">{toolParts.length ? `已观察到 ${toolParts.length} 次真实工具调用，正在整理…` : "正在等待本地模型，首次加载可能需要一些时间…"}</p>}
             {result.text && <div className={styles.answer} data-testid="agent-answer">{result.text}</div>}
             {result.sources.some((source) => source === "json" || source === "json-fallback") && <p className={styles.muted}>本轮使用 JSON 演示数据，不能作为正式库存或报价依据。</p>}
             {!busy && !error && !result.text && <p className={styles.muted}>{cancelled ? "本次生成已停止。" : "模型没有返回文字输出；不会使用本地规则冒充回答。"}</p>}
-            {exhausted && <p className={styles.errorBox} role="alert">本轮生成预算已用尽，答案可能不完整。请缩小任务范围或调整档位后重试。</p>}
+            {exhausted && <p className={styles.errorBox} role="alert">模型未完成输出，请重试或拆分任务；不要把当前内容当作完整文件。</p>}
             {error && <div className={styles.errorBox} role="alert"><span>模型没有完成本轮任务：{error.message === "An error occurred." ? "本地推理服务出错或超时" : error.message}</span><button type="button" onClick={() => void submit(question)} disabled={!ready || busy} aria-label="重试本轮问题">重试</button></div>}
             {result.products.length > 0 && <div className={styles.productResults}>{result.products.map((record) => { const product = products.find((item) => item.id === record.id); return <div key={record.id}><button type="button" disabled={!product} onClick={() => product && onOpenProduct?.({ ...product, ...record })}><span><strong>{record.name}</strong><small>{record.sku} · {record.power}</small></span><ArrowRight size={15} /></button>{product && onAddToKit && <button type="button" className={styles.kitButton} onClick={() => onAddToKit(product.id)}><Plus size={14} /> 加入资料包</button>}</div>; })}</div>}
             {(receipt || result.evidence.length > 0 || toolParts.length > 0 || knowledgeCoverage.length > 0) && <details className={styles.sources}>
@@ -544,7 +558,7 @@ export function AgentWorkspace({
               {toolParts.length > 0 && <div className={styles.toolTrace} aria-label="本轮工具调用">{toolParts.map((part) => <span key={part.toolCallId}>{part.type.replace(/^tool-/, "")} · {part.state === "output-available" ? "已返回" : part.state === "output-error" ? "失败" : "执行中"}</span>)}</div>}
               {knowledgeCoverage.length > 0 && <div className={styles.coverage} data-testid="knowledge-coverage"><strong>本轮知识上下文覆盖</strong>{knowledgeCoverage.map((entry) => <div key={entry.id}><span>{entry.name}</span><small>{entry.hasText ? `已纳入 ${entry.includedCharacters.toLocaleString()} / ${entry.totalCharacters.toLocaleString()} 字` : "没有可读正文"}{entry.truncated ? " · 已截断" : ""}</small></div>)}</div>}
             </details>}
-            {result.text && <div className={styles.outputActions}><button type="button" disabled={busy} onClick={() => void copyOutput()}><Copy size={14} /> 复制</button><button type="button" disabled={busy || confirmed || cancelled || exhausted || Boolean(error)} onClick={confirmOutput}><CheckCircle2 size={14} /> {confirmed ? "已人工核对" : "标记人工核对"}</button></div>}
+            {result.text && <div className={styles.outputActions}><button type="button" disabled={busy} onClick={() => void copyOutput()}><Copy size={14} /> 复制</button>{htmlArtifact && !busy && !cancelled && !exhausted && !error && <button type="button" onClick={downloadHtml}><Download size={14} /> 下载 HTML</button>}<button type="button" disabled={busy || confirmed || cancelled || exhausted || Boolean(error)} onClick={confirmOutput}><CheckCircle2 size={14} /> {confirmed ? "已人工核对" : "标记人工核对"}</button></div>}
           </article>
         </section>}
 
@@ -560,10 +574,10 @@ export function AgentWorkspace({
               <label><Sparkles size={14} /><select aria-label="选择后端 Agent" value={selectedWorkAgent?.id || ""} disabled={busy || agentLoading || !enabledAgents.length} onChange={(event) => changeAgent(event.target.value)}>{!enabledAgents.length && <option value="">{agentLoading ? "正在读取 CowAgent…" : "没有可用 Agent"}</option>}{enabledAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · {agent.botType === "wecom_group" ? "群聊" : agent.botType === "weixin_personal" ? "个人微信" : "通用"}</option>)}</select></label>
               {(selectedWorkAgent?.botType === "weixin_personal" || rolePresetId === "wechat-service") && <button type="button" disabled={busy} onClick={() => setWechatDialogOpen(true)}><Upload size={14} /> 导入微信记录</button>}
             </div>}
-            {experience === "work" && agentError && <p className={styles.errorBox} role="alert">{agentError}。请在“智能体”页面确认 CowAgent 后端。</p>}
+            {experience === "work" && agentError && <p className={styles.errorBox} role="alert">{agentError}。电脑命令仅在连接到已授权的本机 CowAgent 时可用；Vercel 网站不会直接访问你的电脑。</p>}
             {selectedDocuments.length > 0 && <div className={styles.selectedFiles}>{selectedDocuments.map((document) => <button type="button" key={document.id} disabled={busy} onClick={() => toggleDocument(document)} aria-label={`移除 ${document.title}`}><Paperclip size={12} /><span>{document.title}</span><X size={12} /></button>)}</div>}
             {selectedCustomer && <div className={styles.selectedCustomer}><UserRound size={13} />{customerLabel(selectedCustomer)}<button type="button" aria-label="取消客户上下文" disabled={busy} onClick={() => setCustomerId("")}><X size={13} /></button></div>}
-            <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={4_000} disabled={busy} aria-label={inputLabel} placeholder={experience === "chat" ? "向 Chat-AI 提问…" : role.inputPlaceholder} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+            <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={4_000} disabled={busy} aria-label={inputLabel} placeholder={experience === "chat" ? "向 Chat-AI 提问…" : "描述任务；执行电脑命令需要已授权的本机 Agent"} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
             <div className={styles.composerTools}>
               <button type="button" className={styles.iconButton} aria-label="添加资料与客户上下文" aria-expanded={contextOpen} disabled={busy} title="选择知识库文件或客户" onClick={() => setContextOpen((open) => !open)}><Plus size={21} /></button>
               <div className={styles.modelTools}><ModelRuntimeControls compact models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} /></div>

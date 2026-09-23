@@ -12,6 +12,7 @@ export function getModelGenerationOptions(
   mode: AssistantReasoningMode,
   backend: ModelBackend,
   maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
+  codeArtifact = false,
 ) {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
     throw new RangeError(`maxOutputTokens must be an integer from ${MIN_MAX_OUTPUT_TOKENS} to ${MAX_MAX_OUTPUT_TOKENS}.`);
@@ -22,7 +23,8 @@ export function getModelGenerationOptions(
   if (isCurrentInferenceProfile(mode)) {
     const settings = INFERENCE_PROFILE_SETTINGS[mode];
     const thinkingEnabled = settings.thinkingEnabled;
-    const budget = Math.min(settings.maxOutputTokens, maxOutputTokens);
+    const budget = backend === "openai-compatible" || backend === "vercel-ai-gateway" || codeArtifact
+      ? maxOutputTokens : Math.min(settings.maxOutputTokens, maxOutputTokens);
     if (backend === "openai-compatible" || backend === "vercel-ai-gateway") {
       return {
         temperature: thinkingEnabled ? 1 : 0.7,

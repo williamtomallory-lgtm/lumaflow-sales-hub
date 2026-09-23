@@ -262,6 +262,7 @@ export const assistantRequestSchema = z.object({
   // Client-supplied assistant messages and tool outputs must never become trusted model history.
   messages: z.array(assistantUiMessageSchema).length(1),
   mode: assistantReasoningModeSchema.default("instant"),
+  experience: z.enum(["chat", "work"]).default("chat"),
   modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
   wechatSnapshotId: z.string().uuid().optional(),

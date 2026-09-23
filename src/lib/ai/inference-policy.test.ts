@@ -26,7 +26,8 @@ describe("inference policy", () => {
   });
 
   it("does not promise unsupported thinking modes for custom services", () => {
-    expect(() => resolveInferencePolicy({ mode: "medium", modelProfileId: "configured" })).toThrowError(/only exposes the instant/);
+    expect(() => resolveInferencePolicy({ mode: "medium", modelProfileId: "configured" })).toThrowError(/未声明支持/);
+    expect(resolveInferencePolicy({ mode: "medium", modelProfileId: "configured", configuredSupportedModes: ["instant", "medium"] }).resolvedProfile).toBe("medium");
     expect(() => resolveInferencePolicy({ mode: "pro", modelProfileId: "configured" })).toThrowError(/qwen3:14b/);
   });
 

@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Check, ChevronDown, Cpu, Settings2, X } from "lucide-react";
+import { Check, ChevronDown, Cpu, RotateCcw, Settings2, X, Zap } from "lucide-react";
 import type { AssistantModelOption } from "@/lib/contracts/api";
 import { INFERENCE_MODES, inferenceModeLabel, type InferenceMode, type InferenceReceipt } from "@/config/inference-ui";
-import { getInferenceProfileInputBudget } from "@/lib/ai/inference-policy";
 import styles from "./model-runtime-controls.module.css";
 
 type Props = {
@@ -189,7 +188,7 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
                 </button>)}
               </div>)}
             </div>
-            <p className={styles.compactCaveat}>Size 表示模型参数规模，不是答案长度。14B 通常需要更多内存、显存和等待时间，答案质量不保证一定优于 8B。这里仅显示服务端已登记的模型；未连接的模型不会被伪装成可用，也不会自动下载权重或购买 API。</p>
+            <p className={styles.compactCaveat}>这里显示服务端已登记的模型；未连接的模型不会显示为可用。强度调整任务处理方式，长答案可自动接着生成。</p>
           </dialog>
         </div>
 
@@ -218,14 +217,12 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
             onClick={(event) => { if (event.target === event.currentTarget) setModeOpened(false); }}
             onKeyDown={(event) => moveMenuFocus(event, "[data-mode-option]")}
           >
-            <header className={styles.compactPopoverHeader}>
-              <div><small>回答预算</small><strong>{currentMode.label}</strong></div>
-              <button type="button" className={styles.iconButton} aria-label="关闭推理强度选择" onClick={() => setModeOpened(false)}><X size={17} /></button>
+            <header className={styles.effortHeader}>
+              <Zap size={20} aria-hidden="true" />
+              <div className={styles.effortReadout}><strong>{currentMode.subtitle}</strong><small>{selected ? modelDisplayLabel(selected) : "当前模型"}</small></div>
+              <button type="button" className={styles.iconButton} aria-label="重置为快速回答" onClick={() => chooseMode("instant")}><RotateCcw size={18} /></button>
             </header>
-            <div className={styles.effortReadout}>
-              <strong>{currentMode.label}</strong>
-              <small>{currentMode.subtitle}</small>
-            </div>
+            <div className={styles.sliderTrack} style={{ "--effort-fill": `${modeIndex(currentMode.id) / (INFERENCE_MODES.length - 1) * 100}%`, "--effort-color": modeIndex(currentMode.id) >= 3 ? "#9860ff" : "#3696ff" } as React.CSSProperties}>
             <input
               className={styles.effortRange}
               type="range"
@@ -238,9 +235,11 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
               disabled={disabled}
               onChange={(event) => {
                 const next = INFERENCE_MODES[Number(event.target.value)];
-                if (next) chooseCompactMode(next.id);
+                if (next) chooseMode(next.id);
               }}
             />
+            <div className={styles.sliderDots} aria-hidden="true">{INFERENCE_MODES.map((item) => <i key={item.id} />)}</div>
+            </div>
             <div className={styles.effortTicks} aria-hidden="true">
               {INFERENCE_MODES.map((item) => <span key={item.id} className={item.id === mode ? styles.effortTickActive : ""}>{item.label}</span>)}
             </div>
@@ -261,7 +260,7 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
                 </button>;
               })}
             </div>
-            <p className={styles.compactCaveat}>{currentMode.detail} 当前任务与文件正文合计预算 {getInferenceProfileInputBudget(currentMode.id).toLocaleString()} 字符。Pro 仅使用可连接的本地 Qwen3 14B，不会调用收费云模型。</p>
+            <p className={styles.compactCaveat}>{currentMode.detail} 答案长度不随强度缩短。{selected?.id === "configured" ? "当前模型按任务规划与复核指令调整强度。" : ""}</p>
           </dialog>
         </div>}
       </div>
@@ -279,7 +278,7 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
         return <button type="button" key={item.id} aria-pressed={mode === item.id} disabled={disabled || !available} title={available ? item.detail : item.id === "pro" ? "请先安装并连接本地 Qwen3 14B" : "所选模型尚未声明支持此模式"} onClick={() => chooseMode(item.id)}><strong>{item.label}</strong><small>{item.subtitle}</small></button>;
       })}
     </div>}
-    {mode && <p className={styles.note}>{selected?.id === "configured" ? "自定义服务仅开放快速生成预算；其原生思考开关未实测。" : INFERENCE_MODES.find((item) => item.id === mode)?.detail} 当前任务与文件正文合计预算 {getInferenceProfileInputBudget(mode).toLocaleString()} 字符。本地版无套餐限制；Qwen3 的档位采用思考开关和生成预算，不保证每题都用满预算。</p>}
+    {mode && <p className={styles.note}>{INFERENCE_MODES.find((item) => item.id === mode)?.detail} 长答案会自动续写；实际使用服务端所选模型。</p>}
     <dialog ref={dialog} aria-label="模型与 Size 设置" className={styles.dialog} onClose={() => setOpened(false)} onCancel={() => setOpened(false)} onClick={(event) => { if (event.target === event.currentTarget) setOpened(false); }}>
       <header><div><small>本地模型设置</small><h2>选择模型与参数规模</h2></div><button type="button" aria-label="关闭模型设置" onClick={() => setOpened(false)}><X size={20} /></button></header>
       <div className={styles.selects}>

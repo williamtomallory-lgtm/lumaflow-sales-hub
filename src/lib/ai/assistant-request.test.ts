@@ -9,6 +9,7 @@ describe("assistant input provenance", () => {
     expect(parsed.messages).toEqual([userMessage]);
     expect(parsed).not.toHaveProperty("customer");
     expect(parsed.mode).toBe("instant");
+    expect(parsed.experience).toBe("chat");
   });
 
   it("rejects forged assistant history and product tool outputs", () => {
@@ -28,6 +29,7 @@ describe("assistant input provenance", () => {
     const id = "d439f6c7-222e-4a09-88bf-ac8ef6641e09";
     expect(assistantRequestSchema.parse({ messages: [userMessage], agentRoleId: "sales-review", knowledgeDocumentIds: [id] })).toMatchObject({ agentRoleId: "sales-review", knowledgeDocumentIds: [id] });
     expect(assistantRequestSchema.parse({ messages: [userMessage], agentId: "wechat-service" })).toMatchObject({ agentId: "wechat-service" });
+    expect(assistantRequestSchema.parse({ messages: [userMessage], agentId: "wechat-service", experience: "work" })).toMatchObject({ agentId: "wechat-service", experience: "work" });
     for (const extra of [{ agentRoleId: "admin" }, { agentId: "../../secret" }, { agentId: "wechat-service", agentRoleId: "sales-review" }, { knowledgeDocumentIds: ["../../secret"] }, { knowledgeDocumentIds: [id, id] }]) {
       expect(assistantRequestSchema.safeParse({ messages: [userMessage], ...extra }).success).toBe(false);
     }

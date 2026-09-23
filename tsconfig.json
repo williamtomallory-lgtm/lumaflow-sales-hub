@@ -38,6 +38,7 @@
   "exclude": [
     "node_modules",
     ".local-data",
-    ".local-runtime"
+    ".local-runtime",
+    "release-assets"
   ]
 }

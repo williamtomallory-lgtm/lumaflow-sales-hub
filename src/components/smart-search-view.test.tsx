@@ -72,7 +72,7 @@ describe("smart search real-model entry", () => {
     render(<SmartSearchView {...props} />);
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(screen.getByText("预算已用尽 · 答案可能不完整")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("模型达到单次输出上限 · 内容可能不完整")).toBeInTheDocument());
     expect(screen.queryByText("已完成 · 待人工核对")).not.toBeInTheDocument();
   });
   it("starts without fabricated answers or citations and sends selected profile through the real useChat transport", async () => {
@@ -88,7 +88,7 @@ describe("smart search real-model entry", () => {
     expect(screen.getByTestId("search-evidence")).toHaveTextContent("核对时间");
     expect(screen.getByText(/本轮数据源：json/)).toBeInTheDocument();
     await ready();
-    fireEvent.change(screen.getByRole("textbox", { name: "输入产品问题" }), { target: { value: "第二次问题" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "输入问题" }), { target: { value: "第二次问题" } });
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts).toHaveLength(2));
     expect(posts[1].messages).toHaveLength(1);
@@ -159,7 +159,7 @@ describe("smart search real-model entry", () => {
   it("does not send while confirming Chinese IME input or creating a newline", async () => {
     render(<SmartSearchView {...props} />);
     await ready();
-    const input = screen.getByRole("textbox", { name: "输入产品问题" });
+    const input = screen.getByRole("textbox", { name: "输入问题" });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(posts).toHaveLength(0);

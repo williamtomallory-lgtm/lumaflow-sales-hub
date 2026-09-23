@@ -70,6 +70,40 @@ describe("assistant route with an in-memory model protocol", () => {
     expect(body).not.toContain("private reasoning");
   });
 
+  it("continues a length-limited answer on the configured model without replaying tools", async () => {
+    vi.stubEnv("LLM_BACKEND", "openai-compatible");
+    const upstreamRequests: WireRequest[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      upstreamRequests.push(JSON.parse(String(init?.body)) as WireRequest);
+      return upstreamRequests.length === 1
+        ? completion({ content: "<!doctype html><html><body>" }, "length")
+        : completion({ content: "完成</body></html>" }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([{ ...userMessage, parts: [{ type: "text", text: "创建一个离线 HTML 页面" }] }], undefined, { mode: "instant", modelProfileId: "configured" }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-output-budget")).toBe("8192");
+    const body = await response.text();
+    expect(body).toContain("<!doctype html><html><body>");
+    expect(body).toContain("完成</body></html>");
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1].tools ?? []).toHaveLength(0);
+  });
+
+  it("rejects computer Work from a public site before contacting the backend", async () => {
+    vi.stubEnv("REMOTE_KNOWLEDGE_ENABLED", "true");
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const remote = new Request("https://lumaflow-sales-hub.vercel.app/api/v1/assistant/chat", {
+      method: "POST",
+      headers: { origin: "https://lumaflow-sales-hub.vercel.app", "content-type": "application/json" },
+      body: JSON.stringify({ messages: [userMessage], experience: "work", agentId: "wechat-service", mode: "instant" }),
+    });
+    const response = await POST(remote);
+    expect(response.status).toBe(403);
+    expect((await response.json()).error.code).toBe("LOCAL_WORK_ONLY");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("routes Pro to 14B and fails closed when the exact model is not installed", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       if (String(url).endsWith("/models")) return Response.json({ data: [{ id: "other-model" }] });

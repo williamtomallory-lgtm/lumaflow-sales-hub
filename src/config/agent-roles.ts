@@ -65,12 +65,12 @@ export const AGENT_ROLES: readonly AgentRoleOption[] = [
     id: "moments-operator",
     name: "朋友圈运营 Agent",
     eyebrow: "内容运营",
-    description: "围绕产品和客户场景生成朋友圈运营计划与文案，不代替你发布。",
+    description: "围绕产品和客户场景生成朋友圈运营计划与文案；确认后可通过本机微信桌面桥提交。",
     useCases: ["选题计划", "文案草稿", "发布节奏"],
     inputLabel: "运营目标或产品素材",
     inputPlaceholder: "输入本周运营目标、产品卖点、客户场景或已有素材…",
     outputLabel: "运营计划与文案",
-    outputHint: "只生成计划和文案；人工审核后由你自行发布。",
+    outputHint: "先生成待确认草稿；只有你再次明确确认且本机微信桌面桥可用时才提交朋友圈。",
   },
 ] as const;
 
