@@ -1,17 +1,16 @@
 export const INFERENCE_MODES = [
-  { id: "instant", label: "Instant", subtitle: "快速回答", detail: "关闭思考，优先响应速度。" },
-  { id: "medium", label: "Medium", subtitle: "标准推理", detail: "开启思考，使用标准生成预算。" },
-  { id: "high", label: "High", subtitle: "更长推理", detail: "开启思考，提高生成预算，等待更久。" },
-  { id: "extra-high", label: "Extra High", subtitle: "最高预算", detail: "使用本机支持的最高推理与输出预算，减少可放入的资料长度。" },
-  { id: "pro", label: "Pro", subtitle: "较大模型", detail: "明确切换至本机 Qwen3 14B，以较高预算处理；不会调用收费云模型。" },
+  { id: "light", label: "Light", subtitle: "快速回答", detail: "直接回答，使用较短的生成预算。" },
+  { id: "medium", label: "Medium", subtitle: "标准处理", detail: "检查主要要求，使用中等生成预算。" },
+  { id: "ultra", label: "Ultra", subtitle: "深度处理", detail: "逐项核对要求，使用更长的生成预算与等待时间。" },
 ] as const;
 export type InferenceMode = typeof INFERENCE_MODES[number]["id"];
 export const inferenceModeLabel = (mode: string) => INFERENCE_MODES.find((item) => item.id === mode)?.label ?? mode;
 export function savedInferenceMode(): InferenceMode {
   try {
     const saved = localStorage.getItem("lumaflow.inference.mode");
-    return INFERENCE_MODES.find((item) => item.id === saved)?.id ?? "instant";
-  } catch { return "instant"; }
+    const migrated = saved === "instant" ? "light" : saved === "high" || saved === "extra-high" || saved === "pro" ? "ultra" : saved;
+    return INFERENCE_MODES.find((item) => item.id === migrated)?.id ?? "light";
+  } catch { return "light"; }
 }
 export function persistInferenceMode(mode: InferenceMode) {
   try { localStorage.setItem("lumaflow.inference.mode", mode); } catch { /* Optional local preference. */ }

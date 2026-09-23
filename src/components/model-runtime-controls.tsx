@@ -38,11 +38,9 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
   const modelMenuId = `model-runtime-menu-${useId().replace(/:/g, "")}`;
   const modeMenuId = `${modelMenuId}-effort`;
   const selected = models.find((model) => model.id === modelProfileId);
-  const family = selected ? familyOf(selected) : "Qwen3";
+  const family = selected ? familyOf(selected) : "当前模型";
   const families = [...new Set(models.map(familyOf))];
   const familyModels = models.filter((model) => familyOf(model) === family);
-  const proModel = models.find((model) => model.id === "local-qwen3-14b" && model.reachable && model.supportedModes?.includes("pro"));
-  const isProAvailable = Boolean(proModel);
 
   useEffect(() => {
     if (compact) return;
@@ -108,11 +106,8 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
 
   function chooseMode(next: InferenceMode) {
     if (disabled || !onModeChange) return;
-    const available = next === "pro" ? isProAvailable : selected?.supportedModes?.includes(next);
+    const available = selected?.reachable && selected.supportedModes?.includes(next);
     if (!available) return;
-    // The server policy also resolves Pro to this exact profile. Selecting it
-    // here keeps the model pill and the requested mode honest before submit.
-    if (next === "pro" && proModel) onModelChange(proModel.id);
     onModeChange(next);
   }
 
@@ -220,9 +215,9 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
             <header className={styles.effortHeader}>
               <Zap size={20} aria-hidden="true" />
               <div className={styles.effortReadout}><strong>{currentMode.subtitle}</strong><small>{selected ? modelDisplayLabel(selected) : "当前模型"}</small></div>
-              <button type="button" className={styles.iconButton} aria-label="重置为快速回答" onClick={() => chooseMode("instant")}><RotateCcw size={18} /></button>
+              <button type="button" className={styles.iconButton} aria-label="重置为 Light" onClick={() => chooseMode("light")}><RotateCcw size={18} /></button>
             </header>
-            <div className={styles.sliderTrack} style={{ "--effort-fill": `${modeIndex(currentMode.id) / (INFERENCE_MODES.length - 1) * 100}%`, "--effort-color": modeIndex(currentMode.id) >= 3 ? "#9860ff" : "#3696ff" } as React.CSSProperties}>
+            <div className={styles.sliderTrack} style={{ "--effort-fill": `${modeIndex(currentMode.id) / (INFERENCE_MODES.length - 1) * 100}%`, "--effort-color": modeIndex(currentMode.id) === 2 ? "#9860ff" : "#3696ff" } as React.CSSProperties}>
             <input
               className={styles.effortRange}
               type="range"
@@ -245,7 +240,7 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
             </div>
             <div className={styles.compactModeOptions} role="group" aria-label="推理档位">
               {INFERENCE_MODES.map((item) => {
-                const available = item.id === "pro" ? isProAvailable : selected?.supportedModes?.includes(item.id);
+                const available = selected?.reachable && selected.supportedModes?.includes(item.id);
                 return <button
                   type="button"
                   key={item.id}
@@ -253,14 +248,14 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
                   className={`${styles.compactModeOption} ${item.id === mode ? styles.compactModeOptionSelected : ""}`}
                   aria-pressed={mode === item.id}
                   disabled={disabled || !available}
-                  title={available ? item.detail : item.id === "pro" ? "请先安装并连接本地 Qwen3 14B" : "所选模型尚未声明支持此模式"}
+                  title={available ? item.detail : "请先连接支持此模式的模型"}
                   onClick={() => chooseCompactMode(item.id)}
                 >
                   <strong>{item.label}</strong><small>{item.subtitle}</small>
                 </button>;
               })}
             </div>
-            <p className={styles.compactCaveat}>{currentMode.detail} 答案长度不随强度缩短。{selected?.id === "configured" ? "当前模型按任务规划与复核指令调整强度。" : ""}</p>
+            <p className={styles.compactCaveat}>{currentMode.detail} 三档会调整指令、生成上限与超时；通用 Bonsai 接口未提供可验证的原生思考开关。</p>
           </dialog>
         </div>}
       </div>
@@ -274,8 +269,8 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
     </div>
     {mode && onModeChange && <div className={styles.modes} role="group" aria-label="推理强度">
       {INFERENCE_MODES.map((item) => {
-        const available = item.id === "pro" ? isProAvailable : selected?.supportedModes?.includes(item.id);
-        return <button type="button" key={item.id} aria-pressed={mode === item.id} disabled={disabled || !available} title={available ? item.detail : item.id === "pro" ? "请先安装并连接本地 Qwen3 14B" : "所选模型尚未声明支持此模式"} onClick={() => chooseMode(item.id)}><strong>{item.label}</strong><small>{item.subtitle}</small></button>;
+        const available = selected?.reachable && selected.supportedModes?.includes(item.id);
+        return <button type="button" key={item.id} aria-pressed={mode === item.id} disabled={disabled || !available} title={available ? item.detail : "请先连接支持此模式的模型"} onClick={() => chooseMode(item.id)}><strong>{item.label}</strong><small>{item.subtitle}</small></button>;
       })}
     </div>}
     {mode && <p className={styles.note}>{INFERENCE_MODES.find((item) => item.id === mode)?.detail} 长答案会自动续写；实际使用服务端所选模型。</p>}

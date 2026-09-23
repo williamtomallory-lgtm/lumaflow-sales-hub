@@ -384,8 +384,8 @@ export function AgentWorkspace({
     if (busy || submitting.current || value === catalog.modelProfileId) return;
     if (wechatSnapshotId && value === "configured") { onToast?.("微信快照仅允许使用本机 8B / 14B；开始新问题后可切换其他服务。"); return; }
     catalog.selectModel(value);
-    setMode("instant");
-    persistInferenceMode("instant");
+    setMode("light");
+    persistInferenceMode("light");
     setReceipt(null);
     setExhausted(false);
     setMessages([]);

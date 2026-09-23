@@ -59,12 +59,10 @@ export async function POST(request: Request) {
     const codeArtifact = requestsCodeArtifact(userText);
     const generationOptions = getModelGenerationOptions(policy.resolvedMode, modelConfig.backend, modelConfig.maxOutputTokens, codeArtifact);
     const basePolicy = withModelOutputBudget(policy, modelConfig.maxOutputTokens);
-    const resolvedPolicy = modelConfig.backend === "openai-compatible" || modelConfig.backend === "vercel-ai-gateway" ? {
+    const resolvedPolicy = {
       ...basePolicy,
       maxOutputTokens: generationOptions.maxOutputTokens,
-      timeoutMs: 290_000,
-      inputBudget: { maxContextCharacters: 4_000, maxUserCharacters: 4_000, maxFileCharacters: 4_000 },
-    } : basePolicy;
+    };
     // The generic OpenAI-compatible backend does not advertise thinking. The
     // old Ollama path intentionally kept thinking off; current Ollama Qwen3
     // profiles use reasoning_effort to enable it without vLLM-only options.

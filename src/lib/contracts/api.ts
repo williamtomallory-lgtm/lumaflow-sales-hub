@@ -253,11 +253,10 @@ export const listQuerySchema = z.object({
 export const productListQuerySchema = listQuerySchema.extend({ category: z.string().trim().max(80).optional() });
 export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum(["open", "completed"]).optional() });
 
-// `fast|normal|deep` are retained for API/script compatibility. The five
-// named profiles are the current UI contract and are intentionally separate
-// from provider-native reasoning labels.
-export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "instant", "medium", "high", "extra-high", "pro"]);
-export const assistantInferenceProfileSchema = z.enum(["instant", "medium", "high", "extra-high", "pro"]);
+// Older names remain accepted by the API; the UI exposes Light/Medium/Ultra.
+// These are application policies, not unverified native Bonsai reasoning levels.
+export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
+export const assistantInferenceProfileSchema = z.enum(["light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantModelProfileIdSchema = z.enum(["local-qwen3-8b", "local-qwen3-14b", "configured"]);
 
 const assistantUiMessageSchema = z.object({
@@ -273,7 +272,7 @@ export const assistantRequestSchema = z.object({
   // Until conversation history is persisted on the server, only a fresh user turn is accepted.
   // Client-supplied assistant messages and tool outputs must never become trusted model history.
   messages: z.array(assistantUiMessageSchema).length(1),
-  mode: assistantReasoningModeSchema.default("instant"),
+  mode: assistantReasoningModeSchema.default("light"),
   experience: z.enum(["chat", "work"]).default("chat"),
   modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
@@ -318,7 +317,7 @@ export const assistantModelOptionSchema = z.object({
   // use explicit family/size/capability metadata for model selection.
   family: z.string().trim().min(1).default("unknown"),
   parameterSizeB: z.number().positive().nullable().default(null),
-  supportedModes: z.array(assistantInferenceProfileSchema).default(["instant"]),
+  supportedModes: z.array(assistantInferenceProfileSchema).default(["light"]),
 });
 
 export const assistantModelsResponseSchema = z.object({

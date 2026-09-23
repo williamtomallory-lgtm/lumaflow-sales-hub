@@ -27,12 +27,18 @@ export type InferenceProfileSettings = {
 };
 
 /**
- * Application-facing profiles deliberately map to a bounded completion
- * budget. Qwen3's boolean thinking switch does not provide five native
- * reasoning levels; the higher profiles therefore spend progressively more
- * completion budget while retaining one explicit thinking switch.
+ * Application-facing profiles map to bounded completion and time budgets.
+ * A generic OpenAI-compatible endpoint does not promise native thinking;
+ * Light/Medium/Ultra also change the task instructions sent to the model.
  */
 export const INFERENCE_PROFILE_SETTINGS: Record<AssistantInferenceProfile, InferenceProfileSettings> = {
+  light: {
+    thinkingEnabled: false,
+    maxOutputTokens: 1_024,
+    timeoutCeilingMs: 120_000,
+    maxContextCharacters: 4_000,
+    providerReasoningEffort: "none",
+  },
   instant: {
     thinkingEnabled: false,
     maxOutputTokens: 1_024,
@@ -42,10 +48,17 @@ export const INFERENCE_PROFILE_SETTINGS: Record<AssistantInferenceProfile, Infer
   },
   medium: {
     thinkingEnabled: true,
-    maxOutputTokens: 1_536,
+    maxOutputTokens: 2_048,
     timeoutCeilingMs: 180_000,
-    maxContextCharacters: 2_000,
+    maxContextCharacters: 4_000,
     providerReasoningEffort: "medium",
+  },
+  ultra: {
+    thinkingEnabled: true,
+    maxOutputTokens: 3_072,
+    timeoutCeilingMs: 290_000,
+    maxContextCharacters: 4_000,
+    providerReasoningEffort: "max",
   },
   high: {
     thinkingEnabled: true,
@@ -167,7 +180,7 @@ export function resolveInferencePolicy(input: {
   }
 
   const settings = INFERENCE_PROFILE_SETTINGS[mode];
-  if (requestedModelProfileId === "configured" && !(input.configuredSupportedModes ?? ["instant"]).includes(mode)) {
+  if (requestedModelProfileId === "configured" && !(input.configuredSupportedModes ?? ["light"]).includes(mode)) {
     if (mode === "pro") {
       throw new InferencePolicyError(503, "PRO_MODEL_REQUIRED", "Pro requires the installed local qwen3:14b model; a custom service cannot be used as a silent fallback.");
     }

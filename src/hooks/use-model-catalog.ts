@@ -9,7 +9,7 @@ import {
 } from "@/lib/contracts/api";
 
 const preferenceKey = "lumaflow.assistant.model-profile";
-const initialProfileId: AssistantModelProfileId = "local-qwen3-8b";
+const initialProfileId: AssistantModelProfileId = "configured";
 
 export function useModelCatalog() {
   const [revision, setRevision] = useState(0);

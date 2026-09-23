@@ -170,7 +170,7 @@ describe("Agent workspace", () => {
       agentId: "sales-consultant",
       knowledgeDocumentIds: ["33333333-3333-4333-8333-333333333333"],
       modelProfileId: "local-qwen3-8b",
-      mode: "instant",
+      mode: "light",
       messages: [{ role: "user", parts: [{ type: "text", text: "客户问轨道灯库存" }] }],
     });
     expect(posts[0]).not.toHaveProperty("customerId");

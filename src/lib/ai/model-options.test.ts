@@ -35,6 +35,10 @@ async function serializedRequest(backend: ModelBackend, mode: "fast" | "normal" 
 }
 
 describe("local model backend options", () => {
+  it("sends distinct real output limits for Bonsai Light, Medium, and Ultra", () => {
+    expect(["light", "medium", "ultra"].map((mode) => getModelGenerationOptions(mode as "light" | "medium" | "ultra", "openai-compatible", 4_096).maxOutputTokens))
+      .toEqual([1_024, 2_048, 3_072]);
+  });
   it("serializes vLLM thinking options using the provider's wire format", async () => {
     const body = await serializedRequest("vllm", "deep");
     expect(body).toMatchObject({

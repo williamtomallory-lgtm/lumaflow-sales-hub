@@ -80,7 +80,7 @@ describe("allowlisted model profiles", () => {
     vi.stubEnv("LLM_FAMILY", "Ternary Bonsai 2");
     vi.stubEnv("LLM_PARAMETER_SIZE_B", "27");
     vi.stubEnv("LLM_CONTEXT_TOKENS", "8192");
-    vi.stubEnv("LLM_SUPPORTED_MODES", "instant");
+    vi.stubEnv("LLM_SUPPORTED_MODES", "light,medium,ultra");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "custom-model" }] })));
     expect(getDefaultModelProfileId()).toBe("configured");
     expect(await getModelOptions()).toEqual([
@@ -90,7 +90,7 @@ describe("allowlisted model profiles", () => {
         family: "Ternary Bonsai 2",
         parameterSizeB: 27,
         contextTokens: 8192,
-        supportedModes: ["instant"],
+        supportedModes: ["light", "medium", "ultra"],
         reachable: true,
       }),
     ]);
@@ -131,9 +131,9 @@ describe("allowlisted model profiles", () => {
     });
     expect(payload.data.models).toHaveLength(3);
     expect(payload.data.models.every((item) => item.reachable)).toBe(true);
-    expect(payload.data.models[0]).toMatchObject({ family: "Qwen3", parameterSizeB: 8, supportedModes: ["instant", "medium", "high", "extra-high"] });
-    expect(payload.data.models[1]).toMatchObject({ family: "Qwen3", parameterSizeB: 14, supportedModes: ["instant", "medium", "high", "extra-high", "pro"] });
-    expect(payload.data.models[2]).toMatchObject({ family: "custom", parameterSizeB: null, supportedModes: ["instant"] });
+    expect(payload.data.models[0]).toMatchObject({ family: "Qwen3", parameterSizeB: 8, supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high"] });
+    expect(payload.data.models[1]).toMatchObject({ family: "Qwen3", parameterSizeB: 14, supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high", "pro"] });
+    expect(payload.data.models[2]).toMatchObject({ family: "custom", parameterSizeB: null, supportedModes: ["light"] });
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("server-secret");
     expect(serialized).not.toContain("http://");

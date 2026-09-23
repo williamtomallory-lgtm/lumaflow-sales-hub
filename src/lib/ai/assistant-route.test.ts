@@ -64,11 +64,11 @@ describe("assistant route with an in-memory model protocol", () => {
     expect(response.headers.get("x-model-profile")).toBe("local-qwen3-8b");
     expect(response.headers.get("x-inference-mode")).toBe("medium");
     expect(response.headers.get("x-thinking-enabled")).toBe("true");
-    expect(response.headers.get("x-output-budget")).toBe("1536");
-    expect(response.headers.get("x-input-budget")).toBe("2000");
+    expect(response.headers.get("x-output-budget")).toBe("2048");
+    expect(response.headers.get("x-input-budget")).toBe("4000");
     expect(response.headers.get("x-inference-timeout-ms")).toBe("180000");
     const body = await response.text();
-    expect(upstreamBody).toMatchObject({ model: "lumaflow-qwen3-8b:latest", reasoning_effort: "medium", max_tokens: 1_536 });
+    expect(upstreamBody).toMatchObject({ model: "lumaflow-qwen3-8b:latest", reasoning_effort: "medium", max_tokens: 2_048 });
     expect(upstreamBody).not.toHaveProperty("chat_template_kwargs");
     expect(body).toContain("medium answer");
     expect(body).not.toContain("private reasoning");
@@ -84,7 +84,7 @@ describe("assistant route with an in-memory model protocol", () => {
         : completion({ content: "完成</body></html>" }, "stop");
     }));
     const { POST } = await import("../../app/api/v1/assistant/chat/route");
-    const response = await POST(request([{ ...userMessage, parts: [{ type: "text", text: "创建一个离线 HTML 页面" }] }], undefined, { mode: "instant", modelProfileId: "configured" }));
+    const response = await POST(request([{ ...userMessage, parts: [{ type: "text", text: "创建一个离线 HTML 页面" }] }], undefined, { mode: "light", modelProfileId: "configured" }));
     expect(response.status).toBe(200);
     expect(response.headers.get("x-output-budget")).toBe("8192");
     const body = await response.text();

@@ -23,8 +23,9 @@ export function getModelGenerationOptions(
   if (isCurrentInferenceProfile(mode)) {
     const settings = INFERENCE_PROFILE_SETTINGS[mode];
     const thinkingEnabled = settings.thinkingEnabled;
-    const budget = backend === "openai-compatible" || backend === "vercel-ai-gateway" || codeArtifact
-      ? maxOutputTokens : Math.min(settings.maxOutputTokens, maxOutputTokens);
+    // Code artifacts need room to close a complete file; ordinary replies
+    // really use the selected tier, including on the Bonsai-compatible API.
+    const budget = codeArtifact ? maxOutputTokens : Math.min(settings.maxOutputTokens, maxOutputTokens);
     if (backend === "openai-compatible" || backend === "vercel-ai-gateway") {
       return {
         temperature: thinkingEnabled ? 1 : 0.7,

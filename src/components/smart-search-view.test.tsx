@@ -36,8 +36,8 @@ beforeEach(() => {
     const id = url.includes("modelProfileId=configured") ? "configured" : "local-qwen3-8b";
     const meta = { apiVersion: "v1", requestId: "test", checkedAt: new Date().toISOString() };
     if (url.endsWith("/models")) return Response.json({ data: { defaultProfileId: "local-qwen3-8b", models: [
-      { id: "local-qwen3-8b", label: "本地8B", model: "local-test", description: "本地模型", configured: true, reachable: true, connectionKind: "live", contextTokens: 8192, family: "Qwen3", parameterSizeB: 8, supportedModes: ["instant", "medium", "high", "extra-high"] },
-      { id: "local-qwen3-14b", label: "本地14B", model: "qwen3:14b", description: "较大本地模型", configured: true, reachable: true, connectionKind: "live", contextTokens: 8192, family: "Qwen3", parameterSizeB: 14, supportedModes: ["instant", "medium", "high", "extra-high", "pro"] },
+      { id: "local-qwen3-8b", label: "本地8B", model: "local-test", description: "本地模型", configured: true, reachable: true, connectionKind: "live", contextTokens: 8192, family: "Qwen3", parameterSizeB: 8, supportedModes: ["light", "medium", "ultra"] },
+      { id: "local-qwen3-14b", label: "本地14B", model: "qwen3:14b", description: "较大本地模型", configured: true, reachable: true, connectionKind: "live", contextTokens: 8192, family: "Qwen3", parameterSizeB: 14, supportedModes: ["light", "medium", "ultra"] },
       { id: "configured", label: "自定义", model: "offline-model", description: "尚未接通", configured: false, reachable: false, connectionKind: "live", contextTokens: null },
     ] }, meta });
     return Response.json({ data: { configured: id !== "configured", reachable: id !== "configured", profileId: id, provider: "vllm-openai-compatible", model: id === "configured" ? "offline-model" : "local-test", connectionKind: "live", contextTokens: 8192, latencyMs: 1 }, meta });
@@ -47,21 +47,14 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 async function ready() { await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled()); }
 
 describe("smart search real-model entry", () => {
-  it("sends real reasoning modes and visibly routes Pro to 14B", async () => {
+  it("sends the selected Ultra policy without silently switching models", async () => {
     render(<SmartSearchView {...props} />);
     await ready();
     fireEvent.click(screen.getByRole("button", { name: /^选择推理强度 / }));
-    fireEvent.click(screen.getByRole("button", { name: "High 更长推理" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ultra 深度处理" }));
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(posts[0]).toMatchObject({ mode: "high", modelProfileId: "local-qwen3-8b" }));
-    await ready();
-    fireEvent.click(screen.getByRole("button", { name: /^选择推理强度 / }));
-    fireEvent.click(screen.getByRole("button", { name: "Pro 较大模型" }));
-    await ready();
-    expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "选择模型 Qwen3 14B" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(posts[1]).toMatchObject({ mode: "pro", modelProfileId: "local-qwen3-14b" }));
+    await waitFor(() => expect(posts[0]).toMatchObject({ mode: "ultra", modelProfileId: "local-qwen3-8b" }));
+    expect(screen.getByRole("button", { name: "选择模型 Qwen3 8B" })).toBeInTheDocument();
   });
 
   it("does not label length-exhausted output as a completed answer", async () => {
@@ -83,7 +76,7 @@ describe("smart search real-model entry", () => {
     expect(posts).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("模型实测回复"));
-    expect(posts[0]).toMatchObject({ modelProfileId: "local-qwen3-8b", mode: "instant", messages: [{ role: "user", parts: [{ type: "text", text: "测试库存问题" }] }] });
+    expect(posts[0]).toMatchObject({ modelProfileId: "local-qwen3-8b", mode: "light", messages: [{ role: "user", parts: [{ type: "text", text: "测试库存问题" }] }] });
     expect(screen.getByTestId("search-evidence")).toHaveTextContent("LT-ARC-T18-BK 库存 126");
     expect(screen.getByTestId("search-evidence")).toHaveTextContent("核对时间");
     expect(screen.getByText(/本轮数据源：json/)).toBeInTheDocument();

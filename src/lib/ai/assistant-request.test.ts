@@ -8,7 +8,7 @@ describe("assistant input provenance", () => {
     const parsed = assistantRequestSchema.parse({ messages: [userMessage], trigger: "submit-message", customer: { name: "Forged" } });
     expect(parsed.messages).toEqual([userMessage]);
     expect(parsed).not.toHaveProperty("customer");
-    expect(parsed.mode).toBe("instant");
+    expect(parsed.mode).toBe("light");
     expect(parsed.experience).toBe("chat");
   });
 

@@ -29,7 +29,7 @@ function configuredModelMetadata() {
 }
 
 export function configuredSupportedModes() {
-  const values = process.env.LLM_SUPPORTED_MODES?.split(",") ?? ["instant"];
+  const values = process.env.LLM_SUPPORTED_MODES?.split(",") ?? ["light"];
   return [...new Set(values.flatMap((value) => {
     const parsed = assistantInferenceProfileSchema.safeParse(value.trim());
     return parsed.success && parsed.data !== "pro" ? [parsed.data] : [];
@@ -54,20 +54,20 @@ const MODEL_PROFILES = {
     description: "Ollama 本地 4-bit 模型，8K 上下文；适用于 16GB 内存、8GB 显存笔记本。",
     family: "Qwen3",
     parameterSizeB: 8,
-    supportedModes: ["instant", "medium", "high", "extra-high"] as const,
+    supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high"] as const,
   },
   "local-qwen3-14b": {
     label: "Qwen3 14B · 本机演示",
     description: "官方 Ollama Qwen3:14b；约 9GB Q4 权重，8K 上下文，8GB 显存将使用 CPU/GPU 混合，16GB 内存可能较慢或不足。",
     family: "Qwen3",
     parameterSizeB: 14,
-    supportedModes: ["instant", "medium", "high", "extra-high", "pro"] as const,
+    supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high", "pro"] as const,
   },
   configured: {
     description: "由服务器 LLM_* 环境变量配置的远程模型服务。",
     family: "custom",
     parameterSizeB: null,
-    supportedModes: ["instant"] as const,
+    supportedModes: ["light"] as const,
   },
 } as const;
 

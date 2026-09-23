@@ -3,15 +3,20 @@ import { getInferenceProfileInputBudget, resolveInferencePolicy } from "./infere
 
 describe("inference policy", () => {
   it("exposes bounded current profile budgets for the UI", () => {
-    expect(["instant", "medium", "high", "extra-high", "pro"].map((profile) => getInferenceProfileInputBudget(profile as never)))
-      .toEqual([4_000, 2_000, 2_000, 1_500, 1_200]);
+    expect(["light", "medium", "ultra"].map((profile) => getInferenceProfileInputBudget(profile as never)))
+      .toEqual([4_000, 4_000, 4_000]);
     expect(resolveInferencePolicy({ mode: "medium", modelProfileId: "local-qwen3-8b" })).toMatchObject({
       requestedProfile: "medium",
       resolvedProfile: "medium",
       thinkingEnabled: true,
-      maxOutputTokens: 1_536,
+      maxOutputTokens: 2_048,
       timeoutMs: 180_000,
-      inputBudget: { maxContextCharacters: 2_000 },
+      inputBudget: { maxContextCharacters: 4_000 },
+    });
+    expect(resolveInferencePolicy({ mode: "ultra", modelProfileId: "configured", configuredSupportedModes: ["light", "medium", "ultra"] })).toMatchObject({
+      maxOutputTokens: 3_072,
+      timeoutMs: 290_000,
+      inputBudget: { maxContextCharacters: 4_000 },
     });
   });
 
