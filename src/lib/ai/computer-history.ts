@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 
-/** Keep real receipts, but don't feed every previous file page back into 8K RAM. */
+/** Keep real receipts, but don't feed every previous page back into the model. */
 export function compactComputerHistory(messages: ModelMessage[]): ModelMessage[] {
   const latest = messages.findLastIndex((message) => message.role === "tool"
     && message.content.some((part) => part.type === "tool-result" && part.toolName === "localComputer"));
@@ -11,7 +11,7 @@ export function compactComputerHistory(messages: ModelMessage[]): ModelMessage[]
         const value = part.output.value;
         if (!value || typeof value !== "object" || Array.isArray(value)) return part;
         const compacted = { ...value };
-        for (const key of ["content", "stdout", "stderr"]) {
+        for (const key of ["content", "stdout", "stderr", "snapshot"]) {
           const text = compacted[key];
           if (typeof text === "string" && text.length > 800) compacted[key] = `${text.slice(0, 300)}\n[此前正文已折叠；准确编辑时请重新分页读取]\n${text.slice(-300)}`;
         }
@@ -29,4 +29,3 @@ export function compactComputerHistory(messages: ModelMessage[]): ModelMessage[]
     return message;
   });
 }
-

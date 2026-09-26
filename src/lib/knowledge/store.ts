@@ -3,8 +3,11 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { Readable } from "node:stream";
+import { del, get, list, put } from "@vercel/blob";
 import path from "node:path";
 import { z } from "zod";
+import { getKnowledgeOwner } from "@/lib/server/knowledge-scope";
 import type { KnowledgeCategory } from "../business";
 import {
   formatKnowledgeSize,
@@ -31,7 +34,42 @@ const testDirectory = process.env.NODE_ENV === "test" ? process.env.LUMAFLOW_KNO
 const KNOWLEDGE_DIRECTORY = path.resolve(testDirectory || path.join(process.cwd(), ".local-data", "knowledge"));
 const KNOWLEDGE_FILES_DIRECTORY = path.join(KNOWLEDGE_DIRECTORY, "files");
 const KNOWLEDGE_METADATA_DIRECTORY = path.join(KNOWLEDGE_DIRECTORY, "metadata");
+function blobPrefix() { return `lumaflow-knowledge/v1/${getKnowledgeOwner()}/`; }
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function cloudKnowledgeArchiveAvailable() {
+  return process.env.VERCEL === "1" && Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+}
+
+function cloudArchiveRequired() {
+  if (process.env.VERCEL === "1" && !cloudKnowledgeArchiveAvailable()) {
+    throw new KnowledgeStoreError(503, "CLOUD_ARCHIVE_UNAVAILABLE", "云端尚未配置私有持久文件存储。");
+  }
+}
+
+function blobMetadataPath(id: string) { return `${blobPrefix()}metadata/${safeId(id)}.json`; }
+function blobFilePath(id: string) { return `${blobPrefix()}files/${safeId(id)}.bin`; }
+
+async function readBlobRecord(blobPath: string) {
+  const result = await get(blobPath, { access: "private", useCache: false });
+  if (!result || result.statusCode !== 200) return null;
+  const parsed: unknown = JSON.parse(await new Response(result.stream).text());
+  const validated = storedKnowledgeRecordSchema.safeParse(parsed);
+  return validated.success ? validated.data : null;
+}
+
+async function listBlobRecords() {
+  const paths: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: `${blobPrefix()}metadata/`, limit: 1000, cursor });
+    paths.push(...page.blobs.filter((blob) => blob.pathname.endsWith(".json")).map((blob) => blob.pathname));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  const records = await Promise.all(paths.map(readBlobRecord));
+  return records.filter((record): record is StoredKnowledgeRecord => Boolean(record))
+    .sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+}
 
 const storedKnowledgeRecordSchema: z.ZodType<StoredKnowledgeRecord> = z.object({
   id: z.string().regex(UUID_PATTERN),
@@ -85,7 +123,7 @@ export type KnowledgeParseInput = {
 };
 
 export type KnowledgeDownload = {
-  stream: ReturnType<typeof createReadStream>;
+  stream: Readable;
   sizeBytes: number;
   mimeType: string;
   originalName: string;
@@ -103,6 +141,7 @@ function withMutationLock<T>(operation: () => Promise<T>) {
 }
 
 async function ensureDirectories() {
+  if (process.env.VERCEL === "1") { cloudArchiveRequired(); return; }
   await mkdir(KNOWLEDGE_FILES_DIRECTORY, { recursive: true });
   await mkdir(KNOWLEDGE_METADATA_DIRECTORY, { recursive: true });
 }
@@ -210,6 +249,13 @@ function makeInitialRecord(input: {
 }
 
 async function writeJsonAtomic(target: string, value: unknown) {
+  if (process.env.VERCEL === "1") {
+    cloudArchiveRequired();
+    const match = /([0-9a-f-]{36})\.json$/i.exec(target);
+    if (!match) throw new KnowledgeStoreError(500, "INVALID_METADATA_PATH", "知识库元数据路径无效。");
+    await put(blobMetadataPath(match[1]), JSON.stringify(value), { access: "private", allowOverwrite: true, contentType: "application/json" });
+    return;
+  }
   const temporary = path.join(KNOWLEDGE_METADATA_DIRECTORY, `.${randomUUID()}.tmp`);
   await writeFile(temporary, JSON.stringify(value, null, 2), "utf8");
   await rename(temporary, target);
@@ -226,6 +272,7 @@ async function readRecordByPath(target: string) {
 }
 
 async function readAllRecords() {
+  if (process.env.VERCEL === "1") { cloudArchiveRequired(); return listBlobRecords(); }
   await ensureDirectories();
   const names = await readdir(KNOWLEDGE_METADATA_DIRECTORY, { withFileTypes: true });
   const records = await Promise.all(names
@@ -286,10 +333,15 @@ export async function saveUploadedKnowledge(input: {
     });
     await ensureDirectories();
     try {
-      await writeFile(filePath(id), input.bytes, { flag: "wx" });
+      if (process.env.VERCEL === "1") {
+        await put(blobFilePath(id), input.bytes, { access: "private", contentType: record.mimeType });
+      } else {
+        await writeFile(filePath(id), input.bytes, { flag: "wx" });
+      }
       await writeJsonAtomic(metadataPath(id), record);
     } catch (error) {
-      await rm(filePath(id), { force: true }).catch(() => undefined);
+      if (process.env.VERCEL === "1") await del(blobFilePath(id)).catch(() => undefined);
+      else await rm(filePath(id), { force: true }).catch(() => undefined);
       throw error;
     }
     return { record, deduplicated: false };
@@ -301,6 +353,7 @@ export async function listKnowledgeRecords() {
 }
 
 export async function getKnowledgeRecord(id: string) {
+  if (process.env.VERCEL === "1") { cloudArchiveRequired(); return readBlobRecord(blobMetadataPath(id)); }
   await ensureDirectories();
   return readRecordByPath(metadataPath(id));
 }
@@ -314,6 +367,11 @@ export async function getKnowledgeTextById(id: string) {
 export async function getKnowledgeDownload(id: string): Promise<KnowledgeDownload> {
   const record = await getKnowledgeRecord(id);
   if (!record) throw new KnowledgeStoreError(404, "KNOWLEDGE_NOT_FOUND", "知识文件不存在。");
+  if (process.env.VERCEL === "1") {
+    const blob = await get(blobFilePath(record.id), { access: "private", useCache: false });
+    if (!blob || blob.statusCode !== 200) throw new KnowledgeStoreError(404, "KNOWLEDGE_FILE_MISSING", "知识原文件不存在，但元数据仍然保留。");
+    return { stream: Readable.fromWeb(blob.stream as import("node:stream/web").ReadableStream), sizeBytes: blob.blob.size, mimeType: record.mimeType, originalName: record.originalName };
+  }
   const target = filePath(record.id);
   try {
     const fileStats = await stat(target);
@@ -321,6 +379,30 @@ export async function getKnowledgeDownload(id: string): Promise<KnowledgeDownloa
   } catch {
     throw new KnowledgeStoreError(404, "KNOWLEDGE_FILE_MISSING", "知识原文件不存在，但元数据仍然保留。");
   }
+}
+
+/**
+ * Removes a knowledge source together with its stored original and metadata.
+ * The operation is serialized with uploads/classification updates so a queued
+ * classifier cannot recreate metadata after the user has deleted the file.
+ */
+export async function deleteKnowledgeRecord(id: string) {
+  return withMutationLock(async () => {
+    const record = await getKnowledgeRecord(id);
+    if (!record) throw new KnowledgeStoreError(404, "KNOWLEDGE_NOT_FOUND", "知识文件不存在。");
+
+    const failures: unknown[] = [];
+    if (process.env.VERCEL === "1") {
+      cloudArchiveRequired();
+      await del(blobFilePath(record.id)).catch((error) => failures.push(error));
+      await del(blobMetadataPath(record.id)).catch((error) => failures.push(error));
+    } else {
+      await rm(filePath(record.id), { force: true }).catch((error) => failures.push(error));
+      await rm(metadataPath(record.id), { force: true }).catch((error) => failures.push(error));
+    }
+    if (failures.length) throw failures[0];
+    return record;
+  });
 }
 
 export async function saveModelClassification(id: string, classification: KnowledgeClassification) {

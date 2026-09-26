@@ -17,16 +17,17 @@ export async function GET(request: Request, context: DownloadRouteContext) {
   const requestIdentifier = requestId(request);
   try {
     enforceRateLimit(request, 60);
-    authorizeKnowledgeRead(request);
+    await authorizeKnowledgeRead(request);
     const { id } = await context.params;
     const download = await getKnowledgeDownload(id);
+    const inline = new URL(request.url).searchParams.get("inline") === "1";
     return new Response(Readable.toWeb(download.stream) as unknown as ReadableStream, {
       status: 200,
       headers: {
         "Cache-Control": "no-store, max-age=0",
         "Content-Length": String(download.sizeBytes),
         "Content-Type": download.mimeType,
-        "Content-Disposition": downloadName(download.originalName),
+        "Content-Disposition": inline ? `inline; filename="${download.originalName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_").slice(0, 180) || "knowledge-file"}"; filename*=UTF-8''${encodeURIComponent(download.originalName)}` : downloadName(download.originalName),
         "X-Content-Type-Options": "nosniff",
         "X-Request-Id": requestIdentifier,
       },

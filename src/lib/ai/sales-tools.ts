@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getDataSnapshot } from "../server/data-repository";
 import { searchConfirmedKnowledge } from "./knowledge-retrieval";
 import { searchTianzhaoProducts } from "./tianzhao-knowledge";
+import { basicTools } from "./basic-tools";
 import {
   createQuoteDraftRecord,
   getInventoryRecord,
@@ -17,6 +18,10 @@ import {
 const productIdentifier = z.string().trim().min(1).max(120).describe("Product id, exact SKU, or exact model");
 
 export const salesTools = {
+  // Keep the legacy sales tool registry limited to the reviewed product
+  // tools. Chat-safe general tools are exported separately below; Work
+  // installs the CowAgent factory after resolving the selected Agent.
+  webSearch: basicTools.webSearch,
   searchProducts: tool({
     description: "Search real lighting products from the server data repository. Use this before recommending any product, SKU, price, or stock.",
     inputSchema: z.object({
@@ -80,3 +85,5 @@ export const salesTools = {
     execute: async (input) => createQuoteDraftRecord(input, await getDataSnapshot()),
   }),
 };
+
+export { basicTools as generalAssistantTools } from "./basic-tools";

@@ -86,6 +86,19 @@ export const INFERENCE_PROFILE_SETTINGS: Record<AssistantInferenceProfile, Infer
   },
 };
 
+/** The larger local context leaves room for longer user input and answers. */
+export function profileBudgetsForContext(profile: AssistantInferenceProfile, contextTokens?: number | null) {
+  const settings = INFERENCE_PROFILE_SETTINGS[profile];
+  if (!contextTokens || contextTokens < 24_576) return {
+    maxContextCharacters: settings.maxContextCharacters,
+    maxOutputTokens: settings.maxOutputTokens,
+  };
+  if (profile === "light" || profile === "instant") return { maxContextCharacters: 8_000, maxOutputTokens: 2_048 };
+  if (profile === "medium") return { maxContextCharacters: 10_000, maxOutputTokens: 4_096 };
+  if (profile === "ultra") return { maxContextCharacters: 12_000, maxOutputTokens: 6_144 };
+  return { maxContextCharacters: settings.maxContextCharacters, maxOutputTokens: settings.maxOutputTokens };
+}
+
 const LEGACY_CONTEXT_CHARACTERS = 4_000;
 const LEGACY_OUTPUT_BUDGETS: Record<LegacyInferenceProfile, number> = {
   "legacy-fast": 2_048,
@@ -152,6 +165,7 @@ export function resolveInferencePolicy(input: {
   modelProfileId?: AssistantModelProfileId;
   configuredTimeoutMs?: number;
   modelMaxOutputTokens?: number;
+  modelContextTokens?: number | null;
   configuredSupportedModes?: string[];
 }): InferencePolicyResolution {
   const mode = assistantReasoningModeSchema.parse(input.mode);
@@ -180,6 +194,7 @@ export function resolveInferencePolicy(input: {
   }
 
   const settings = INFERENCE_PROFILE_SETTINGS[mode];
+  const effectiveBudgets = profileBudgetsForContext(mode, input.modelContextTokens);
   if (requestedModelProfileId === "configured" && !(input.configuredSupportedModes ?? ["light"]).includes(mode)) {
     if (mode === "pro") {
       throw new InferencePolicyError(503, "PRO_MODEL_REQUIRED", "Pro requires the installed local qwen3:14b model; a custom service cannot be used as a silent fallback.");
@@ -191,8 +206,8 @@ export function resolveInferencePolicy(input: {
     ? "local-qwen3-14b"
     : requestedModelProfileId;
   const maxOutputTokens = input.modelMaxOutputTokens === undefined
-    ? settings.maxOutputTokens
-    : Math.min(settings.maxOutputTokens, input.modelMaxOutputTokens);
+    ? effectiveBudgets.maxOutputTokens
+    : Math.min(effectiveBudgets.maxOutputTokens, input.modelMaxOutputTokens);
 
   return {
     requestedMode: mode,
@@ -206,7 +221,7 @@ export function resolveInferencePolicy(input: {
     timeoutMs: configuredTimeoutMs === undefined
       ? settings.timeoutCeilingMs
       : Math.min(configuredTimeoutMs, settings.timeoutCeilingMs),
-    inputBudget: inputBudget(settings.maxContextCharacters),
+    inputBudget: inputBudget(effectiveBudgets.maxContextCharacters),
     providerReasoningEffort: settings.providerReasoningEffort,
   };
 }

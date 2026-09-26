@@ -11,7 +11,7 @@ vi.hoisted(() => {
 });
 vi.mock("server-only", () => ({}));
 
-const { getKnowledgeRecord, getKnowledgeTextById, markClassificationFailed, readFileWithLimit, saveModelClassification, saveUploadedKnowledge, toPublicKnowledgeEntry, updateKnowledgeRecord, KnowledgeStoreError } = await import("./store");
+const { deleteKnowledgeRecord, getKnowledgeRecord, getKnowledgeTextById, markClassificationFailed, readFileWithLimit, saveModelClassification, saveUploadedKnowledge, toPublicKnowledgeEntry, updateKnowledgeRecord, KnowledgeStoreError } = await import("./store");
 
 beforeAll(async () => rm(testDirectory, { recursive: true, force: true }));
 afterAll(async () => rm(testDirectory, { recursive: true, force: true }));
@@ -60,5 +60,12 @@ describe("local knowledge archive", () => {
 
   it("does not accept a path-like identifier", async () => {
     await expect(getKnowledgeRecord("../../secret")).rejects.toBeInstanceOf(KnowledgeStoreError);
+  });
+
+  it("deletes both the original bytes and metadata from the local archive", async () => {
+    const saved = await saveUploadedKnowledge({ originalName: `remove-${randomUUID()}.txt`, mimeType: "text/plain", bytes: Buffer.from("待删除"), parse: { status: "parsed", text: "待删除" } });
+    await expect(deleteKnowledgeRecord(saved.record.id)).resolves.toMatchObject({ id: saved.record.id });
+    await expect(getKnowledgeRecord(saved.record.id)).resolves.toBeNull();
+    await expect((await import("./store")).getKnowledgeDownload(saved.record.id)).rejects.toMatchObject({ code: "KNOWLEDGE_NOT_FOUND", status: 404 });
   });
 });

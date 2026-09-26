@@ -198,6 +198,22 @@ export async function createFollowup(task: FollowupTask, requestId: string) {
   });
 }
 
+export async function deleteFollowup(taskId: string, requestId: string) {
+  if (!getPool()) return mutateLocalBusinessData((data) => {
+    const current = data.followups.find((task) => task.id === taskId);
+    if (!current) return null;
+    data.followups = data.followups.filter((task) => task.id !== taskId);
+    return current;
+  });
+  return inTransaction(requirePool(), async (client) => {
+    const current = await client.query<DataRow>("SELECT data FROM followup_tasks WHERE id = $1 FOR UPDATE", [taskId]);
+    if (!current.rows[0]) return null;
+    await client.query("DELETE FROM followup_tasks WHERE id = $1", [taskId]);
+    await insertAuditEvent(client, { action: "followup.delete", entityType: "followup", entityId: taskId, requestId });
+    return followupTaskSchema.parse(current.rows[0].data);
+  });
+}
+
 export async function createCustomer(customer: Customer, requestId: string) {
   const parsed = customerSchema.parse(customer);
   if (!getPool()) return mutateLocalBusinessData((data) => { data.customers.push(parsed); return parsed; });

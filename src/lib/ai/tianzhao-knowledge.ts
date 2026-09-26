@@ -1,6 +1,12 @@
 import "server-only";
 
 import deployedKnowledgeBase from "../../data/tianzhao-products.json";
+import imageIndex from "../../data/tianzhao-sprite-index.json";
+import ocrIndex from "../../data/tianzhao-ocr-index.json";
+
+type ProductPreview = { url: string; name: string; kind: string; top: number; height: number; width: number; totalHeight: number };
+const catalogPreviewImages = imageIndex.products as Record<string, ProductPreview[]>;
+const catalogOcrImages = ocrIndex.products as Record<string, Array<{ name: string; lines: string[] }>>;
 
 type TianzhaoProduct = {
   id: string;
@@ -52,8 +58,31 @@ type TianzhaoKnowledgeBase = {
 };
 
 const knowledgeBase = deployedKnowledgeBase as TianzhaoKnowledgeBase;
+const categoryGroups = [
+  { name: "吸顶灯", terms: ["吸顶", "顶灯"] },
+  { name: "吊灯", terms: ["吊灯", "餐吊", "小吊"] },
+  { name: "风扇灯", terms: ["风扇", "吊扇"] },
+  { name: "壁灯", terms: ["壁灯"] },
+  { name: "台灯与落地灯", terms: ["台灯", "落地灯"] },
+  { name: "筒灯与射灯", terms: ["筒灯", "射灯", "筒射"] },
+  { name: "套餐", terms: ["套餐"] },
+] as const;
+
+function browseGroup(category: string) {
+  const matches = categoryGroups.filter((group) => group.terms.some((term) => category.includes(term)));
+  return matches.length === 1 ? matches[0].name : matches.length > 1 ? "混合分类" : "其他分类";
+}
+
 const catalogCategories = [...new Map(knowledgeBase.products.reduce((counts, product) => {
   const name = product.category.trim() || "未分类";
+  counts.set(name, (counts.get(name) ?? 0) + 1);
+  return counts;
+}, new Map<string, number>())).entries()]
+  .map(([name, count]) => ({ name, count, group: browseGroup(name) }))
+  .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+
+const catalogGroups = [...new Map(knowledgeBase.products.reduce((counts, product) => {
+  const name = browseGroup(product.category);
   counts.set(name, (counts.get(name) ?? 0) + 1);
   return counts;
 }, new Map<string, number>())).entries()]
@@ -158,21 +187,30 @@ export function getTianzhaoKnowledgeMetadata() {
   return knowledgeBase.metadata;
 }
 
+export function getTianzhaoProduct(model: string) {
+  const product = knowledgeBase.products.find((entry) => entry.model === model);
+  return product ? { ...product, previewImages: catalogPreviewImages[product.id] ?? [], ocrImages: catalogOcrImages[product.id] ?? [] } : null;
+}
+
 export type TianzhaoCatalogProduct = Pick<TianzhaoProduct,
   "id" | "name" | "model" | "productCode" | "category" | "style" | "materialTag" |
   "priceCny" | "priceScope" | "unit" | "selectedSpecification" | "specifications" |
   "color" | "colorOptions" | "dimensions" | "lightSource" | "material" |
-  "applicableArea" | "scene" | "availabilityStatus" | "reviewStatus" | "reviewNote"
->;
+  "applicableArea" | "scene" | "availabilityStatus" | "reviewStatus" | "reviewNote" |
+  "photoTextOcr" | "evidence" | "jsonFile"
+> & { previewImages: ProductPreview[] };
 
-/** Public, paginated view of the verified snapshot. Image evidence remains in the release archive. */
-export function listTianzhaoProducts(input: { query?: string; category?: string; offset?: number; limit?: number } = {}) {
+/** Public, paginated view of the verified snapshot with compressed screenshot previews. */
+export function listTianzhaoProducts(input: { query?: string; category?: string; group?: string; offset?: number; limit?: number } = {}) {
   const query = input.query?.trim() ?? "";
   const category = input.category?.trim() ?? "";
+  const group = input.group?.trim() ?? "";
   const offset = Math.max(0, Math.floor(input.offset ?? 0));
   const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 24)));
   const filtered = knowledgeBase.products.filter((product) =>
-    (!category || product.category === category) && (!query || productScore(product, query) > 0));
+    (!category || product.category === category) &&
+    (!group || browseGroup(product.category) === group) &&
+    (!query || productScore(product, query) > 0));
   const products: TianzhaoCatalogProduct[] = filtered.slice(offset, offset + limit).map((product) => ({
     id: product.id,
     name: product.name,
@@ -196,6 +234,10 @@ export function listTianzhaoProducts(input: { query?: string; category?: string;
     availabilityStatus: product.availabilityStatus,
     reviewStatus: product.reviewStatus,
     reviewNote: product.reviewNote,
+    photoTextOcr: product.photoTextOcr,
+    evidence: product.evidence,
+    jsonFile: product.jsonFile,
+    previewImages: catalogPreviewImages[product.id] ?? [],
   }));
   return {
     products,
@@ -205,6 +247,7 @@ export function listTianzhaoProducts(input: { query?: string; category?: string;
     metadata: {
       ...knowledgeBase.metadata,
       categories: catalogCategories,
+      groups: catalogGroups,
       spreadsheetUrl: `${knowledgeBase.metadata.releaseUrl.replace(/\/tag\/[^/]+$/, "")}/download/tianzhao-20260920/tianzhao-products-1887-20260920.xlsx`,
     },
   };

@@ -7,10 +7,38 @@ import { ApiHttpError } from "./api-security";
 import type { CowAgentWeixinState } from "../contracts/cowagent-weixin";
 import type { CowAgentWecomState } from "../contracts/cowagent-wecom";
 import type { CowAgentProfile, CowAgentRoster } from "../contracts/cowagent-agent";
+import { wechatAgentActionSchema, wechatAgentConfigPatchSchema, wechatAgentStateSchema, wechatConversationPageSchema, wechatMessagePageSchema, type WechatAgentAction, type WechatAgentState, type WechatMessagePage, type WechatConversationPage } from "../contracts/wechat-conversation";
+import { buildKnowledgeContext } from "../ai/knowledge-context";
 import { AGENT_ROLE_IDS, type AgentRoleId } from "@/config/agent-roles";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const MAX_RESPONSE_BYTES = 1_500_000;
+
+/** Shared WeChat Conversations live in the channel runtime, never browser storage. */
+export async function requestWechatAgent(input: { method?: "GET" | "POST" | "PATCH"; query?: Record<string, string>; body?: WechatAgentAction | unknown }): Promise<WechatAgentState | WechatMessagePage | WechatConversationPage> {
+  if (!LOOPBACK_HOSTS.has(baseUrl().hostname)) throw new ApiHttpError(403, "LOCAL_WECHAT_ONLY", "微信会话仅在已授权的本机运行。");
+  const method = input.method ?? "GET";
+  const query = new URLSearchParams(input.query);
+  const body = method === "POST" ? wechatAgentActionSchema.parse(input.body) : method === "PATCH" ? wechatAgentConfigPatchSchema.parse(input.body) : undefined;
+  let knowledgeContext: string | undefined;
+  if (method === "PATCH" && body && "knowledgeBaseIds" in body && body.knowledgeBaseIds) {
+    knowledgeContext = (await buildKnowledgeContext(body.knowledgeBaseIds)).text;
+  }
+  if (method === "POST" && body && "action" in body && body.action === "send") {
+    const state = await requestWechatAgent({});
+    if ("agent" in state) knowledgeContext = (await buildKnowledgeContext(state.agent.knowledgeBaseIds)).text;
+  }
+  const payload = await cowAgentJson(`api/wechat_agent${query.size ? `?${query}` : ""}`, {
+    method, headers: cowAgentHeaders(Boolean(body)), ...(body ? { body: JSON.stringify({ ...body, ...(knowledgeContext !== undefined ? { knowledgeContext } : {}) }) } : {}),
+  }, 25_000);
+  if (payload.status === "error" || payload.error) throw new ApiHttpError(422, "WECHAT_ACTION_FAILED", "微信会话操作失败；请检查连接和当前会话后重试。");
+  const data = payload.data ?? payload;
+  const schema = method === "GET" && input.query?.action === "messages" ? wechatMessagePageSchema
+    : method === "GET" && input.query?.action === "conversations" ? wechatConversationPageSchema : wechatAgentStateSchema;
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) throw new ApiHttpError(502, "WECHAT_RUNTIME_UPGRADE_REQUIRED", "微信会话后台尚未就绪，请启动更新后的本机服务。");
+  return parsed.data;
+}
 
 type CowAgentChannelInstance = {
   instance_id?: unknown;
@@ -160,7 +188,13 @@ function parseAgent(value: unknown): CowAgentProfile | null {
     name,
     workspace,
     enabled: item.enabled !== false,
+    type: item.type === "wechat" || (!item.type && (item.agent_type === "weixin_personal" || item.agent_type === "wecom_group")) ? "wechat" : "local",
     knowledgeMode,
+    ...(asString(item.system_prompt) ? { systemPrompt: asString(item.system_prompt) } : {}),
+    ...(Array.isArray(item.knowledge_base_ids) ? { knowledgeBaseIds: item.knowledge_base_ids.filter((id): id is string => typeof id === "string") } : {}),
+    ...(item.permissions && typeof item.permissions === "object" && !Array.isArray(item.permissions) ? { permissions: item.permissions as CowAgentProfile["permissions"] } : {}),
+    ...(Array.isArray(item.allowed_paths) ? { allowedPaths: item.allowed_paths.filter((path): path is string => typeof path === "string") } : {}),
+    ...(item.wechat && typeof item.wechat === "object" && !Array.isArray(item.wechat) ? { wechat: item.wechat as CowAgentProfile["wechat"] } : {}),
     ...(asString(item.description) ? { description: asString(item.description) } : {}),
     ...(asString(item.model) ? { model: asString(item.model) } : {}),
     ...(asString(item.bot_type) ? { botType: asString(item.bot_type) } : {}),
@@ -185,6 +219,8 @@ export async function getCowAgentRoster(): Promise<CowAgentRoster> {
 }
 
 export async function executeCowAgentComputer(agentId: string, operation: Record<string, unknown>) {
+  const profile = await getCowAgentProfile(agentId);
+  if (profile.type !== "local") throw new ApiHttpError(403, "LOCAL_AGENT_REQUIRED", "微信 Agent 不能执行电脑文件任务，请选择本地 Agent。");
   const payload = await cowAgentJson("api/computer/execute", {
     method: "POST", headers: cowAgentHeaders(true), body: JSON.stringify({ agentId, operation }),
   }, 650_000);
@@ -206,7 +242,13 @@ export async function createCowAgentProfile(input: {
   description: string;
   cloneFrom: string | null;
   knowledgeMode: "shared" | "own";
-  agentType: "weixin_personal" | "wecom_group";
+  type: "local" | "wechat";
+  agentType?: "weixin_personal" | "wecom_group";
+  systemPrompt: string;
+  knowledgeBaseIds: string[];
+  workspace?: string;
+  allowedPaths?: string[];
+  permissions?: CowAgentProfile["permissions"];
   roleIds: AgentRoleId[];
   revision?: string;
 }): Promise<CowAgentRoster> {
@@ -220,7 +262,13 @@ export async function createCowAgentProfile(input: {
       description: input.description,
       clone_from: input.cloneFrom,
       knowledge_mode: input.knowledgeMode,
+      type: input.type,
       agent_type: input.agentType,
+      system_prompt: input.systemPrompt,
+      knowledge_base_ids: input.knowledgeBaseIds,
+      ...(input.workspace ? { workspace: input.workspace } : {}),
+      ...(input.allowedPaths ? { allowed_paths: input.allowedPaths } : {}),
+      ...(input.permissions ? { permissions: input.permissions } : {}),
       role_ids: input.roleIds,
       ...(input.revision ? { revision: input.revision } : {}),
     }),
@@ -251,6 +299,24 @@ export async function deleteCowAgentProfile(input: { id: string; revision?: stri
         : "CowAgent 删除智能体失败。";
     throw new ApiHttpError(status, "COWAGENT_DELETE_FAILED", publicMessage);
   }
+  return getCowAgentRoster();
+}
+
+export async function updateCowAgentProfile(input: Parameters<typeof createCowAgentProfile>[0]): Promise<CowAgentRoster> {
+  const capabilities = await cowAgentJson("api/agents", { headers: cowAgentHeaders() }, 8_000);
+  if (capabilities.profile_edit_supported !== true) throw new ApiHttpError(503, "AGENT_RESTART_REQUIRED", "本地 Agent 服务需要重启后才能保存修改；当前设置尚未提交。");
+  const current = (await getCowAgentRoster()).agents.find((agent) => agent.id === input.id);
+  if (!current) throw new ApiHttpError(404, "COWAGENT_AGENT_NOT_FOUND", "这个 Agent 不存在或已被删除。");
+  if (current.type !== input.type || current.agentType !== input.agentType) throw new ApiHttpError(422, "AGENT_TYPE_IMMUTABLE", "修改时不能更换 Agent 类型。");
+  const payload = await cowAgentJson("api/agents", {
+    method: "POST", headers: cowAgentHeaders(true), body: JSON.stringify({
+      action: "update", id: input.id, name: input.name, description: input.description,
+      system_prompt: input.systemPrompt, knowledge_base_ids: input.knowledgeBaseIds,
+      ...(input.type === "local" ? { workspace: input.workspace || current.workspace, allowed_paths: input.allowedPaths, permissions: input.permissions } : {}),
+      role_ids: input.roleIds, ...(input.revision ? { revision: input.revision } : {}),
+    }),
+  }, 30_000);
+  if (payload.status !== "success") throw new ApiHttpError(payload.code === "stale_roster" ? 409 : 422, "COWAGENT_UPDATE_FAILED", publicAgentError(asString(payload.message)));
   return getCowAgentRoster();
 }
 

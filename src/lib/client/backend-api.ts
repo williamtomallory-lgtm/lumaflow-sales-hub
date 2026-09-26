@@ -37,6 +37,16 @@ export async function updateFollowupStatusViaApi(taskId: string, status: Followu
   return followupMutationResponseSchema.parse(payload).data;
 }
 
+export async function getFollowupViaApi(taskId: string) {
+  const payload = await requestJson(`/api/v1/followups/${encodeURIComponent(taskId)}`, { method: "GET", cache: "no-store" });
+  return followupMutationResponseSchema.parse(payload).data;
+}
+
+export async function deleteFollowupViaApi(taskId: string) {
+  const payload = await requestJson(`/api/v1/followups/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+  return z.object({ data: z.object({ id: z.string() }) }).parse(payload).data;
+}
+
 export async function createCustomerViaApi(input: z.input<typeof createCustomerSchema>) {
   return customerMutationResponseSchema.parse(await requestJson("/api/v1/customers", { method: "POST", body: JSON.stringify(input) })).data;
 }

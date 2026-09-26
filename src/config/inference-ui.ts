@@ -1,4 +1,5 @@
 export const INFERENCE_MODES = [
+  { id: "auto", label: "Auto", subtitle: "自动选择", detail: "由当前模型判断任务难度，自动选择实际推理强度。" },
   { id: "light", label: "Light", subtitle: "快速回答", detail: "直接回答，使用较短的生成预算。" },
   { id: "medium", label: "Medium", subtitle: "标准处理", detail: "检查主要要求，使用中等生成预算。" },
   { id: "ultra", label: "Ultra", subtitle: "深度处理", detail: "逐项核对要求，使用更长的生成预算与等待时间。" },

@@ -3,6 +3,7 @@ import type { AppDataSnapshot } from "../data-snapshot";
 import type { Product } from "../catalog";
 import type { Customer, FollowupTask } from "../crm";
 import { cowAgentIdSchema } from "./cowagent-agent";
+import { collaborationModeSchema } from "./agent-progress";
 
 const nonEmptyString = z.string().trim().min(1);
 const idSchema = nonEmptyString.max(120);
@@ -257,23 +258,38 @@ export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum([
 // These are application policies, not unverified native Bonsai reasoning levels.
 export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantInferenceProfileSchema = z.enum(["light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
-export const assistantModelProfileIdSchema = z.enum(["local-qwen3-8b", "local-qwen3-14b", "configured"]);
+export const assistantModelProfileIdSchema = z.enum([
+  "local-qwen3-8b", "local-qwen3-14b", "configured",
+  "local-gemma4-31b", "local-gemma4-26b-a4b", "local-glm-4.7-flash", "local-deepseek-v4.1-flash",
+]);
 
 const assistantUiMessageSchema = z.object({
   id: idSchema,
   role: z.literal("user"),
-  parts: z.array(z.object({
-    type: z.literal("text"),
-    text: z.string().trim().min(1).max(20_000),
-  }).strict()).length(1),
+  parts: z.array(z.union([
+    z.object({ type: z.literal("text"), text: z.string().trim().min(1).max(20_000) }).strict(),
+    z.object({
+      type: z.literal("file"),
+      mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+      filename: z.string().max(160).optional(),
+      url: z.string().max(3_600_000).regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
+    }).strict().refine((file) => file.url.startsWith(`data:${file.mediaType};base64,`)),
+  ])).min(1).max(5)
+    .refine((parts) => parts.some((part) => part.type === "text"), "A text prompt is required")
+    .refine((parts) => parts.filter((part) => part.type === "file").length <= 4, "At most four images are allowed")
+    .refine((parts) => parts.reduce((size, part) => size + (part.type === "file" ? part.url.length : 0), 0) <= 3_600_000, "Image attachments exceed the request limit"),
 });
 
 export const assistantRequestSchema = z.object({
+  projectId: z.string().uuid().optional(),
+  currentChatId: z.string().uuid().optional(),
   // Until conversation history is persisted on the server, only a fresh user turn is accepted.
   // Client-supplied assistant messages and tool outputs must never become trusted model history.
   messages: z.array(assistantUiMessageSchema).length(1),
   mode: assistantReasoningModeSchema.default("light"),
+  autoMode: z.boolean().default(false),
   experience: z.enum(["chat", "work"]).default("chat"),
+  workflowMode: z.enum(["normal", "goal", "plan"]).default("normal"),
   modelProfileId: assistantModelProfileIdSchema.optional(),
   customerId: idSchema.optional(),
   wechatSnapshotId: z.string().uuid().optional(),
@@ -281,10 +297,13 @@ export const assistantRequestSchema = z.object({
   // resolves its role, workspace and enabled state; the browser cannot submit
   // instructions or tool permissions.
   agentId: cowAgentIdSchema.optional(),
+  collaboratorAgentIds: z.array(cowAgentIdSchema).max(3).refine((ids) => new Set(ids).size === ids.length, "Duplicate Agent IDs").default([]),
+  collaborationMode: collaborationModeSchema.optional(),
   // Kept for the generic Chat experience and backward-compatible callers.
   agentRoleId: z.enum(["sales-consultant", "wechat-service", "sales-review", "moments-operator"]).optional(),
   knowledgeDocumentIds: z.array(z.string().uuid()).max(50).refine((ids) => new Set(ids).size === ids.length, "Duplicate document IDs").default([]),
-}).refine((body) => !(body.agentId && body.agentRoleId), { message: "Choose either a backend Agent or a built-in role", path: ["agentId"] });
+}).refine((body) => !(body.agentId && body.agentRoleId), { message: "Choose either a backend Agent or a built-in role", path: ["agentId"] })
+  .refine((body) => !body.collaboratorAgentIds.length || (body.experience === "work" && Boolean(body.agentId) && !body.collaboratorAgentIds.includes(body.agentId!)), { message: "Collaborators require a distinct Work lead Agent", path: ["collaboratorAgentIds"] });
 
 export const assistantHealthResponseSchema = z.object({
   data: z.object({
@@ -318,6 +337,8 @@ export const assistantModelOptionSchema = z.object({
   family: z.string().trim().min(1).default("unknown"),
   parameterSizeB: z.number().positive().nullable().default(null),
   supportedModes: z.array(assistantInferenceProfileSchema).default(["light"]),
+  installationStatus: z.enum(["ready", "not-downloaded"]).default("ready"),
+  memoryRequirement: z.string().trim().max(100).optional(),
 });
 
 export const assistantModelsResponseSchema = z.object({

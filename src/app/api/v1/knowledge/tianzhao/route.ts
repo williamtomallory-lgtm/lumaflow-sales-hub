@@ -11,12 +11,13 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const query = params.get("q") ?? "";
     const category = params.get("category") ?? "";
+    const group = params.get("group") ?? "";
     const rawOffset = Number(params.get("offset") ?? 0);
     const rawLimit = Number(params.get("limit") ?? 24);
-    if (!Number.isInteger(rawOffset) || rawOffset < 0 || !Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100 || query.length > 160 || category.length > 100) {
+    if (!Number.isInteger(rawOffset) || rawOffset < 0 || !Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100 || query.length > 160 || category.length > 100 || group.length > 30) {
       return apiJson({ error: { code: "INVALID_QUERY", message: "无效的知识库筛选参数" } }, 400, id);
     }
-    const catalog = listTianzhaoProducts({ query, category, offset: rawOffset, limit: rawLimit });
+    const catalog = listTianzhaoProducts({ query, category, group, offset: rawOffset, limit: rawLimit });
     return apiJson({ data: catalog.products, meta: { apiVersion: "v1", requestId: id, total: catalog.total, offset: catalog.offset, limit: catalog.limit, knowledgeBase: catalog.metadata } }, 200, id);
   } catch (error) {
     return apiError(error, id);

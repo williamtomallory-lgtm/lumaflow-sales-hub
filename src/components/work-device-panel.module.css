@@ -1,0 +1,32 @@
+.panel { width: min(760px, calc(100% - 32px)); margin: 40px auto 70px; color: #26302a; }
+.intro { text-align: center; margin-bottom: 36px; }
+.mark { display: inline-grid; place-items: center; width: 48px; height: 48px; color: #1e5a45; background: #edf4ef; border-radius: 16px; }
+.intro h2 { font-size: clamp(24px, 3vw, 32px); margin: 18px 0 10px; }
+.intro p, .card p, .hint { line-height: 1.8; color: #7b8980; font-size: 13px; }
+.card, .result { border: 1px solid #dce6de; border-radius: 22px; background: #fff; padding: 24px; box-shadow: 0 8px 30px #163c2410; margin: 18px 0; }
+.card h3 { margin: 0 0 8px; font-size: 17px; }
+.card label { display: grid; gap: 8px; font-size: 13px; margin: 18px 0; }
+.card input, .card select, .card textarea { width: 100%; border: 1px solid #d8e2d9; border-radius: 11px; background: #fff; padding: 12px 14px; font: inherit; color: #26302a; }
+.card textarea { display: block; resize: vertical; min-height: 120px; margin: 20px 0 14px; line-height: 1.6; }
+.card a:not(.primary) { display: inline-block; margin-left: 16px; color: #27684d; font-size: 13px; }
+.primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #194d3b; color: #fff; border: 0; border-radius: 11px; padding: 11px 18px; text-decoration: none; font-size: 13px; cursor: pointer; }
+.primary:disabled { opacity: .5; cursor: not-allowed; }
+.download { display: inline-flex; align-items: center; justify-content: center; border-radius: 11px; padding: 11px 18px; background: #e8f4eb; color: #195b3c; text-decoration: none; font-size: 13px; font-weight: 700; }
+.card a.download { margin: 0; color: #195b3c; }
+.status { margin: 20px 0 0; }
+.status button { margin-left: 5px; border: 0; background: transparent; color: #246747; cursor: pointer; text-decoration: underline; font: inherit; }
+.status button:disabled { opacity: .6; cursor: default; }
+.connected { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.connected strong { color: #176247; }
+.connected button { border: 0; color: #6f8074; background: transparent; cursor: pointer; }
+.result strong { display: block; font-size: 13px; margin-bottom: 12px; }
+.result p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.result svg { vertical-align: middle; }
+.notice, .error { padding: 13px 15px; border-radius: 11px; font-size: 13px; line-height: 1.7; }
+.notice { background: #f5f8f4; color: #667a6a; }
+.error { background: #fff4ed; color: #97643e; border: 1px solid #edd5c3; }
+.hint { text-align: center; font-size: 11px; margin-top: 24px; }
+.pairCode { background: #f0f7f1; border: 1px solid #cfe1d3; border-radius: 11px; padding: 12px 14px; overflow-wrap: anywhere; }
+.pairCode strong { display: block; color: #184f39; font-size: 16px; letter-spacing: .08em; margin-top: 6px; }
+.pairCode button { border: 0; background: transparent; color: #216344; cursor: pointer; padding: 7px 0; text-decoration: underline; }
+@media (max-width: 640px) { .panel { margin-top: 20px; } .card, .result { padding: 18px; } .card a:not(.primary) { display: block; margin: 14px 0 0; } }

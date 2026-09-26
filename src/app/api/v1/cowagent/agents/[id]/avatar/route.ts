@@ -1,6 +1,6 @@
 import { apiError, apiJson, authorizeAssistantRequest, authorizeLocalKnowledgeRead, enforceRateLimit, requestId, ApiHttpError } from "@/lib/server/api-security";
 import { cowAgentIdSchema } from "@/lib/contracts/cowagent-agent";
-import { readCowAgentAvatar, uploadCowAgentAvatar } from "@/lib/server/cowagent-client";
+import { getCowAgentRoster, readCowAgentAvatar, requestWechatAgent, uploadCowAgentAvatar } from "@/lib/server/cowagent-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +29,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const parsedId = cowAgentIdSchema.safeParse(id);
     if (!parsedId.success) throw new ApiHttpError(422, "INVALID_AGENT_ID", "智能体 ID 无效。");
+    const profile = (await getCowAgentRoster()).agents.find((agent) => agent.id === parsedId.data);
+    if (!profile) throw new ApiHttpError(404, "AGENT_NOT_FOUND", "这个 Agent 已不存在。");
+    if (profile.type === "wechat") {
+      const state = await requestWechatAgent({});
+      if (!("connection" in state) || state.agent.id !== parsedId.data || state.connection.status !== "connected") {
+        throw new ApiHttpError(409, "WECHAT_CONNECTION_REQUIRED", "连接微信后才能修改微信 Agent 头像。");
+      }
+    }
     const form = await request.formData();
     const avatar = form.get("avatar");
     if (!(avatar instanceof File) || avatar.size === 0) throw new ApiHttpError(422, "AVATAR_REQUIRED", "请选择头像文件。");

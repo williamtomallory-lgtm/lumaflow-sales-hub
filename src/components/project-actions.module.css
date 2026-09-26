@@ -1,0 +1,11 @@
+.menu { position:fixed; z-index:240; width:210px; padding:8px; border:1px solid #dce6dd; border-radius:14px; background:#fff; color:#345640; box-shadow:0 8px 25px #193c2526; }
+.menu button { display:flex; width:100%; align-items:center; gap:12px; padding:12px; border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:13px; cursor:pointer; }
+.menu button:hover,.menu button:focus { background:#edf3ed; outline:0; }.menu hr { border:0; border-top:1px solid #e0e8e1; margin:5px 0; }
+.menu .danger,.dialog .danger { color:#b34b3e; }
+.overlay { position:fixed; inset:0; z-index:230; background:#16352360; display:grid; place-items:center; padding:20px; }
+.dialog { width:min(660px,100%); max-height:calc(100dvh - 40px); overflow:auto; padding:26px; border-radius:20px; background:#fff; color:#345640; }
+.dialog header,.dialog footer { display:flex; align-items:center; gap:12px; }.dialog header { justify-content:space-between; }.dialog h2 { margin:0; font-size:24px; }
+.dialog button { padding:10px 15px; border:1px solid #d5e3d8; border-radius:10px; color:inherit; background:#fff; cursor:pointer; }.dialog header button { border:0; padding:7px; }
+.name { display:block; margin:22px 0; font-size:14px; }.name input { display:block; width:100%; margin-top:8px; border:1px solid #d5e3d8; border-radius:12px; padding:14px; font:inherit; }
+.dialog footer { margin-top:24px; flex-wrap:wrap; }.dialog footer span { flex:1; }.dialog .primary { background:#19543d; color:#fff; }.dialog .clear { padding:6px 10px; font-size:12px; }.dialog p { line-height:1.7; font-size:14px; }.dialog button:disabled { opacity:.5; cursor:default; }
+.sectionChoices { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }.sectionChoices small { width:100%; color:#829487; margin-bottom:5px; }

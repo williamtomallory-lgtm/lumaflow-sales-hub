@@ -4,10 +4,13 @@ export function requestsCodeArtifact(text: string): boolean {
     && /(?:html|网页|动画|代码|javascript|canvas|svg)/i.test(text);
 }
 
-/** Only offer a file after a complete fenced HTML document was returned. */
+/** A closed HTML root is enough even when the model omits the Markdown fence. */
 export function extractCompleteHtml(text: string): string | null {
-  const match = /```(?:html)?\s*\n([\s\S]*?)\n```/i.exec(text);
-  if (!match || !/<html[\s>]/i.test(match[1]) || !/<\/html>\s*$/i.test(match[1])) return null;
-  return match[1].trim();
+  for (const segment of splitFencedAnswer(text)) {
+    if (segment.kind !== "code") continue;
+    const html = /(?:<!doctype\s+html[^>]*>\s*)?<html\b[\s\S]*?<\/html>/i.exec(segment.content);
+    if (html) return html[0].trim();
+  }
+  return null;
 }
-
+import { splitFencedAnswer } from "./fenced-code";

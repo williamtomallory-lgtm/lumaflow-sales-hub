@@ -1,0 +1,24 @@
+.panel { width: 290px; max-width: 100%; background: #f6f8f4; border: 1px solid #dde5dc; border-radius: 20px; box-shadow: 0 6px 22px #1b4e3710; color: #42574a; font-size: 13px; }
+.panel header { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 8px; }
+.panel header span { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.panel header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.panel button { cursor: pointer; background: none; border: none; color: inherit; }
+.panel button:disabled { opacity: .4; cursor: default; }
+.panel button:focus-visible,.panel a:focus-visible { outline: 2px solid #42866a; border-radius: 5px; }
+.content { padding: 0 18px 12px; max-height: 460px; overflow-y: auto; }
+.expanded { width: 350px; }
+.expanded .content { max-height: 70vh; }
+.git { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px 0; }
+.git > span { display: inline-flex; align-items: center; gap: 8px; }
+.git em { color: #189657; font-style: normal; }.git b { color: #c34d42; font-weight: normal; }
+.git small { width: 100%; color: #809083; }
+.content section { border-top: 1px solid #dfe5db; padding: 12px 0 4px; }
+.content h3 { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; font-size: 13px; font-weight: 550; }
+.muted { color: #899588; margin: 8px 0; line-height: 1.6; }
+.item { display: flex; align-items: center; gap: 9px; min-width: 0; width: 100%; padding: 7px 0; text-align: left; text-decoration: none; color: inherit; }
+.item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.item svg { flex: 0 0 auto; }
+.members { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.members img,.avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+.avatar { display: inline-grid; place-items: center; background: #e1ede0; font-size: 12px; }.members > span:last-child { color: #7b8b7f; }
+.member { display: flex; justify-content: space-between; padding: 6px 0; }.member small { color: #7b8b7f; }
+.viewAll { margin: 8px 0 0; color: #788c7b !important; font-size: 12px; }

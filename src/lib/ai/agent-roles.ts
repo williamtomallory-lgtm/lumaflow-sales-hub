@@ -82,23 +82,35 @@ export function listAgentRoles(): AgentRole[] {
  * Tool access always comes from one of the reviewed policies above.
  */
 export function loadCowAgentRole(profile: CowAgentProfile): AgentRole {
-  const presetId: AgentRoleId = agentRoleIdSchema.safeParse(profile.id).success
+  if (profile.type === "local") {
+    const mainTask = profile.description?.trim() || "按用户说明处理当前电脑上的任务。";
+    return {
+      id: profile.id,
+      name: profile.name,
+      instructions: `你是本地 Agent“${profile.name}”（ID: ${profile.id}）。\n主要任务：${mainTask}\n补充设定：${profile.systemPrompt || "无"}\n本地边界：只在已授权的工作间与工具范围内工作，不声称已经绑定或操作微信。\n${commonBoundaries}`,
+      toolNames: ["searchProducts", "getProductDetails", "checkInventory", "searchKnowledge", "getProductAssets"],
+    };
+  }
+  const configuredRoleIds = (profile.roleIds ?? []).filter((roleId) => agentRoleIdSchema.safeParse(roleId).success);
+  const fallbackId: AgentRoleId = agentRoleIdSchema.safeParse(profile.id).success
     ? profile.id as AgentRoleId
-    : profile.botType === "weixin_personal"
+    : profile.agentType === "weixin_personal"
       ? "wechat-service"
       : DEFAULT_AGENT_ROLE_ID;
-  const preset = loadAgentRole(presetId);
-  const channelBoundary = profile.botType === "wecom_group"
-    ? "渠道边界：这是企业微信群聊 Agent。仅处理后端已路由给你的群消息；不要绕过 @、关键词或定时任务开关，也不要声称自己是个人微信联系人。"
-    : profile.botType === "weixin_personal"
-      ? "渠道边界：这是个人微信私聊 Agent。当前 Weixin 通道不支持群聊；不要声称自己已经加入或处理微信群。"
-      : "渠道边界：这是通用 Agent，不得声称已经绑定、登录或操作任何微信渠道。";
+  const selectedRoles = (configuredRoleIds.length ? configuredRoleIds : [fallbackId]).map((roleId) => loadAgentRole(roleId));
+  const preset = selectedRoles[0];
+  const channelBoundary = profile.agentType === "wecom_group"
+    ? "渠道边界：这是企业微信群聊 Agent。仅处理后端已路由给你的群消息；不要绕过 @、关键词或定时任务开关，也不要声称自己是个人微信联系人。不能操作本机文件。"
+    : profile.agentType === "weixin_personal"
+      ? "渠道边界：这是个人微信私聊 Agent，与 WeixinClawBot 使用同一个 Agent ID。当前 Weixin 通道不支持群聊；不能操作本机文件，遇到电脑文件请求应指引使用本地 Agent。"
+      : "渠道边界：这是本地 Agent，可使用授权的本机 Workspace；不得声称已经绑定、登录或操作任何微信渠道。";
   const responsibility = profile.description?.trim() || "按用户提供的销售任务进行分析并生成待人工确认的结果。";
+  const enabledRoleNames = selectedRoles.map((role) => role.name).join("、");
   return {
     ...preset,
     id: profile.id,
     name: profile.name,
-    instructions: `你当前运行的是由本机 CowAgent 管理的 Agent“${profile.name}”（ID: ${profile.id}）。\n职责：${responsibility}\n${channelBoundary}\n\n${preset.instructions}`,
-    toolNames: [...preset.toolNames],
+    instructions: `你当前运行的是由本机 CowAgent 管理的 Agent“${profile.name}”（ID: ${profile.id}）。\n职责：${responsibility}\n自定义设定：${profile.systemPrompt || "无"}\n已启用角色：${enabledRoleNames}\n${channelBoundary}\n\n${selectedRoles.map((role) => role.instructions).join("\n\n")}`,
+    toolNames: [...new Set(selectedRoles.flatMap((role) => role.toolNames))],
   };
 }

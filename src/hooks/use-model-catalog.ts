@@ -36,7 +36,7 @@ export function useModelCatalog() {
         let preferredId = parsed.data.defaultProfileId;
         try {
           const saved = assistantModelProfileIdSchema.safeParse(localStorage.getItem(preferenceKey));
-          if (saved.success && parsed.data.models.some((model) => model.id === saved.data)) preferredId = saved.data;
+          if (saved.success && parsed.data.models.some((model) => model.id === saved.data && model.installationStatus !== "not-downloaded")) preferredId = saved.data;
         } catch {
           // Local storage can be unavailable in private or restricted browsing.
         }
@@ -53,7 +53,7 @@ export function useModelCatalog() {
   const modelProfileId = selection ?? result?.initialSelection ?? initialProfileId;
   const selectModel = useCallback((value: string) => {
     const parsed = assistantModelProfileIdSchema.safeParse(value);
-    if (!parsed.success || !models.some((model) => model.id === parsed.data)) return;
+    if (!parsed.success || !models.some((model) => model.id === parsed.data && model.installationStatus !== "not-downloaded")) return;
     setSelection(parsed.data);
     try {
       localStorage.setItem(preferenceKey, parsed.data);

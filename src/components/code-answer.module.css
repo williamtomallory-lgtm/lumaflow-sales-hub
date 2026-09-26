@@ -1,0 +1,25 @@
+.prose { margin: 0 0 16px; overflow-wrap: anywhere; line-height: 1.8; }
+.prose p { margin: 0 0 1em; }
+.prose h1,.prose h2,.prose h3 { line-height: 1.45; margin: 1.25em 0 .6em; }
+.prose h1 { font-size: 1.6em; }.prose h2 { font-size: 1.35em; }.prose h3 { font-size: 1.15em; }
+.prose ul,.prose ol { padding-left: 1.55em; margin: .5em 0 1em; }
+.prose blockquote { margin: 1em 0; padding-left: 1em; border-left: 3px solid #bfd4c7; color: #5f7067; }
+.prose :not(pre)>code { padding: .12em .35em; border-radius: 5px; background: #edf1ed; font: .88em ui-monospace, Consolas, monospace; }
+.prose table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.prose th,.prose td { border: 1px solid #dbe3db; padding: .4em .65em; }
+.prose a { color: #246a54; }
+.card { margin: 18px 0; overflow: hidden; border: 1px solid #d8ddda; border-radius: 17px; background: #f3f1f1; }
+.card header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px 15px; color: #28322e; border-bottom: 1px solid #dfe2df; font-size: 12px; font-weight: 700; }
+.card header span,.card header div,.card header button { display: inline-flex; align-items: center; gap: 7px; }
+.card header div { flex-wrap: wrap; justify-content: flex-end; }
+.card header button { border: 0; border-radius: 7px; padding: 5px 7px; color: #4c6258; background: #fff; font: inherit; font-size: 11px; cursor: pointer; }
+.card header small { color: #7e8d84; font-size: 10px; font-weight: 400; }
+.card pre { margin: 0; padding: 17px 20px; max-height: 520px; overflow: auto; background: #f3f1f1; color: #303b42; font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; tab-size: 2; }
+.card code { font: inherit; }
+.card iframe { display: block; width: 100%; min-height: 420px; border: 0; background: #fff; }
+.card :global(.hljs-comment),.card :global(.hljs-quote) { color: #8c918c; font-style: italic; }
+.card :global(.hljs-tag),.card :global(.hljs-keyword),.card :global(.hljs-selector-tag) { color: #175a9b; }
+.card :global(.hljs-attr),.card :global(.hljs-attribute),.card :global(.hljs-variable) { color: #9b5b16; }
+.card :global(.hljs-string),.card :global(.hljs-number),.card :global(.hljs-literal) { color: #227944; }
+.card :global(.hljs-title),.card :global(.hljs-function),.card :global(.hljs-built_in) { color: #8a3d91; }
+@media(max-width:700px){.card pre{font-size:11px;padding:12px}.card iframe{min-height:330px}}

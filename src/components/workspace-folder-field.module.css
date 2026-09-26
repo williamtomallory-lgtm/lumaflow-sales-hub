@@ -1,0 +1,5 @@
+.field { margin:20px 0; font-size:14px; color:#416451; }
+.row { display:flex; gap:10px; align-items:center; margin-top:9px; }
+.row input { flex:1; min-width:0; width:100%; border:1px solid #d6e2d9; border-radius:12px; padding:13px; background:#f8fbf8; color:inherit; font:inherit; }
+.row button { display:flex; align-items:center; gap:6px; white-space:nowrap; padding:13px 16px; border:1px solid #d6e2d9; border-radius:12px; background:#fff; color:inherit; cursor:pointer; }
+.field small { display:block; margin-top:8px; color:#84978a; }.field .error { color:#b14c3c; }

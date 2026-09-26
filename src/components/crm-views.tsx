@@ -1,13 +1,17 @@
 "use client";
 
+import Link from "next/link";
+
 import {
   AlertCircle,
   Archive,
   ArrowRight,
+  CalendarDays,
   CalendarClock,
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Clock3,
@@ -41,6 +45,9 @@ import { useModelHealth } from "@/hooks/use-model-health";
 import { useModelCatalog } from "@/hooks/use-model-catalog";
 import type { SalesAgentUIMessage } from "@/lib/ai/sales-agent";
 import type { AssistantReasoningMode } from "@/lib/contracts/api";
+import type { CalendarEvent } from "@/lib/contracts/calendar";
+import { createCalendarEvent, getCalendarIdentity, listCalendarEvents, listCalendarPresence, sendCalendarHeartbeat, updateCalendarEvent, updateCalendarMemberStatus, type CalendarPresence } from "@/lib/client/calendar-api";
+import { connectSharedCalendar, currentCalendarConnection, disconnectSharedCalendar, usesSharedCalendarConnection, type CalendarConnection, type CalendarIdentity } from "@/lib/client/calendar-connection";
 import type { Product } from "@/lib/catalog";
 import {
   analyzeCustomerMessage,
@@ -100,6 +107,35 @@ export type FollowupViewProps = {
   onToast?: CrmToastHandler;
 };
 
+type CalendarViewMode = "month" | "week" | "day";
+type CalendarItemSource = "followup" | "shared";
+type CalendarItem = {
+  id: string;
+  title: string;
+  description: string;
+  startAt: string;
+  endAt: string;
+  allDay: boolean;
+  kind: CalendarEvent["kind"];
+  status: CalendarEvent["status"];
+  participantEmails: string[];
+  createdByName?: string;
+  updatedByName?: string;
+  source: CalendarItemSource;
+  task?: FollowupTask;
+  event?: CalendarEvent;
+};
+
+type CalendarEventDraft = {
+  title: string;
+  description: string;
+  startAt: string;
+  endAt: string;
+  allDay: boolean;
+  kind: CalendarEvent["kind"];
+  participantEmails: string[];
+};
+
 
 function cx(...names: Array<string | false | undefined>): string {
   return names.filter(Boolean).join(" ");
@@ -115,6 +151,161 @@ function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }).format(date);
+}
+
+function localDateKey(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addCalendarDays(value: Date, amount: number): Date {
+  const next = new Date(value);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function startOfCalendarDay(value: Date): Date {
+  const next = new Date(value);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function startOfCalendarWeek(value: Date): Date {
+  const day = startOfCalendarDay(value);
+  const mondayOffset = (day.getDay() + 6) % 7;
+  return addCalendarDays(day, -mondayOffset);
+}
+
+function calendarRangeFor(mode: CalendarViewMode, cursor: Date): { from: Date; to: Date; days: Date[] } {
+  if (mode === "day") {
+    const from = startOfCalendarDay(cursor);
+    return { from, to: addCalendarDays(from, 1), days: [from] };
+  }
+  if (mode === "week") {
+    const from = startOfCalendarWeek(cursor);
+    const days = Array.from({ length: 7 }, (_, index) => addCalendarDays(from, index));
+    return { from, to: addCalendarDays(from, 7), days };
+  }
+  const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const from = startOfCalendarWeek(firstOfMonth);
+  const lastOfMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+  const to = addCalendarDays(startOfCalendarWeek(addCalendarDays(lastOfMonth, 1)), 7);
+  const days: Date[] = [];
+  for (let day = from; day < to; day = addCalendarDays(day, 1)) days.push(day);
+  return { from, to, days };
+}
+
+function calendarHeading(mode: CalendarViewMode, cursor: Date): string {
+  if (mode === "month") return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long" }).format(cursor);
+  if (mode === "day") return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(cursor);
+  const week = calendarRangeFor("week", cursor).days;
+  const start = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(week[0]);
+  const end = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(week[6]);
+  return `${start} – ${end}`;
+}
+
+function calendarEventTime(value: string, allDay = false): string {
+  if (allDay) return "全天";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "时间未设置";
+  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+}
+
+function calendarKindLabel(kind: CalendarEvent["kind"]): string {
+  if (kind === "followup") return "跟进";
+  if (kind === "task") return "任务";
+  if (kind === "focus") return "专注时间";
+  return "会议";
+}
+
+function calendarStatusLabel(status: CalendarEvent["status"]): string {
+  if (status === "completed") return "已完成";
+  if (status === "cancelled") return "已取消";
+  return "已确认";
+}
+
+function calendarMemberStatusLabel(status: string, kind: CalendarEvent["kind"]): string {
+  if (status === "accepted") return "已接受";
+  if (status === "declined") return "已拒绝";
+  if (status === "in_progress") return "进行中";
+  if (status === "done") return "已完成";
+  return kind === "meeting" ? "待确认" : "待处理";
+}
+
+function calendarItemFromTask(task: FollowupTask): CalendarItem {
+  const start = new Date(task.dueAt);
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  return {
+    id: `followup:${task.id}`,
+    title: task.title,
+    description: task.description,
+    startAt: task.dueAt,
+    endAt: end.toISOString(),
+    allDay: false,
+    kind: "followup",
+    status: task.status === "completed" ? "completed" : "confirmed",
+    participantEmails: [],
+    source: "followup",
+    task,
+  };
+}
+
+function calendarItemFromEvent(event: CalendarEvent): CalendarItem {
+  return {
+    id: `shared:${event.id}`,
+    title: event.title,
+    description: event.description,
+    startAt: event.startAt,
+    endAt: event.endAt,
+    allDay: event.allDay,
+    kind: event.kind,
+    status: event.status,
+    participantEmails: event.participantEmails,
+    createdByName: event.createdByName,
+    updatedByName: event.updatedByName,
+    source: "shared",
+    event,
+  };
+}
+
+function calendarTaskFromEvent(event: CalendarEvent): FollowupTask {
+  return {
+    id: `calendar-event:${event.id}`,
+    customerId: "",
+    customerName: event.createdByName,
+    company: "协作日历",
+    title: event.title,
+    description: event.description,
+    type: "内部任务",
+    priority: "中",
+    status: event.status === "completed" ? "completed" : "open",
+    dueAt: event.startAt,
+    dueLabel: calendarEventTime(event.startAt, event.allDay),
+    createdAt: event.createdAt,
+  };
+}
+
+function isCalendarEventTask(task: FollowupTask): boolean {
+  return task.id.startsWith("calendar-event:");
+}
+
+function calendarEventIdFromTask(task: FollowupTask): string | undefined {
+  return isCalendarEventTask(task) ? task.id.slice("calendar-event:".length) : undefined;
+}
+
+function calendarTaskContext(task: FollowupTask): string {
+  return isCalendarEventTask(task) ? `${task.customerName}创建 · 协作日历` : `${task.company} · ${task.customerName}`;
+}
+
+function calendarTaskTypeLabel(task: FollowupTask, events: CalendarEvent[]): string {
+  const eventId = calendarEventIdFromTask(task);
+  if (!eventId) return task.type;
+  const kind = events.find((event) => event.id === eventId)?.kind;
+  return kind ? `协作${calendarKindLabel(kind)}` : "协作事件";
 }
 
 async function copyText(value: string, onToast?: CrmToastHandler, successMessage = "已复制") {
@@ -460,6 +651,81 @@ function CustomerForm({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
 const followupFilterLabels: Record<FollowupFilter, string> = { all: "全部任务", overdue: "已逾期", today: "今天", upcoming: "即将到期", completed: "已完成" };
 
+function CalendarEventChip({ item, compact = false, onSelect }: { item: CalendarItem; compact?: boolean; onSelect: (item: CalendarItem) => void }) {
+  const statusClass = item.status === "cancelled" ? styles.calendarEventCancelled : item.status === "completed" ? styles.calendarEventCompleted : styles.calendarEventConfirmed;
+  const href = item.event ? `/calendar/events/${encodeURIComponent(item.event.id)}` : `/calendar/followups/${encodeURIComponent(item.task!.id)}`;
+  return <Link href={href} className={cx(styles.calendarEventChip, statusClass, compact && styles.calendarEventCompact)} data-status={item.status} onClick={() => onSelect(item)} aria-label={`${item.title}，${calendarKindLabel(item.kind)}，${calendarStatusLabel(item.status)}${item.createdByName ? `，由${item.createdByName}创建` : "，当前部署任务"}，打开详情`}>
+    <span className={styles.calendarEventDot} />
+    <span className={styles.calendarEventChipTitle}>{item.title}</span>
+    {item.createdByName && <span className={styles.calendarEventChipOwner}>{item.createdByName}</span>}
+    {!compact && <span className={styles.calendarEventChipTime}>{calendarEventTime(item.startAt, item.allDay)}</span>}
+    {!compact && <span className={styles.calendarEventChipStatus}>{calendarStatusLabel(item.status)}</span>}
+  </Link>;
+}
+
+function CalendarMembers({ event, identity, presence, busy, onChange }: { event: CalendarEvent; identity: CalendarIdentity | null; presence: CalendarPresence; busy: boolean; onChange: (status: CalendarEvent["memberStatuses"][string]) => void }) {
+  const emails = [event.createdByEmail, ...event.participantEmails.filter((email) => email !== event.createdByEmail)];
+  const myEmail = identity?.email.toLowerCase();
+  const myStatus = myEmail && emails.includes(myEmail) ? event.memberStatuses?.[myEmail] ?? "pending" : null;
+  const choices: Array<CalendarEvent["memberStatuses"][string]> = event.kind === "meeting" ? ["pending", "accepted", "declined"] : ["pending", "in_progress", "done"];
+  if (myStatus && !choices.includes(myStatus)) choices.unshift(myStatus);
+  return <div className={styles.calendarMemberPanel} aria-label="参与成员状态">
+    <strong>成员进展</strong>
+    <div className={styles.calendarMemberList}>{emails.map((email) => <div key={email} className={styles.calendarMemberRow}>
+      <span className={styles.calendarMemberAvatar}>{(event.memberNames?.[email] || presence[email]?.name || email).slice(0, 1).toUpperCase()}</span>
+      <span><b>{event.memberNames?.[email] || presence[email]?.name || (email === event.createdByEmail ? event.createdByName : email)}</b><small>{email}{email === event.createdByEmail ? " · 创建人" : ""}{email === myEmail ? " · 我" : ""}</small></span>
+      <span className={cx(styles.calendarPresence, presence[email]?.online && styles.calendarPresenceOnline)} title={presence[email]?.lastSeenAt ? `最后活动：${formatDate(presence[email].lastSeenAt)}` : "暂无活动记录"}>{presence[email]?.online ? "在线" : presence[email] ? "离线" : "未上线"}</span>
+      <em>{calendarMemberStatusLabel(event.memberStatuses?.[email] ?? (email === event.createdByEmail && event.kind === "meeting" ? "accepted" : "pending"), event.kind)}</em>
+    </div>)}</div>
+    {myStatus && <label className={styles.calendarMyStatus}>我的状态<select aria-label="我的参与状态" value={myStatus} disabled={busy} onChange={(change) => onChange(change.target.value as CalendarEvent["memberStatuses"][string])}>{choices.map((status) => <option key={status} value={status}>{calendarMemberStatusLabel(status, event.kind)}</option>)}</select></label>}
+  </div>;
+}
+
+function CalendarDayEventList({ day, items, onSelect, limit = 5 }: { day: Date; items: CalendarItem[]; onSelect: (item: CalendarItem) => void; limit?: number }) {
+  const dayItems = items.filter((item) => localDateKey(item.startAt) === localDateKey(day)).sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  return <>
+    {dayItems.slice(0, limit).map((item) => <CalendarEventChip key={item.id} item={item} compact onSelect={onSelect} />)}
+    {dayItems.length > limit && <span className={styles.calendarMoreEvents}>+ {dayItems.length - limit} 项</span>}
+  </>;
+}
+
+function CalendarMonthView({ days, cursor, items, onSelect }: { days: Date[]; cursor: Date; items: CalendarItem[]; onSelect: (item: CalendarItem) => void }) {
+  const weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
+  return <div className={styles.calendarMonthGrid} data-testid="calendar-month-view" role="grid" aria-label={`${calendarHeading("month", cursor)}月视图`}>
+    {weekdayLabels.map((label) => <div key={label} className={styles.calendarWeekday} role="columnheader">{label}</div>)}
+    {days.map((day) => {
+      const isCurrentMonth = day.getMonth() === cursor.getMonth();
+      const isToday = localDateKey(day) === localDateKey(new Date());
+      return <div key={localDateKey(day)} className={cx(styles.calendarDayCell, !isCurrentMonth && styles.calendarDayOutside, isToday && styles.calendarDayToday)} role="gridcell">
+        <div className={styles.calendarDayNumber}><span>{day.getDate()}</span>{isToday && <em>今天</em>}</div>
+        <div className={styles.calendarDayEvents}><CalendarDayEventList day={day} items={items} onSelect={onSelect} /></div>
+      </div>;
+    })}
+  </div>;
+}
+
+function CalendarWeekView({ days, items, onSelect }: { days: Date[]; items: CalendarItem[]; onSelect: (item: CalendarItem) => void }) {
+  return <div className={styles.calendarWeekGrid} data-testid="calendar-week-view" role="grid" aria-label="周视图">
+    {days.map((day) => <div key={localDateKey(day)} className={cx(styles.calendarWeekColumn, localDateKey(day) === localDateKey(new Date()) && styles.calendarDayToday)} role="gridcell">
+      <div className={styles.calendarWeekHeader}><span>{new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(day)}</span><strong>{day.getDate()}</strong></div>
+      <div className={styles.calendarWeekEvents}><CalendarDayEventList day={day} items={items} onSelect={onSelect} limit={12} /></div>
+    </div>)}
+  </div>;
+}
+
+function CalendarDayView({ day, items, onSelect }: { day: Date; items: CalendarItem[]; onSelect: (item: CalendarItem) => void }) {
+  const dayItems = items.filter((item) => localDateKey(item.startAt) === localDateKey(day)).sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const allDayItems = dayItems.filter((item) => item.allDay);
+  const timedItems = dayItems.filter((item) => !item.allDay);
+  return <div className={styles.calendarDayAgenda} data-testid="calendar-day-view" role="region" aria-label="日视图">
+    {allDayItems.length > 0 && <div className={styles.calendarAllDayRow}><span>全天</span><div>{allDayItems.map((item) => <CalendarEventChip key={item.id} item={item} onSelect={onSelect} />)}</div></div>}
+    <div className={styles.calendarTimeline}>{Array.from({ length: 24 }, (_, index) => index).map((hour) => {
+      const hourItems = timedItems.filter((item) => new Date(item.startAt).getHours() === hour);
+      return <div key={hour} className={styles.calendarTimelineRow}><time>{String(hour).padStart(2, "0")}:00</time><div>{hourItems.length ? hourItems.map((item) => <CalendarEventChip key={item.id} item={item} onSelect={onSelect} />) : <span className={styles.calendarEmptySlot}>—</span>}</div></div>;
+    })}</div>
+  </div>;
+}
+
 export function FollowupView({ customers, tasks, referenceDate, timeZone, onOpenCustomer, onTaskStatusChange, onToast }: FollowupViewProps) {
   const [taskState, setTaskState] = useState(tasks);
   const [filter, setFilter] = useState<FollowupFilter>("all");
@@ -471,11 +737,89 @@ export function FollowupView({ customers, tasks, referenceDate, timeZone, onOpen
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [calendarMode, setCalendarMode] = useState<CalendarViewMode>("month");
+  const [calendarAnchorDate] = useState(() => {
+    const initial = referenceDate ? new Date(referenceDate) : new Date();
+    return Number.isNaN(initial.getTime()) ? new Date() : initial;
+  });
+  const [calendarCursor, setCalendarCursor] = useState(() => {
+    const initial = referenceDate ? new Date(referenceDate) : new Date();
+    return Number.isNaN(initial.getTime()) ? new Date() : initial;
+  });
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarError, setCalendarError] = useState("");
+  const [calendarSelectedId, setCalendarSelectedId] = useState("");
+  const [calendarEditor, setCalendarEditor] = useState<{ mode: "create" | "edit"; event?: CalendarEvent } | null>(null);
+  const [calendarSubmitting, setCalendarSubmitting] = useState(false);
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+  const [localCalendarMode, setLocalCalendarMode] = useState(false);
+  const [calendarConnection, setCalendarConnection] = useState<CalendarConnection | null>(null);
+  const [calendarIdentity, setCalendarIdentity] = useState<CalendarIdentity | null>(null);
+  const [calendarPresence, setCalendarPresence] = useState<CalendarPresence>({});
+  const [calendarConnecting, setCalendarConnecting] = useState(false);
   const effectiveDate = referenceDate ?? now;
-  const filteredTasks = useMemo(() => effectiveDate ? filterFollowupTasks(taskState, filter, query, effectiveDate, zone) : taskState, [filter, query, effectiveDate, zone, taskState]);
-  const selectedTask = taskState.find((task) => task.id === selectedTaskId) ?? filteredTasks[0];
+  const calendarRange = useMemo(() => calendarRangeFor(calendarMode, calendarCursor), [calendarCursor, calendarMode]);
+  const calendarTaskEvents = useMemo(() => taskState.map(calendarItemFromTask), [taskState]);
+  const calendarQueryRange = useMemo(() => {
+    const from = new Date(calendarAnchorDate);
+    from.setDate(from.getDate() - 30);
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(calendarAnchorDate);
+    to.setDate(to.getDate() + 330);
+    to.setHours(23, 59, 59, 999);
+    return { from, to };
+  }, [calendarAnchorDate]);
+  const sharedCalendarEvents = useMemo(() => {
+    const taskIds = new Set(taskState.map((task) => task.id));
+    return calendarEvents.filter((event) => !(event.kind === "followup" && taskIds.has(event.id))).map(calendarItemFromEvent);
+  }, [calendarEvents, taskState]);
+  const calendarEventTasks = useMemo(() => {
+    const taskIds = new Set(taskState.map((task) => task.id));
+    return calendarEvents.filter((event) => event.status !== "cancelled" && !taskIds.has(event.id)).map(calendarTaskFromEvent);
+  }, [calendarEvents, taskState]);
+  const visibleTasks = useMemo(() => {
+    return [...taskState, ...calendarEventTasks];
+  }, [calendarEventTasks, taskState]);
+  const filteredTasks = useMemo(() => effectiveDate ? filterFollowupTasks(visibleTasks, filter, query, effectiveDate, zone) : visibleTasks, [filter, query, effectiveDate, zone, visibleTasks]);
+  const selectedTask = visibleTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0];
   const overdue = (task: FollowupTask) => Boolean(effectiveDate && isTaskOverdue(task, effectiveDate));
-  const overdueCount = taskState.filter(overdue).length;
+  const overdueCount = visibleTasks.filter(overdue).length;
+  const selectedCalendarItem = useMemo(() => {
+    const allItems = [...calendarTaskEvents, ...sharedCalendarEvents];
+    return allItems.find((item) => item.id === calendarSelectedId) ?? null;
+  }, [calendarSelectedId, calendarTaskEvents, sharedCalendarEvents]);
+  const reminderTasks = useMemo(() => {
+    const anchor = effectiveDate ? new Date(effectiveDate) : new Date();
+    const horizon = anchor.getTime() + 7 * 86_400_000;
+    return visibleTasks.filter((task) => task.status === "open" && (isTaskOverdue(task, anchor) || new Date(task.dueAt).getTime() <= horizon)).sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()).slice(0, 3);
+  }, [effectiveDate, visibleTasks]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLocalCalendarMode(usesSharedCalendarConnection());
+      const saved = currentCalendarConnection();
+      setCalendarConnection(saved);
+      if (saved) setCalendarIdentity(saved.viewer);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    if (localCalendarMode && !calendarConnection) return;
+    let active = true;
+    void getCalendarIdentity().then((identity) => { if (active) setCalendarIdentity(identity); }).catch(() => {});
+    return () => { active = false; };
+  }, [localCalendarMode, calendarConnection]);
+
+  useEffect(() => {
+    if (usesSharedCalendarConnection() && !currentCalendarConnection()) return;
+    const heartbeat = () => { if (document.visibilityState === "visible") void sendCalendarHeartbeat().catch(() => {}); };
+    heartbeat();
+    const interval = window.setInterval(heartbeat, 30_000);
+    document.addEventListener("visibilitychange", heartbeat);
+    return () => { window.clearInterval(interval); document.removeEventListener("visibilitychange", heartbeat); };
+  }, [calendarConnection]);
 
   useEffect(() => {
     let active = true;
@@ -484,11 +828,40 @@ export function FollowupView({ customers, tasks, referenceDate, timeZone, onOpen
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const loadCalendar = async () => {
+      setCalendarError("");
+      try {
+        const ranges = [{ from: calendarQueryRange.from.toISOString(), to: calendarQueryRange.to.toISOString() }];
+        if (calendarRange.from < calendarQueryRange.from || calendarRange.to > calendarQueryRange.to) {
+          ranges.push({ from: calendarRange.from.toISOString(), to: calendarRange.to.toISOString() });
+        }
+        const [pages, presence] = await Promise.all([
+          Promise.all(ranges.map((range) => listCalendarEvents(range))),
+          listCalendarPresence(ranges[0]).catch(() => ({} as CalendarPresence)),
+        ]);
+        if (active) {
+          setCalendarEvents([...new Map(pages.flat().map((event) => [event.id, event])).values()]);
+          setCalendarPresence(presence);
+        }
+      } catch (caught) {
+        if (active) setCalendarError(caught instanceof Error ? caught.message : "协作日历暂时无法读取，请登录后重试");
+      } finally {
+        if (active) setCalendarLoading(false);
+      }
+    };
+    void loadCalendar();
+    const interval = localCalendarMode && !calendarConnection ? null : window.setInterval(() => { void loadCalendar(); }, 20_000);
+    return () => { active = false; if (interval !== null) window.clearInterval(interval); };
+  }, [calendarQueryRange.from, calendarQueryRange.to, calendarRange.from, calendarRange.to, calendarRefreshKey, localCalendarMode, calendarConnection]);
+
+  useEffect(() => {
+    if (referenceDate) return;
     const update = () => { setNow(new Date()); setZone(timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone); };
     const first = window.setTimeout(update, 0);
     const interval = window.setInterval(update, 60_000);
     return () => { window.clearTimeout(first); window.clearInterval(interval); };
-  }, [timeZone]);
+  }, [referenceDate, timeZone]);
 
   async function refreshTasks() {
     setBusy(true); setError("");
@@ -496,10 +869,25 @@ export function FollowupView({ customers, tasks, referenceDate, timeZone, onOpen
     catch (caught) { setError(caught instanceof Error ? caught.message : "读取待办失败"); }
     finally { setBusy(false); }
   }
-  function selectTask(task: FollowupTask) { setSelectedTaskId(task.id); setScript(buildFollowupMessage(task, getCustomerById(task.customerId, customers))); }
+  function selectTask(task: FollowupTask) {
+    setSelectedTaskId(task.id);
+    const calendarEventId = calendarEventIdFromTask(task);
+    const calendarEvent = calendarEventId ? calendarEvents.find((item) => item.id === calendarEventId) : undefined;
+    setScript(calendarEvent?.description ?? (isCalendarEventTask(task) ? task.description : buildFollowupMessage(task, getCustomerById(task.customerId, customers))));
+  }
   async function changeStatus(task: FollowupTask) {
     setBusy(true); setError("");
     try {
+      const calendarEventId = calendarEventIdFromTask(task);
+      if (calendarEventId) {
+        const event = calendarEvents.find((item) => item.id === calendarEventId);
+        if (!event) throw new Error("协作事件已不在当前日历范围内，请刷新后重试");
+        const nextStatus: CalendarEvent["status"] = task.status === "completed" ? "confirmed" : "completed";
+        const updated = await updateCalendarEvent(event.id, { status: nextStatus, revision: event.revision });
+        setCalendarEvents((current) => current.map((item) => item.id === updated.id ? updated : item));
+        onToast?.(nextStatus === "completed" ? "协作事件已完成" : "协作事件已重新打开");
+        return;
+      }
       const updated = await updateFollowupStatusViaApi(task.id, task.status === "completed" ? "open" : "completed");
       setTaskState((current) => current.map((item) => item.id === task.id ? updated : item));
       onTaskStatusChange?.(updated, updated.status);
@@ -508,16 +896,129 @@ export function FollowupView({ customers, tasks, referenceDate, timeZone, onOpen
     finally { setBusy(false); }
   }
   const dateText = (value: string) => now || referenceDate ? formatFollowupDate(value, zone) : "正在读取本地日期…";
+  function moveCalendarCursor(amount: number) {
+    const next = new Date(calendarCursor);
+    if (calendarMode === "month") next.setMonth(next.getMonth() + amount);
+    else next.setDate(next.getDate() + amount * (calendarMode === "week" ? 7 : 1));
+    setCalendarCursor(next);
+    setCalendarSelectedId("");
+  }
+  function jumpToToday() { setCalendarCursor(new Date()); setCalendarSelectedId(""); }
+  function selectCalendarItem(item: CalendarItem) {
+    setCalendarSelectedId(item.id);
+    if (item.task) selectTask(item.task);
+    else if (item.source === "shared" && item.event) {
+      const task = calendarTaskFromEvent(item.event);
+      setSelectedTaskId(task.id);
+      setScript(item.description);
+    }
+  }
+  async function saveCalendarEvent(draft: CalendarEventDraft, event?: CalendarEvent) {
+    setCalendarSubmitting(true); setCalendarError("");
+    try {
+      if (event) {
+        const updated = await updateCalendarEvent(event.id, { ...draft, revision: event.revision });
+        setCalendarEvents((current) => current.map((item) => item.id === updated.id ? updated : item));
+        onToast?.("协作日历事件已更新");
+      } else {
+        const created = await createCalendarEvent(draft);
+        setCalendarEvents((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+        setFilter("all");
+        setQuery("");
+        setSelectedTaskId(`calendar-event:${created.id}`);
+        setScript(created.description);
+        setCalendarCursor(new Date(created.startAt));
+        onToast?.("协作事件已创建，并加入跟进待办");
+      }
+      setCalendarEditor(null);
+    } catch (caught) {
+      setCalendarError(caught instanceof Error ? caught.message : "保存协作日历失败，请刷新后重试");
+    } finally { setCalendarSubmitting(false); }
+  }
+  async function toggleCalendarStatus(event: CalendarEvent) {
+    setCalendarSubmitting(true); setCalendarError("");
+    try {
+      const nextStatus: CalendarEvent["status"] = event.status === "cancelled" ? "confirmed" : event.status === "completed" ? "confirmed" : "cancelled";
+      const updated = await updateCalendarEvent(event.id, { status: nextStatus, revision: event.revision });
+      setCalendarEvents((current) => current.map((item) => item.id === updated.id ? updated : item));
+      onToast?.(nextStatus === "cancelled" ? "事件已取消" : "事件已恢复");
+    } catch (caught) {
+      setCalendarError(caught instanceof Error ? caught.message : "更新事件失败，可能已被其他协作者修改");
+    } finally { setCalendarSubmitting(false); }
+  }
+  async function toggleCalendarFollowupStatus(event: CalendarEvent) {
+    setCalendarSubmitting(true); setCalendarError("");
+    try {
+      const nextStatus: CalendarEvent["status"] = event.status === "completed" ? "confirmed" : "completed";
+      const updated = await updateCalendarEvent(event.id, { status: nextStatus, revision: event.revision });
+      setCalendarEvents((current) => current.map((item) => item.id === updated.id ? updated : item));
+      onToast?.(nextStatus === "completed" ? "共享跟进已完成" : "共享跟进已重新打开");
+    } catch (caught) {
+      setCalendarError(caught instanceof Error ? caught.message : "更新共享跟进失败，可能已被其他协作者修改");
+    } finally { setCalendarSubmitting(false); }
+  }
+  async function changeCalendarMemberStatus(event: CalendarEvent, status: CalendarEvent["memberStatuses"][string]) {
+    setCalendarSubmitting(true); setCalendarError("");
+    try {
+      const updated = await updateCalendarMemberStatus(event.id, event.revision, status);
+      setCalendarEvents((current) => current.map((item) => item.id === updated.id ? updated : item));
+      onToast?.("你的参与状态已同步给团队");
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : "更新参与状态失败，请刷新后重试"); }
+    finally { setCalendarSubmitting(false); }
+  }
+  async function connectCalendar() {
+    setCalendarConnecting(true); setCalendarError("");
+    try {
+      const connected = await connectSharedCalendar();
+      setCalendarConnection(connected);
+      setCalendarIdentity(connected.viewer);
+      setCalendarRefreshKey((current) => current + 1);
+      onToast?.(`已连接为 ${connected.viewer.name}，现在可以查看团队共享日历`);
+    } catch (caught) { setCalendarError(caught instanceof Error ? caught.message : "连接云端日历失败"); }
+    finally { setCalendarConnecting(false); }
+  }
+  function disconnectCalendar() {
+    disconnectSharedCalendar();
+    setCalendarConnection(null);
+    setCalendarIdentity(null);
+    setCalendarEvents([]);
+    setCalendarPresence({});
+    setCalendarSelectedId("");
+    setCalendarError("");
+    onToast?.("已断开此浏览器的协作日历连接");
+  }
+  const calendarNeedsLogin = /登录|401|unauthor/i.test(calendarError);
+  const calendarDisconnected = localCalendarMode && !calendarConnection;
 
   return <div className={styles.root} data-testid="followup-view">
-    <div className={styles.viewHeader}><div><span className={styles.eyebrow}>Sales Todo List</span><h1>跟进待办</h1><p data-testid="followup-today">{effectiveDate ? formatFollowupDate(effectiveDate, zone, false) : "正在读取今天日期…"} · {zone}</p><p>任务与完成状态由后端持久保存；这里只管理待办，不会自动联系客户。</p></div><button className={styles.primaryButton} disabled={!customers.length || busy} onClick={() => setCreating(true)}><Plus size={16} />新建任务</button></div>
+    <div className={styles.viewHeader}><div><span className={styles.eyebrow}>Shared Follow-up Workspace</span><h1>跟进待办</h1><p data-testid="followup-today">{effectiveDate ? formatFollowupDate(effectiveDate, zone, false) : "正在读取今天日期…"} · {zone}</p><p>客户任务只在当前部署中保存；协作事件连接云端后按账号和邀请成员同步。</p></div><div className={styles.followupHeaderActions}><button className={styles.secondaryButton} disabled={!customers.length || busy} onClick={() => setCreating(true)}><Plus size={16} />新建当前部署任务</button><button className={styles.primaryButton} disabled={calendarDisconnected} onClick={() => setCalendarEditor({ mode: "create" })}><CalendarDays size={16} />新建协作事件</button></div></div>
     {error && <p role="alert">{error}</p>}
     <div className={styles.metricStrip} aria-label="跟进指标">
-      <Metric icon={AlertCircle} label="待处理任务" value={String(taskState.filter((task) => task.status === "open").length)} detail="全部未完成" tone="gold" />
-      <Metric icon={Clock3} label="今日到期" value={String(effectiveDate ? filterFollowupTasks(taskState, "today", "", effectiveDate, zone).length : 0)} detail="按本地日期" tone="rose" />
+      <Metric icon={AlertCircle} label="待处理任务" value={String(visibleTasks.filter((task) => task.status === "open").length)} detail="含协作事件" tone="gold" />
+      <Metric icon={Clock3} label="今日到期" value={String(effectiveDate ? filterFollowupTasks(visibleTasks, "today", "", effectiveDate, zone).length : 0)} detail="按本地日期" tone="rose" />
       <Metric icon={Flag} label="已逾期" value={String(overdueCount)} detail="截止时间已过" tone="blue" />
-      <Metric icon={CheckCircle2} label="已完成" value={String(taskState.filter((task) => task.status === "completed").length)} detail="所有已完成任务" tone="green" />
+      <Metric icon={CheckCircle2} label="已完成" value={String(visibleTasks.filter((task) => task.status === "completed").length)} detail="所有已完成任务" tone="green" />
     </div>
+    {reminderTasks.length > 0 && <div className={styles.followupReminderStrip} role="status"><div className={styles.followupReminderTitle}><Clock3 size={15} /><strong>跟进提醒</strong><span>优先处理最近的任务</span></div><div className={styles.followupReminderItems}>{reminderTasks.map((task) => <button type="button" key={task.id} onClick={() => selectTask(task)}><span className={overdue(task) ? styles.reminderOverdue : styles.reminderUpcoming}>{overdue(task) ? "已逾期" : "即将到期"}</span><strong>{task.title}</strong><small>{calendarTaskContext(task)} · {dateText(task.dueAt)}</small></button>)}</div></div>}
+    <section className={cx(styles.card, styles.calendarCard)} data-testid="collaboration-calendar">
+      <div className={styles.calendarToolbar}>
+        <div className={styles.calendarTitle}><span className={styles.sectionKicker}>Team Calendar</span><h2>多人在线协作日历</h2><p>各电脑使用自己的账号连接同一个云端日历；受邀成员能看到创建人和进展。</p></div>
+        <div className={styles.calendarToolbarActions}>
+          <button type="button" className={styles.secondaryButton} onClick={jumpToToday}>今天</button>
+          <div className={styles.calendarPager}><button type="button" className={styles.iconButton} aria-label="上一个时间段" onClick={() => moveCalendarCursor(-1)}><ChevronLeft size={15} /></button><strong>{calendarHeading(calendarMode, calendarCursor)}</strong><button type="button" className={styles.iconButton} aria-label="下一个时间段" onClick={() => moveCalendarCursor(1)}><ChevronRight size={15} /></button></div>
+          <div className={styles.calendarModeSwitcher} role="tablist" aria-label="日历视图"><button type="button" role="tab" aria-selected={calendarMode === "month"} className={calendarMode === "month" ? styles.calendarModeActive : ""} onClick={() => setCalendarMode("month")}>月</button><button type="button" role="tab" aria-selected={calendarMode === "week"} className={calendarMode === "week" ? styles.calendarModeActive : ""} onClick={() => setCalendarMode("week")}>周</button><button type="button" role="tab" aria-selected={calendarMode === "day"} className={calendarMode === "day" ? styles.calendarModeActive : ""} onClick={() => setCalendarMode("day")}>日</button></div>
+          <button type="button" className={styles.primaryButton} disabled={calendarDisconnected} onClick={() => setCalendarEditor({ mode: "create" })}><Plus size={15} />安排</button>
+        </div>
+      </div>
+      {localCalendarMode && <div className={styles.calendarConnectionBar} role="status"><span>{calendarConnection ? <>云端已连接：<strong>{calendarIdentity?.name || calendarConnection.viewer.name}</strong> · {calendarIdentity?.email || calendarConnection.viewer.email}</> : "当前是本机独立部署。连接云端后，其他电脑上受邀的同事才能看到你的协作事件。"}</span>{calendarConnection ? <button type="button" className={styles.linkButton} onClick={disconnectCalendar}>断开连接</button> : <button type="button" className={styles.primaryButton} disabled={calendarConnecting} onClick={() => void connectCalendar()}>{calendarConnecting ? "连接中…" : "连接云端日历"}</button>}</div>}
+      {!localCalendarMode && calendarIdentity && <div className={styles.calendarConnectionBar} role="status">当前账号：<strong>{calendarIdentity.name}</strong> · {calendarIdentity.email}</div>}
+      {calendarError && !calendarDisconnected && <div className={styles.calendarNotice} role="alert"><AlertCircle size={15} /><span>{calendarError}</span>{calendarNeedsLogin && <a className={styles.linkButton} href="/auth/login?returnTo=%2F%3Ffollowup%3D1">登录后打开跟进提醒</a>}<button type="button" className={styles.linkButton} onClick={() => setCalendarRefreshKey((current) => current + 1)}>重试</button></div>}
+      {calendarError && calendarDisconnected && !calendarError.includes("请先连接云端") && <div className={styles.calendarNotice} role="alert"><AlertCircle size={15} /><span>{calendarError}</span></div>}
+      {calendarLoading ? <div className={styles.calendarLoading}><RefreshCw size={16} /><span>正在加载共享日历…</span></div> : calendarMode === "month" ? <CalendarMonthView days={calendarRange.days} cursor={calendarCursor} items={[...calendarTaskEvents, ...sharedCalendarEvents]} onSelect={selectCalendarItem} /> : calendarMode === "week" ? <CalendarWeekView days={calendarRange.days} items={[...calendarTaskEvents, ...sharedCalendarEvents]} onSelect={selectCalendarItem} /> : <CalendarDayView day={calendarRange.days[0]} items={[...calendarTaskEvents, ...sharedCalendarEvents]} onSelect={selectCalendarItem} />}
+      <div className={styles.calendarFooter}><span>事件状态：<i className={styles.calendarLegendConfirmed} />已确认 <i className={styles.calendarLegendCompleted} />已完成 <i className={styles.calendarLegendCancelled} />已取消</span><span><RefreshCw size={12} />已连接时每 20 秒同步</span></div>
+      {selectedCalendarItem && <div className={styles.calendarSelectedEvent}><div className={styles.calendarSelectedCopy}><span className={cx(styles.calendarEventLabel, selectedCalendarItem.source === "followup" ? styles.calendarLabelFollowup : styles.calendarLabelShared)}>{calendarKindLabel(selectedCalendarItem.kind)}</span><strong>{selectedCalendarItem.title}</strong><p>{selectedCalendarItem.allDay ? "全天" : `${calendarEventTime(selectedCalendarItem.startAt)} – ${calendarEventTime(selectedCalendarItem.endAt)}`} · {calendarStatusLabel(selectedCalendarItem.status)}</p>{selectedCalendarItem.event && <p className={styles.calendarOwner}>创建人：<strong>{selectedCalendarItem.event.createdByName}</strong>（{selectedCalendarItem.event.createdByEmail}）</p>}{selectedCalendarItem.participantEmails.length > 0 && <div className={styles.calendarParticipants}>{selectedCalendarItem.participantEmails.map((email) => <span key={email} title={email}>{email.slice(0, 2).toUpperCase()}</span>)}<small>{selectedCalendarItem.participantEmails.join("、")}</small></div>}{selectedCalendarItem.event && <small className={styles.calendarUpdatedBy}>最后修改：{selectedCalendarItem.event.updatedByName} · {formatDate(selectedCalendarItem.event.updatedAt)}</small>}</div><div className={styles.calendarSelectedActions}>{selectedCalendarItem.source === "shared" && selectedCalendarItem.event && <><button type="button" className={styles.secondaryButton} disabled={calendarSubmitting} onClick={() => setCalendarEditor({ mode: "edit", event: selectedCalendarItem.event })}>编辑事件</button>{selectedCalendarItem.kind === "followup" ? <button type="button" className={styles.secondaryButton} disabled={calendarSubmitting} onClick={() => void toggleCalendarFollowupStatus(selectedCalendarItem.event!)}>{selectedCalendarItem.event.status === "completed" ? "重新打开跟进" : "完成跟进"}</button> : <button type="button" className={styles.secondaryButton} disabled={calendarSubmitting} onClick={() => void toggleCalendarStatus(selectedCalendarItem.event!)}>{selectedCalendarItem.event.status === "cancelled" ? "恢复安排" : selectedCalendarItem.event.status === "completed" ? "重新打开" : "取消事件"}</button>}</>}{selectedCalendarItem.source === "followup" && selectedCalendarItem.task && <button type="button" className={styles.secondaryButton} onClick={() => selectTask(selectedCalendarItem.task!)}>查看跟进</button>}</div></div>}
+      {selectedCalendarItem?.event && <CalendarMembers event={selectedCalendarItem.event} identity={calendarIdentity} presence={calendarPresence} busy={calendarSubmitting} onChange={(status) => void changeCalendarMemberStatus(selectedCalendarItem.event!, status)} />}
+    </section>
     <div className={styles.followupLayout}>
       <section className={cx(styles.card, styles.taskBoard)}>
         <div className={styles.listHeader}><h2>跟进待办 <em>{filteredTasks.length}</em></h2><button className={styles.iconButton} disabled={busy} aria-label="刷新待办" onClick={() => void refreshTasks()}><RefreshCw size={15} /></button></div>
@@ -525,18 +1026,19 @@ export function FollowupView({ customers, tasks, referenceDate, timeZone, onOpen
         <div className={styles.taskFilters}>{(Object.keys(followupFilterLabels) as FollowupFilter[]).map((key) => <button key={key} className={filter === key ? styles.filterActive : ""} onClick={() => setFilter(key)}>{followupFilterLabels[key]}</button>)}</div>
         <div className={styles.taskList}>{filteredTasks.map((task) => <div key={task.id} className={cx(styles.taskRow, selectedTask?.id === task.id && styles.taskRowSelected, task.status === "completed" && styles.taskRowCompleted, overdue(task) && styles.taskRowOverdue)}>
           <button className={cx(styles.taskCheck, task.status === "completed" && styles.taskCheckDone)} disabled={busy} aria-label={(task.status === "completed" ? "重新打开 " : "完成 ") + task.title} aria-pressed={task.status === "completed"} onClick={() => void changeStatus(task)}>{task.status === "completed" && <Check size={13} />}</button>
-          <button className={styles.taskRowMain} onClick={() => selectTask(task)}><div className={styles.taskRowTop}><PriorityBadge priority={task.priority} /><span>{task.type}</span></div><strong>{task.title}</strong><p>{task.company} · {task.customerName}</p><time dateTime={task.dueAt} className={overdue(task) ? styles.overdueText : ""}>{dateText(task.dueAt)}</time></button>
+          <button className={styles.taskRowMain} onClick={() => selectTask(task)}><div className={styles.taskRowTop}><PriorityBadge priority={task.priority} /><span>{calendarTaskTypeLabel(task, calendarEvents)}</span></div><strong>{task.title}</strong><p>{calendarTaskContext(task)}</p><time dateTime={task.dueAt} className={overdue(task) ? styles.overdueText : ""}>{dateText(task.dueAt)}</time></button>
         </div>)}{!filteredTasks.length && <EmptyPanel icon={CheckCircle2} title="这个筛选下没有任务" detail="切换筛选或新建任务。" />}</div>
       </section>
       {selectedTask ? <section className={cx(styles.card, styles.taskDetail)}>
-        <div className={styles.taskDetailHeader}><div><h2>{selectedTask.title}</h2><p>{selectedTask.company} · {selectedTask.customerName}</p></div><PriorityBadge priority={selectedTask.priority} /></div>
+        <div className={styles.taskDetailHeader}><div><h2>{selectedTask.title}</h2><p>{calendarTaskContext(selectedTask)}</p></div><PriorityBadge priority={selectedTask.priority} /></div>
         <div className={styles.taskFacts}><div><CalendarClock size={15} /><span>截止日期与星期<strong><time dateTime={selectedTask.dueAt}>{dateText(selectedTask.dueAt)}</time></strong></span></div><div><Tag size={15} /><span>任务状态<strong>{selectedTask.status === "completed" ? "已完成" : overdue(selectedTask) ? "已逾期" : "待处理"}</strong></span></div></div>
         <div className={styles.taskDescription}><p>{selectedTask.description}</p></div>
-        <div className={styles.scriptBlock}><div className={styles.scriptHeader}><h3>可编辑跟进话术（规则草稿）</h3><button className={styles.iconButton} aria-label="重新生成跟进话术" onClick={() => selectTask(selectedTask)}><RefreshCw size={15} /></button></div><textarea value={script} onChange={(event) => setScript(event.target.value)} aria-label="可编辑跟进话术" /><div className={styles.draftActions}><button className={styles.secondaryButton} onClick={() => void copyText(script, onToast, "跟进话术已复制")}><Copy size={15} />复制话术</button><button className={styles.secondaryButton} onClick={() => onOpenCustomer?.(selectedTask.customerId)}><UsersRound size={15} />打开客户档案</button></div></div>
-        <div className={styles.taskDetailFooter}><button className={styles.primaryButton} disabled={busy} onClick={() => void changeStatus(selectedTask)}><CheckCircle2 size={15} />{busy ? "保存中…" : selectedTask.status === "completed" ? "重新打开任务" : "完成任务"}</button></div>
+        <div className={styles.scriptBlock}><div className={styles.scriptHeader}><h3>{isCalendarEventTask(selectedTask) ? "协作事件备注" : "可编辑跟进话术（规则草稿）"}</h3>{!isCalendarEventTask(selectedTask) && <button className={styles.iconButton} aria-label="重新生成跟进话术" onClick={() => selectTask(selectedTask)}><RefreshCw size={15} /></button>}</div><textarea value={isCalendarEventTask(selectedTask) ? selectedTask.description : script} readOnly={isCalendarEventTask(selectedTask)} onChange={(event) => setScript(event.target.value)} aria-label={isCalendarEventTask(selectedTask) ? "协作事件备注" : "可编辑跟进话术"} />{isCalendarEventTask(selectedTask) ? <p className={styles.calendarFormHint}>共享备注通过“编辑协作事件”修改，当前内容不会在此处直接保存。</p> : <div className={styles.draftActions}><button className={styles.secondaryButton} onClick={() => void copyText(script, onToast, "跟进话术已复制")}><Copy size={15} />复制话术</button>{onOpenCustomer && <button className={styles.secondaryButton} onClick={() => onOpenCustomer(selectedTask.customerId)}><UsersRound size={15} />打开客户档案</button>}</div>}</div>
+        <div className={styles.taskDetailFooter}><button className={styles.primaryButton} disabled={busy} onClick={() => void changeStatus(selectedTask)}><CheckCircle2 size={15} />{busy ? "保存中…" : selectedTask.status === "completed" ? "重新打开任务" : "完成任务"}</button><Link className={styles.secondaryButton} href={isCalendarEventTask(selectedTask) ? `/calendar/events/${encodeURIComponent(calendarEventIdFromTask(selectedTask)!)}` : `/calendar/followups/${encodeURIComponent(selectedTask.id)}`}>打开详情／删除</Link></div>
       </section> : <EmptyPanel icon={Clock3} title="选择一条任务" detail="从待办中选择或新建任务。" />}
     </div>
     {creating && <FollowupForm customers={customers} onClose={() => setCreating(false)} onCreated={(task) => { setTaskState((current) => [task, ...current]); selectTask(task); setFilter("all"); setQuery(""); setCreating(false); onToast?.("新任务已保存到后端"); }} />}
+    {calendarEditor && <CalendarEventForm event={calendarEditor.event} submitting={calendarSubmitting} onClose={() => setCalendarEditor(null)} onSubmit={(draft) => void saveCalendarEvent(draft, calendarEditor.event)} />}
   </div>;
 }
 
@@ -564,5 +1066,51 @@ function FollowupForm({ customers, onClose, onCreated }: { customers: Customer[]
     <label>优先级<select value={priority} onChange={(event) => setPriority(event.target.value as FollowupTask["priority"])}>{["高", "中", "低"].map((value) => <option key={value}>{value}</option>)}</select></label>
     <label>任务说明<textarea value={description} maxLength={5000} onChange={(event) => setDescription(event.target.value)} /></label>
     {error && <p role="alert">{error}</p>}<div><button type="button" className={styles.secondaryButton} disabled={busy} onClick={onClose}>取消</button><button className={styles.primaryButton} disabled={busy || !title.trim()}>{busy ? "保存中…" : "保存任务"}</button></div>
+  </form></div>;
+}
+
+function datetimeLocalValue(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function defaultCalendarDraft(): CalendarEventDraft {
+  const start = new Date();
+  start.setMinutes(start.getMinutes() < 30 ? 30 : 60, 0, 0);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { title: "", description: "", startAt: datetimeLocalValue(start.toISOString()), endAt: datetimeLocalValue(end.toISOString()), allDay: false, kind: "meeting", participantEmails: [] };
+}
+
+function CalendarEventForm({ event, submitting, onClose, onSubmit }: { event?: CalendarEvent; submitting: boolean; onClose: () => void; onSubmit: (draft: CalendarEventDraft) => void }) {
+  const initial = event ? { title: event.title, description: event.description, startAt: datetimeLocalValue(event.startAt), endAt: datetimeLocalValue(event.endAt), allDay: event.allDay, kind: event.kind, participantEmails: event.participantEmails } : defaultCalendarDraft();
+  const [title, setTitle] = useState(initial.title);
+  const [description, setDescription] = useState(initial.description);
+  const [startAt, setStartAt] = useState(initial.startAt);
+  const [endAt, setEndAt] = useState(initial.endAt);
+  const [allDay, setAllDay] = useState(initial.allDay);
+  const [kind, setKind] = useState<CalendarEvent["kind"]>(initial.kind);
+  const [participants, setParticipants] = useState(initial.participantEmails.join(", "));
+  const [error, setError] = useState("");
+  function submit(formEvent: FormEvent) {
+    formEvent.preventDefault();
+    const start = new Date(startAt);
+    const end = new Date(endAt);
+    if (!title.trim()) { setError("请填写事件标题"); return; }
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) { setError("结束时间需要晚于开始时间"); return; }
+    setError("");
+    onSubmit({ title: title.trim(), description: description.trim(), startAt: start.toISOString(), endAt: end.toISOString(), allDay, kind, participantEmails: [...new Set(participants.split(/[，,\s]+/).map((email) => email.trim().toLowerCase()).filter(Boolean))] });
+  }
+  return <div className={styles.todoModal} role="dialog" aria-modal="true" aria-label={event ? "编辑协作日历事件" : "新建协作日历事件"}><form onSubmit={submit} className={cx(styles.todoForm, styles.calendarEventForm)}><div className={styles.calendarFormHeading}><div><span className={styles.sectionKicker}>Shared Event</span><h2>{event ? "编辑协作事件" : "新建协作事件"}</h2></div><button type="button" className={styles.iconButton} aria-label="关闭" onClick={onClose}><X size={16} /></button></div>
+    <label>标题<input required maxLength={240} value={title} onChange={(formEvent) => setTitle(formEvent.target.value)} placeholder="例如：确认餐厅项目报价" /></label>
+    <div className={styles.calendarFormGrid}><label>开始<input type="datetime-local" required value={startAt} onChange={(formEvent) => setStartAt(formEvent.target.value)} /></label><label>结束<input type="datetime-local" required value={endAt} onChange={(formEvent) => setEndAt(formEvent.target.value)} /></label></div>
+    <label className={styles.calendarCheckbox}><input type="checkbox" checked={allDay} onChange={(formEvent) => setAllDay(formEvent.target.checked)} />全天事件</label>
+    <label>事件类型<select value={kind} onChange={(formEvent) => setKind(formEvent.target.value as CalendarEvent["kind"])}><option value="followup">跟进</option><option value="meeting">会议</option><option value="task">普通任务</option><option value="focus">专注时间</option></select></label>
+    <label>参与者邮箱<input maxLength={2000} value={participants} onChange={(formEvent) => setParticipants(formEvent.target.value)} placeholder="多个邮箱用逗号或空格分隔" /></label>
+    <p className={styles.calendarFormHint}>新事件会立即加入跟进待办。只有创建者和受邀登录用户可以查看；无需先创建客户档案。</p>
+    <label>说明<textarea maxLength={5000} value={description} onChange={(formEvent) => setDescription(formEvent.target.value)} placeholder="补充地点、目标或上下文" /></label>
+    {event && <p className={styles.calendarFormStatus}>当前状态：{calendarStatusLabel(event.status)} · 更新人：{event.updatedByName}</p>}
+    {error && <p role="alert">{error}</p>}<div><button type="button" className={styles.secondaryButton} disabled={submitting} onClick={onClose}>取消</button><button className={styles.primaryButton} disabled={submitting || !title.trim()}>{submitting ? "保存中…" : event ? "保存修改" : "创建事件"}</button></div>
   </form></div>;
 }

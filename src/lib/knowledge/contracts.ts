@@ -7,6 +7,7 @@ import type { KnowledgeCategory } from "../business";
  * this application cannot understand their contents yet.
  */
 export const KNOWLEDGE_MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const KNOWLEDGE_CLOUD_MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const KNOWLEDGE_MAX_TEXT_CHARS = 20_000;
 export const KNOWLEDGE_CLASSIFICATION_MAX_CHARS = 4_000;
 export const KNOWLEDGE_MAX_FILE_COUNT = 500;
@@ -178,6 +179,7 @@ export type KnowledgeListResponse = {
     source: "local-files";
     demoEntriesExcluded: true;
     archiveAvailable: boolean;
+    uploadLimitBytes: number;
     limit: number;
     offset: number;
   };
@@ -201,6 +203,7 @@ export const knowledgeListResponseSchema: z.ZodType<KnowledgeListResponse> = z.o
     source: z.literal("local-files"),
     demoEntriesExcluded: z.literal(true),
     archiveAvailable: z.boolean().default(true),
+    uploadLimitBytes: z.number().int().positive().default(KNOWLEDGE_MAX_FILE_BYTES),
     limit: z.number().int().positive(),
     offset: z.number().int().nonnegative(),
   }),

@@ -2,7 +2,9 @@
   "name": "lumaflow-sales-hub",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
@@ -21,9 +23,12 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.44",
     "@ai-sdk/react": "^4.0.96",
+    "@auth0/nextjs-auth0": "^4.30.0",
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource-variable/manrope": "^5.2.8",
+    "@vercel/blob": "^2.8.0",
     "ai": "^7.0.93",
+    "highlight.js": "^11.12.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1",
@@ -33,6 +38,8 @@
     "pg": "^8.23.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "unpdf": "^1.8.1",
     "zod": "^4.5.4"
   },

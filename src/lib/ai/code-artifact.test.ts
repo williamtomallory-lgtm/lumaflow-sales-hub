@@ -11,5 +11,11 @@ describe("code artifact detection", () => {
     expect(extractCompleteHtml("```html\n<!doctype html><html><body>ok</body></html>\n```"))
       .toContain("</html>");
     expect(extractCompleteHtml("```html\n<html><body>incomplete\n```")) .toBeNull();
+    expect(extractCompleteHtml("```js\nconst answer = 1;\n```\n```html\n<html><body>ok</body></html>\n```"))
+      .toBe("<html><body>ok</body></html>");
+    expect(extractCompleteHtml("<!doctype html><html><body>ok</body></html>"))
+      .toContain("</html>");
+    expect(extractCompleteHtml("```html\n<html><body>fence omitted</body></html>"))
+      .toBe("<html><body>fence omitted</body></html>");
   });
 });

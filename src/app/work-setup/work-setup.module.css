@@ -1,0 +1,26 @@
+.page { width: min(780px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 80px; color: #22352b; }
+.back { display: inline-flex; align-items: center; gap: 8px; color: #48675a; text-decoration: none; font-size: 14px; }
+.back:hover, .secondary:hover { text-decoration: underline; }
+.header { text-align: center; padding: 50px 0 34px; }
+.badge { display: inline-grid; place-items: center; width: 54px; height: 54px; border-radius: 17px; background: #eaf3ed; color: #1d6749; }
+.header h1 { margin: 18px 0 10px; font-size: clamp(27px, 4.5vw, 38px); line-height: 1.25; }
+.header p { color: #78867d; font-size: 15px; line-height: 1.7; }
+.steps { display: grid; gap: 14px; }
+.step { display: flex; gap: 18px; padding: 25px 28px; border: 1px solid #dfe8e1; border-radius: 22px; background: #fff; box-shadow: 0 8px 26px #183d2610; }
+.step > div { flex: 1; min-width: 0; }
+.number { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 50%; background: #e9f3ec; color: #21573e; font-size: 14px; font-weight: 700; }
+.step h2 { margin: 1px 0 9px; font-size: 18px; }
+.step p { margin: 0 0 15px; color: #718077; font-size: 14px; line-height: 1.8; }
+.step strong { color: #315b44; overflow-wrap: anywhere; }
+.primary { display: inline-flex; align-items: center; gap: 9px; border: 0; border-radius: 11px; background: #194d3b; color: #fff; text-decoration: none; padding: 12px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.primary:hover { background: #23674e; }
+.secondary { display: inline-flex; align-items: center; gap: 6px; color: #246747; text-decoration: none; font-size: 14px; font-weight: 600; }
+.step small { display: block; margin-top: 12px; color: #8b988e; font-size: 12px; line-height: 1.6; }
+.step details { margin-top: 11px; color: #728576; font-size: 12px; }
+.step details summary { cursor: pointer; }
+.note { display: flex; align-items: flex-start; gap: 10px; margin: 24px 4px; color: #677e6e; font-size: 13px; line-height: 1.7; }
+.note svg { flex: 0 0 auto; color: #287150; }
+.advanced { margin: 30px 4px; border-top: 1px solid #e2e9e2; padding-top: 18px; color: #697d6e; font-size: 13px; line-height: 1.8; }
+.advanced summary { cursor: pointer; color: #3e634d; font-weight: 600; }
+.advanced a { color: #246747; }
+@media (max-width: 640px) { .header { padding-top: 35px; } .step { padding: 20px 17px; gap: 13px; } .step h2 { font-size: 16px; } }

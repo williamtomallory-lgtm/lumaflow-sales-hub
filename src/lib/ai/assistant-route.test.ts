@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/server/projects", () => ({ buildProjectContext: async () => ({ project: { memoryMode: "project-only" }, instructions: "PROJECT_RULE_VERIFIED", text: "PROJECT_SOURCE_VERIFIED", coverage: [] }) }));
 vi.mock("@/lib/server/data-repository", async () => {
   const { testSnapshot } = await import("../../test/fixtures");
   return { getDataSnapshot: async () => structuredClone(testSnapshot) };
@@ -72,6 +73,22 @@ describe("assistant route with an in-memory model protocol", () => {
     expect(upstreamBody).not.toHaveProperty("chat_template_kwargs");
     expect(body).toContain("medium answer");
     expect(body).not.toContain("private reasoning");
+  });
+
+  it("passes project rules and sources to the model and excludes global memory tools", async () => {
+    let upstream: WireRequest | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      upstream = JSON.parse(String(init?.body)) as WireRequest;
+      return completion({ content: "Project response" }, "stop");
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage], undefined, { projectId: "11111111-1111-4111-8111-111111111111" }));
+    expect(response.status).toBe(200); await response.text();
+    const context = upstream?.messages.map((message) => message.content).join("\n");
+    expect(context).toContain("PROJECT_RULE_VERIFIED"); expect(context).toContain("PROJECT_SOURCE_VERIFIED");
+    const names = upstream?.tools.map((tool) => tool.function.name);
+    for (const name of ["searchChatHistory", "searchLocalFiles", "readKnowledgeFiles", "saveMemory", "recallMemory", "searchKnowledge"]) expect(names).not.toContain(name);
+    expect(names).toContain("searchProducts");
   });
 
   it("continues a length-limited answer on the configured model without replaying tools", async () => {
@@ -227,7 +244,7 @@ describe("assistant route with an in-memory model protocol", () => {
     expect(instructions).toContain("Skill product-advisor@1.0.0");
     expect(instructions).toContain("Skill reply-drafter@1.0.0");
     expect(instructions).toContain("没有记忆写入工具");
-    expect(upstreamRequests[0].tools.map((tool) => tool.function.name)).toHaveLength(6);
+    expect(upstreamRequests[0].tools.map((tool) => tool.function.name)).toEqual(expect.arrayContaining(["searchProducts", "getProductDetails", "checkInventory", "searchKnowledge", "getProductAssets", "createQuoteDraft"]));
     const productOutput = upstreamRequests[1].messages.find((message) => message.role === "tool")?.content ?? "";
     expect(productOutput).not.toContain('"cost"');
     expect(productOutput).not.toContain('"supplier"');

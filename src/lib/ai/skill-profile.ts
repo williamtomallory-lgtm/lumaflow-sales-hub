@@ -3,11 +3,16 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { basicChatToolNames } from "./basic-tools";
 
 const slug = z.string().regex(/^[a-z][a-z0-9-]{0,79}$/);
 const version = z.string().regex(/^\d+\.\d+\.\d+$/);
 export const salesToolNameSchema = z.enum([
   "searchProducts", "getProductDetails", "checkInventory", "searchKnowledge", "getProductAssets", "createQuoteDraft",
+  // Chat-safe tools are part of the reviewed sales skill vocabulary.  The
+  // workspace-backed names remain available through cowAgentBasicTools() and
+  // are installed only after the server resolves a local Work Agent.
+  ...basicChatToolNames,
 ]);
 export type SalesToolName = z.infer<typeof salesToolNameSchema>;
 

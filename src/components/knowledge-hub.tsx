@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 import {
   Archive,
   BarChart3,
@@ -19,6 +21,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -27,7 +30,7 @@ import type { KnowledgeCategory } from "@/lib/business";
 import type { Asset, Product } from "@/lib/catalog";
 import { createProductViaApi } from "@/lib/client/backend-api";
 import type { DataSourceKind } from "@/lib/data-snapshot";
-import { knowledgeListResponseSchema, type KnowledgeEntry } from "@/lib/knowledge/contracts";
+import { KNOWLEDGE_MAX_FILE_BYTES, knowledgeListResponseSchema, type KnowledgeEntry } from "@/lib/knowledge/contracts";
 import { useModelCatalog } from "@/hooks/use-model-catalog";
 import { useModelHealth } from "@/hooks/use-model-health";
 import styles from "./knowledge-hub.module.css";
@@ -35,6 +38,7 @@ import { ModelRuntimeControls } from "./model-runtime-controls";
 import { SalesKit } from "./sales-kit";
 import { AgentKnowledgeLibrary } from "./agent-knowledge-library";
 import { TianzhaoCatalog } from "./tianzhao-catalog";
+import { KnowledgeWiki } from "./knowledge-wiki";
 
 export type KnowledgeHubProps = {
   products?: Product[];
@@ -70,12 +74,18 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function formatUploadedAt(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
+}
+
 function statusLabel(entry: KnowledgeEntry) {
   if (entry.classificationStatus === "classified" && entry.classificationSource === "manual") return "已人工确认";
   if (entry.classificationError) return entry.category ? "已有分类 · 重试失败" : "待分类 · 可重试";
-  if (entry.classificationStatus === "classified") return "已分类待确认";
-  if (entry.classificationStatus === "pending") return "待分类 · 可重试";
-  return "仅归档未理解";
+  if (entry.parseStatus !== "parsed") return "已归档 · 未理解";
+  if (entry.classificationStatus === "classified") return "LLMWiki 已更新 · 待确认";
+  if (entry.classificationStatus === "pending") return "LLMWiki 理解中";
+  return "已保存 · 待理解";
 }
 
 export function KnowledgeHub({ products = [], assets = [], dataSource = "json", initialQuery = "", section: controlledSection, onSectionChange, kitProductId, onOpenProduct, onToast, onWork }: KnowledgeHubProps) {
@@ -87,11 +97,15 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [archiveAvailable, setArchiveAvailable] = useState(true);
+  const [requiresLogin, setRequiresLogin] = useState(false);
+  const [wikiRevision, setWikiRevision] = useState(0);
+  const [uploadLimitBytes, setUploadLimitBytes] = useState(KNOWLEDGE_MAX_FILE_BYTES);
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState<KnowledgeCategoryFilter>("全部");
   const [selectedId, setSelectedId] = useState<string>();
   const [uploading, setUploading] = useState(false);
   const [retryingId, setRetryingId] = useState<string>();
+  const [deletingId, setDeletingId] = useState<string>();
   const [catalogProducts, setCatalogProducts] = useState(products);
   const [creatingProduct, setCreatingProduct] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -104,9 +118,18 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
     try {
       const response = await fetch("/api/v1/knowledge?limit=200", { cache: "no-store", headers: { Accept: "application/json" } });
       const payload: unknown = await response.json();
+      if (response.status === 401) {
+        setRequiresLogin(true);
+        setArchiveAvailable(false);
+        setUploaded([]);
+        setSummary(emptySummary());
+        return;
+      }
       if (!response.ok) throw new Error((payload as ApiError)?.error?.message || `知识库返回 ${response.status}`);
+      setRequiresLogin(false);
       const parsed = knowledgeListResponseSchema.parse(payload);
       setArchiveAvailable(parsed.meta.archiveAvailable);
+      setUploadLimitBytes(parsed.meta.uploadLimitBytes);
       const entries = [...parsed.data];
       for (let offset = 200; offset < Math.min(parsed.summary.total, 500); offset += 200) {
         const page = await fetch(`/api/v1/knowledge?limit=200&offset=${offset}`, { cache: "no-store", headers: { Accept: "application/json" } });
@@ -115,6 +138,7 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
       }
       setUploaded([...new Map(entries.map((entry) => [entry.id, entry])).values()]);
       setSummary(parsed.summary);
+      setWikiRevision((current) => current + 1);
       setSelectedId((current) => current && entries.some((entry) => entry.id === current) ? current : entries[0]?.id);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "知识库读取失败");
@@ -147,14 +171,21 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
     return !normalizedQuery || `${asset.name} ${asset.productName} ${asset.type}`.toLowerCase().includes(normalizedQuery);
   }), [assets, category, normalizedQuery]);
   const maxCategoryCount = Math.max(1, ...summary.byCategory.map((item) => item.count));
+  const populatedCategories = categories.slice(1).map((item) => ({
+    category: item,
+    count: summary.byCategory.find((row) => row.category === item)?.count ?? 0,
+  })).filter((item) => item.count > 0);
   const healthLabel = checkingHealth ? "检测中" : health?.reachable ? health.connectionKind === "protocol-mock" ? "协议模拟" : "已连接" : selectedModel?.configured ? "未连接" : "未配置";
 
   async function uploadFiles(files: FileList | null) {
     if (!files?.length) return;
     setUploading(true);
     let completed = 0;
+    let understood = 0;
+    let wikiFailed = 0;
     try {
       for (const file of Array.from(files)) {
+        if (file.size > uploadLimitBytes) throw new Error(`${file.name} 超过当前站点单文件 ${Math.round(uploadLimitBytes / 1024 / 1024)} MB 的上传上限。`);
         const body = new FormData();
         body.append("file", file);
         body.append("modelProfileId", modelProfileId);
@@ -162,8 +193,12 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
         const payload: unknown = await response.json();
         if (!response.ok) throw new Error((payload as ApiError)?.error?.message || `${file.name} 上传失败`);
         completed += 1;
+        if ((payload as { meta?: { classified?: boolean } }).meta?.classified) understood += 1;
+        if ((payload as { meta?: { wikiStatus?: string } }).meta?.wikiStatus === "failed") wikiFailed += 1;
       }
-      onToast(`${completed} 个文件已保存，正文文件会自动分类；不可解析文件仅归档。`);
+      const understanding = understood ? `LLMWiki 已理解 ${understood} 个` : "正文会显示为待理解状态";
+      const wikiMessage = wikiFailed ? `，${wikiFailed} 个 Wiki 更新失败，可刷新后重试` : "，Wiki 已同步";
+      onToast(`${completed} 个文件已保存，${understanding}${wikiMessage}；不可解析文件仅归档。`);
       await loadKnowledge();
     } catch (caught) {
       onToast(caught instanceof Error ? caught.message : "上传失败");
@@ -211,6 +246,26 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
     }
   }
 
+  async function deleteKnowledge(entry: KnowledgeEntry) {
+    if (!window.confirm(`确定删除“${entry.originalName}”？原文件、元数据和对应 Wiki 来源页都会从本机移除。`)) return;
+    setDeletingId(entry.id);
+    try {
+      const response = await fetch(`/api/v1/knowledge/${encodeURIComponent(entry.id)}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error((payload as ApiError)?.error?.message || "删除失败");
+      const wikiStatus = (payload as { meta?: { wikiStatus?: string } }).meta?.wikiStatus;
+      onToast(wikiStatus === "failed" ? `${entry.originalName} 已删除，Wiki 稍后需要重建` : `${entry.originalName} 已删除，LLMWiki 已同步`);
+      await loadKnowledge();
+    } catch (caught) {
+      onToast(caught instanceof Error ? caught.message : "删除失败");
+    } finally {
+      setDeletingId(undefined);
+    }
+  }
+
   return (
     <div className={styles.knowledgeHub}>
       <div className={styles.categoryTabs} role="tablist" aria-label="知识库栏目">
@@ -223,11 +278,11 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
       <section className={styles.topPanel}>
         <div className={styles.topCopy}>
           <span className={styles.eyebrow}><Sparkles size={14} /> 本地知识资产</span>
-          <h2>{archiveAvailable ? "任何文件先保存，再让模型整理" : "天昭产品可在线检索；上传请使用本机站点"}</h2>
-          <p>{archiveAvailable ? "原件保存在本机 UUID 文件名目录；能解析的正文交给所选模型自动分类，图片、音视频和未知二进制会明确标记为“仅归档未理解”。" : "公开站点尚未配置持久文件存储，也无法直接连接你电脑上的 Bonsai。下方产品快照与 Excel 可以在线查看，私人文件请在本机站点上传。"}</p>
+          <h2>{requiresLogin ? "登录后管理你的私人知识库" : archiveAvailable ? "上传文件后由 LLMWiki 自动整理" : "天昭产品可在线检索；上传请使用本机站点"}</h2>
+          <p>{requiresLogin ? "上传的原件与知识条目按账号隔离。登录后可以查看、上传和整理自己的资料。" : archiveAvailable ? "本地运行时，原件与 Wiki 保存在项目 .local-data/knowledge；能解析的正文会交给所选模型理解，并同步生成或更新 LLMWiki。图片和无法解析的文件会明确标记为“仅归档未理解”。" : "公开站点尚未配置持久文件存储。下方产品快照与 Excel 可以在线查看，私人文件请在本机站点上传。"}</p>
         </div>
         <div className={styles.modelControls}>
-          <label><span>分类模型</span><select aria-label="知识库分类模型" value={modelProfileId} disabled={loadingModels || models.length === 0} onChange={(event) => selectModel(event.target.value)}>{models.length ? models.map((model) => <option value={model.id} key={model.id}>{model.label} · {model.id === modelProfileId ? healthLabel : model.reachable ? "已连接" : model.configured ? "未连接" : "未配置"}</option>) : <option value={modelProfileId}>正在读取模型列表…</option>}</select></label>
+          <label><span>分类模型</span><select aria-label="知识库分类模型" value={modelProfileId} disabled={loadingModels || models.length === 0} onChange={(event) => selectModel(event.target.value)}>{models.length ? models.map((model) => <option value={model.id} key={model.id} disabled={model.installationStatus === "not-downloaded"}>{model.label} · {model.installationStatus === "not-downloaded" ? "未下载" : model.id === modelProfileId ? healthLabel : model.reachable ? "已连接" : model.configured ? "未连接" : "未配置"}</option>) : <option value={modelProfileId}>正在读取模型列表…</option>}</select></label>
           <button className={styles.refreshButton} onClick={() => { refreshModels(); refreshHealth(); }} aria-label="刷新分类模型连接" title="刷新模型连接"><RefreshCw size={15} /></button>
           <small className={health?.reachable ? styles.connected : styles.disconnected}>{healthLabel}</small>
         </div>
@@ -237,18 +292,20 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
       <ModelRuntimeControls models={models} modelProfileId={modelProfileId} disabled={uploading || loadingModels} onModelChange={selectModel} />
       <TianzhaoCatalog />
       {archiveAvailable && !loading && <AgentKnowledgeLibrary documents={uploaded} onToast={onToast} />}
-      <section className={styles.unifiedToolbarPanel} aria-label="统一知识库筛选">
+      {archiveAvailable && !loading && <KnowledgeWiki revision={wikiRevision} />}
+      <section className={styles.unifiedToolbarPanel} aria-label="本机文件与自建档案筛选">
         <div className={styles.toolbar}>
-          <div className={styles.searchBox}><Search size={16} /><input aria-label="搜索统一知识库" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索产品、SKU、资料、聊天或文件…" /></div>
-          <input ref={fileRef} aria-label="上传知识文件" type="file" multiple hidden disabled={!archiveAvailable} onChange={(event) => void uploadFiles(event.target.files)} />
+          <div className={styles.searchBox}><Search size={16} /><input aria-label="搜索本机文件和自建档案" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索本机上传文件或自建产品档案…" /></div>
+          <input ref={fileRef} aria-label="上传知识文件" type="file" multiple hidden disabled={!archiveAvailable || requiresLogin} onChange={(event) => void uploadFiles(event.target.files)} />
           <button className={styles.secondaryButton} onClick={() => void loadKnowledge()} disabled={loading || uploading}><RefreshCw size={15} /> 刷新</button>
-          <button className={styles.primaryButton} onClick={() => fileRef.current?.click()} disabled={uploading || !archiveAvailable}><Upload size={16} /> {archiveAvailable ? uploading ? "上传并分类中…" : "上传任何文件" : "仅本机可上传"}</button>
+          <button className={styles.primaryButton} title={`单文件上限 ${Math.round(uploadLimitBytes / 1024 / 1024)} MB`} onClick={() => fileRef.current?.click()} disabled={uploading || !archiveAvailable || requiresLogin}><Upload size={16} /> {requiresLogin ? "登录后上传" : archiveAvailable ? uploading ? "上传并分类中…" : "上传文件" : "仅本机可上传"}</button>
         </div>
-        <div className={styles.categoryTabs} role="tablist" aria-label="统一知识分类筛选">{categories.map((item) => <button role="tab" aria-selected={category === item} className={category === item ? styles.activeTab : ""} key={item} onClick={() => setCategory(item)}>{item}</button>)}</div>
+        {requiresLogin && <p className={styles.loginNotice}>私人资料需要登录后访问。<a href="/auth/login?returnTo=/?knowledge=1">登录或注册</a></p>}
+        <div className={styles.categoryTabs} role="tablist" aria-label="本机文件分类筛选">{categories.map((item) => <button role="tab" aria-selected={category === item} className={category === item ? styles.activeTab : ""} key={item} onClick={() => setCategory(item)}>{item}</button>)}</div>
       </section>
-      <section className={styles.catalogPanel} aria-label="统一产品与资料目录">
-        <div className={styles.sectionHead}><div><span>STRUCTURED CATALOG</span><h3>产品档案与关联资料</h3></div><div className={styles.catalogHeadActions}><span className={styles.sourceBadge}>{catalogProducts.length} 个产品 · {assets.length} 份资料</span><button className={styles.secondaryButton} onClick={() => setCreatingProduct(true)} disabled={!archiveAvailable && dataSource !== "postgres"}><Plus size={14} /> 新增产品档案</button></div></div>
-        <p className={styles.catalogHint}>原“产品中心”和“资料中心”已合并到这里。结构化字段来自后端，上传文件进入下方本地知识库；两者在 Chat-AI 和复盘 Agent 中统一使用。</p>
+      {(catalogProducts.length > 0 || assets.length > 0) && <section className={styles.catalogPanel} aria-label="自建产品与关联资料目录">
+        <div className={styles.sectionHead}><div><span>LOCAL CATALOG</span><h3>自建产品档案与关联资料</h3></div><div className={styles.catalogHeadActions}><span className={styles.sourceBadge}>{catalogProducts.length} 个自建产品 · {assets.length} 份资料</span><button className={styles.secondaryButton} onClick={() => setCreatingProduct(true)} disabled={!archiveAvailable && dataSource !== "postgres"}><Plus size={14} /> 新增产品档案</button></div></div>
+        <p className={styles.catalogHint}>此处只展示手动新增的产品；上方天昭目录包含快照中的 1,887 款产品和全部截图。</p>
         <div className={styles.catalogColumns}>
           <div className={styles.productKnowledgeList}>
             <strong>产品档案 · {visibleProducts.length}</strong>
@@ -267,7 +324,7 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
             </div>) : <div className={styles.catalogEmpty}>{assets.length ? "当前筛选下没有关联资料" : "后端尚未返回产品关联资料；上传原件请使用下方文件区"}</div>}
           </div>
         </div>
-      </section>
+      </section>}
       <section className={styles.metricGrid} aria-label="知识库真实统计">
         <Metric icon={FolderOpen} label="本地上传文件" value={String(summary.total)} detail={`${formatBytes(summary.storageBytes)} / ${formatBytes(summary.storageLimitBytes)}`} />
         <Metric icon={CheckCircle2} label="已分类文件" value={String(summary.classified)} detail="人工确认后可被智能搜索引用" />
@@ -277,7 +334,7 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
 
       <section className={styles.visualPanel} aria-label="知识分类可视化">
         <div className={styles.sectionHead}><div><span>后端文件数据</span><h3>分类分布</h3></div><span className={styles.sourceBadge}>仅统计真实上传</span></div>
-        {summary.total === 0 ? <div className={styles.chartEmpty}><BarChart3 size={22} /><span>上传文件后，这里会按实际分类结果生成图表。</span></div> : <div className={styles.barChart}>{categories.slice(1).map((item) => { const count = summary.byCategory.find((row) => row.category === item)?.count ?? 0; return <div key={item} className={styles.barRow}><span>{item}</span><div><i style={{ width: `${Math.round((count / maxCategoryCount) * 100)}%` }} /></div><strong>{count}</strong></div>; })}</div>}
+        {populatedCategories.length === 0 ? <div className={styles.chartEmpty}><BarChart3 size={22} /><span>{summary.total === 0 ? "上传文件后，这里会按实际分类结果生成图表。" : "现有文件尚无分类结果；原件已保留。"}</span></div> : <div className={styles.barChart}>{populatedCategories.map(({ category: item, count }) => <div key={item} className={styles.barRow}><span>{item}</span><div><i style={{ width: `${Math.round((count / maxCategoryCount) * 100)}%` }} /></div><strong>{count}</strong></div>)}</div>}
       </section>
 
       <section className={styles.browserPanel}>
@@ -288,7 +345,7 @@ export function KnowledgeHub({ products = [], assets = [], dataSource = "json", 
             <div className={styles.listHeading}><span>真实上传 · {visibleEntries.length} 个文件</span><small>只展示后端返回的文件</small></div>
             {loading ? <div className={styles.emptyState}><LoaderCircle className={styles.spin} size={23} /><span>正在读取本地知识库…</span></div> : visibleEntries.length ? visibleEntries.map((entry) => <KnowledgeRow key={entry.id} entry={entry} selected={entry.id === selected?.id} onSelect={() => setSelectedId(entry.id)} />) : <div className={styles.emptyState}><FolderOpen size={23} /><strong>还没有真实上传文件</strong><span>可以上传 PDF、Excel、Word、图片、视频或任意其他文件。</span></div>}
           </div>
-          <KnowledgeDetail key={selected?.id ?? "empty"} entry={selected} retryingId={retryingId} onRetry={(entry) => void retryClassification(entry)} onConfirm={(entry, next) => void confirmClassification(entry, next)} />
+          <KnowledgeDetail key={selected?.id ?? "empty"} entry={selected} retryingId={retryingId} deletingId={deletingId} onRetry={(entry) => void retryClassification(entry)} onConfirm={(entry, next) => void confirmClassification(entry, next)} onDelete={(entry) => void deleteKnowledge(entry)} />
         </div>
       </section>
 
@@ -347,14 +404,31 @@ function Metric({ icon: Icon, label, value, detail }: { icon: typeof FolderOpen;
 }
 
 function KnowledgeRow({ entry, selected, onSelect }: { entry: KnowledgeEntry; selected: boolean; onSelect: () => void }) {
-  return <button className={`${styles.entryRow} ${selected ? styles.selectedRow : ""}`} onClick={onSelect}><span className={styles.fileIcon}><FileTypeIcon entry={entry} /></span><span className={styles.entryCopy}><strong>{entry.title}</strong><small>{entry.originalName} · {entry.sizeLabel}</small><span><i className={entry.classificationStatus === "pending" ? styles.pending : entry.classificationStatus === "archived" ? styles.archived : styles.ready}>{statusLabel(entry)}</i>{entry.category && <b>{entry.category}</b>}</span></span><ChevronRight size={16} /></button>;
+  return <>
+    <button className={`${styles.entryRow} ${selected ? styles.selectedRow : ""}`} aria-pressed={selected} onClick={onSelect}><span className={styles.fileIcon}><FileTypeIcon entry={entry} /></span><span className={styles.entryCopy}><strong>{entry.title}</strong><small>{entry.originalName} · {entry.sizeLabel}</small><span><i className={entry.classificationStatus === "pending" ? styles.pending : entry.classificationStatus === "archived" ? styles.archived : styles.ready}>{statusLabel(entry)}</i>{entry.category && <b>{entry.category}</b>}</span></span><ChevronRight size={16} /></button>
+    {selected && <div className={styles.rowAttributes} role="region" aria-label="文件属性"><span><small>文件名</small><strong>{entry.originalName}</strong></span><span><small>类型</small><strong>{entry.mimeType || entry.extension || "未知"}</strong></span><span><small>大小</small><strong>{entry.sizeLabel}</strong></span><span><small>上传时间</small><strong>{formatUploadedAt(entry.uploadedAt)}</strong></span><span><small>状态</small><strong>{statusLabel(entry)}</strong></span><span><small>SHA-256</small><strong>{entry.sha256Prefix}…</strong></span></div>}
+  </>;
 }
 
-function KnowledgeDetail({ entry, retryingId, onRetry, onConfirm }: { entry?: KnowledgeEntry; retryingId?: string; onRetry: (entry: KnowledgeEntry) => void; onConfirm: (entry: KnowledgeEntry, category: string) => void }) {
+function KnowledgeDetail({ entry, retryingId, deletingId, onRetry, onConfirm, onDelete }: { entry?: KnowledgeEntry; retryingId?: string; deletingId?: string; onRetry: (entry: KnowledgeEntry) => void; onConfirm: (entry: KnowledgeEntry, category: string) => void; onDelete: (entry: KnowledgeEntry) => void }) {
   const [category, setCategory] = useState(entry?.category ?? "");
   if (!entry) return <aside className={styles.detail}><div className={styles.emptyState}><FileText size={24} /><strong>选择一个文件</strong><span>查看分类、解析状态和可读正文预览。</span></div></aside>;
   const canRetry = entry.source === "uploaded" && entry.hasText && (entry.classificationStatus !== "classified" || Boolean(entry.classificationError));
-  return <aside className={styles.detail} aria-label="知识文件详情"><div className={styles.detailTop}><span className={styles.detailType}>{entry.extension || "未知格式"}</span><span className={entry.classificationStatus === "archived" ? styles.archived : entry.classificationStatus === "pending" ? styles.pending : styles.ready}>{statusLabel(entry)}</span></div><h3>{entry.title}</h3><p className={styles.detailName}>{entry.originalName} · {entry.sizeLabel} · v{entry.version.replace(/^v/, "")}</p><p className={styles.detailSummary}>{entry.summary}</p>{entry.parseStatus !== "parsed" ? <div className={styles.archiveNotice}><Archive size={17} /><div><strong>仅归档未理解</strong><span>{entry.parseError || "当前版本未提取可读正文；不会把文件名当成已理解内容。"}</span></div></div> : <div className={styles.textPreview}><div><span>已提取正文预览</span>{entry.truncated && <em>正文超过 20,000 字符，已截断给模型</em>}</div><p>{entry.textPreview || "解析结果没有可展示的正文。"}</p></div>}<div className={styles.detailMeta}><span><small>分类来源</small><strong>{entry.classificationSource === "model" ? `模型自评 ${entry.confidence === null ? "—" : `${Math.round(entry.confidence * 100)}%`}` : entry.classificationSource === "manual" ? "人工确认" : "无"}</strong></span><span><small>正文字符</small><strong>{entry.characters.toLocaleString()}</strong></span><span><small>分类输入</small><strong>{entry.classificationCharacters.toLocaleString()} 字符</strong></span><span><small>标签</small><strong>{entry.tags.join("、") || "—"}</strong></span><span><small>SHA-256</small><strong>{entry.sha256Prefix}…</strong></span></div><div className={styles.detailActions}><a className={styles.secondaryButton} href={entry.downloadUrl}><Download size={15} /> 下载原件</a>{canRetry && <button className={styles.secondaryButton} disabled={retryingId === entry.id} onClick={() => onRetry(entry)}>{retryingId === entry.id ? <LoaderCircle className={styles.spin} size={15} /> : <RefreshCw size={15} />} 重试分类</button>}</div>{entry.hasText && entry.classificationSource !== "manual" && <div className={styles.confirmBox}><label>人工确认分类<select aria-label="人工确认知识分类" value={category} onChange={(event) => setCategory(event.target.value)}><option value="">选择分类…</option>{categories.slice(1).map((item) => <option key={item} value={item}>{item}</option>)}</select></label><button className={styles.primaryButton} disabled={!category} onClick={() => onConfirm(entry, category)}><ShieldCheck size={15} /> 确认并纳入检索</button></div>}<p className={styles.detailFootnote}><ShieldCheck size={13} /> 新上传文件默认不进入智能搜索；人工确认分类后才会被销售角色引用。模型置信度只是模型自评，不是准确率保证；客户聊天记录请先确认隐私与权限。</p></aside>;
+  return <aside className={styles.detail} aria-label="知识文件详情"><div className={styles.detailTop}><span className={styles.detailType}>{entry.extension || "未知格式"}</span><span className={entry.classificationStatus === "archived" ? styles.archived : entry.classificationStatus === "pending" ? styles.pending : styles.ready}>{statusLabel(entry)}</span></div><h3>{entry.title}</h3><p className={styles.detailName}>{entry.originalName} · {entry.sizeLabel} · v{entry.version.replace(/^v/, "")}</p><p className={styles.detailSummary}>{entry.summary}</p>{entry.parseStatus !== "parsed" && <div className={styles.archiveNotice}><Archive size={17} /><div><strong>仅归档未理解</strong><span>{entry.parseError || "当前版本未提取可读正文；不会把文件名当成已理解内容。"}</span></div></div>}<FilePreview entry={entry} /><div className={styles.detailMeta}><span><small>分类来源</small><strong>{entry.classificationSource === "model" ? `模型自评 ${entry.confidence === null ? "—" : `${Math.round(entry.confidence * 100)}%`}` : entry.classificationSource === "manual" ? "人工确认" : "无"}</strong></span><span><small>正文字符</small><strong>{entry.characters.toLocaleString()}</strong></span><span><small>分类输入</small><strong>{entry.classificationCharacters.toLocaleString()} 字符</strong></span><span><small>标签</small><strong>{entry.tags.join("、") || "—"}</strong></span><span><small>SHA-256</small><strong>{entry.sha256Prefix}…</strong></span></div><div className={styles.detailActions}><a className={styles.secondaryButton} href={entry.downloadUrl}><Download size={15} /> 下载原件</a>{canRetry && <button className={styles.secondaryButton} disabled={retryingId === entry.id || deletingId === entry.id} onClick={() => onRetry(entry)}>{retryingId === entry.id ? <LoaderCircle className={styles.spin} size={15} /> : <RefreshCw size={15} />} 重试分类</button>}<button className={styles.dangerButton} disabled={deletingId === entry.id || retryingId === entry.id} onClick={() => onDelete(entry)}>{deletingId === entry.id ? <LoaderCircle className={styles.spin} size={15} /> : <Trash2 size={15} />} {deletingId === entry.id ? "删除中…" : "删除文件"}</button></div>{entry.hasText && entry.classificationSource !== "manual" && <div className={styles.confirmBox}><label>人工确认分类<select aria-label="人工确认知识分类" value={category} onChange={(event) => setCategory(event.target.value)}><option value="">选择分类…</option>{categories.slice(1).map((item) => <option key={item} value={item}>{item}</option>)}</select></label><button className={styles.primaryButton} disabled={!category} onClick={() => onConfirm(entry, category)}><ShieldCheck size={15} /> 确认并纳入检索</button></div>}<p className={styles.detailFootnote}><ShieldCheck size={13} /> 新上传文件会先由 LLMWiki 解析和整理；人工确认分类后才会被销售角色引用。模型置信度只是模型自评，不是准确率保证；客户聊天记录请先确认隐私与权限。</p></aside>;
+}
+
+function FilePreview({ entry }: { entry: KnowledgeEntry }) {
+  const previewUrl = `${entry.downloadUrl}?inline=1`;
+  if (entry.mimeType.startsWith("image/")) {
+    return <div className={styles.filePreview} role="region" aria-label="文件预览"><div className={styles.previewHeading}><span>文件预览</span><small>图片原件</small></div><Image className={styles.imagePreview} src={previewUrl} alt={entry.originalName} width={640} height={480} unoptimized /></div>;
+  }
+  if (entry.mimeType === "application/pdf" || entry.extension.toLowerCase() === "pdf") {
+    return <div className={styles.filePreview} role="region" aria-label="文件预览"><div className={styles.previewHeading}><span>文件预览</span><small>PDF 原件</small></div><iframe className={styles.pdfPreview} src={previewUrl} title={`${entry.originalName} 预览`} /></div>;
+  }
+  if (entry.hasText) {
+    return <div className={styles.filePreview} role="region" aria-label="文件预览"><div className={styles.previewHeading}><span>文件预览</span><small>已提取正文{entry.truncated ? " · 已截断" : ""}</small></div><pre className={styles.textPreview}>{entry.textPreview || "解析结果没有可展示的正文。"}</pre></div>;
+  }
+  return <div className={styles.filePreview} role="region" aria-label="文件预览"><div className={styles.previewHeading}><span>文件预览</span><small>暂不支持原生预览</small></div><div className={styles.previewEmpty}><FileText size={20} /><span>此文件已保存，可以下载原件查看。</span></div></div>;
 }
 
 function FileTypeIcon({ entry }: { entry: KnowledgeEntry }) {

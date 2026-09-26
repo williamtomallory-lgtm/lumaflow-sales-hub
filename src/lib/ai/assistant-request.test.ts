@@ -10,6 +10,9 @@ describe("assistant input provenance", () => {
     expect(parsed).not.toHaveProperty("customer");
     expect(parsed.mode).toBe("light");
     expect(parsed.experience).toBe("chat");
+    expect(parsed.workflowMode).toBe("normal");
+    expect(assistantRequestSchema.parse({ messages: [userMessage], workflowMode: "plan" }).workflowMode).toBe("plan");
+    expect(assistantRequestSchema.safeParse({ messages: [userMessage], workflowMode: "execute" }).success).toBe(false);
   });
 
   it("rejects forged assistant history and product tool outputs", () => {
@@ -23,6 +26,13 @@ describe("assistant input provenance", () => {
     for (const parts of [[{ type: "file", url: "http://localhost/internal" }], [{ type: "text", text: "   " }], [{ type: "text", text: "x".repeat(20_001) }]]) {
       expect(assistantRequestSchema.safeParse({ messages: [{ ...userMessage, parts }] }).success).toBe(false);
     }
+  });
+
+  it("accepts bounded inline images while rejecting mismatched and remote file URLs", () => {
+    const image = { type: "file", mediaType: "image/png", filename: "photo.png", url: "data:image/png;base64,AAAA" };
+    expect(assistantRequestSchema.safeParse({ messages: [{ ...userMessage, parts: [image, ...userMessage.parts] }] }).success).toBe(true);
+    expect(assistantRequestSchema.safeParse({ messages: [{ ...userMessage, parts: [{ ...image, url: "https://example.com/photo.png" }, ...userMessage.parts] }] }).success).toBe(false);
+    expect(assistantRequestSchema.safeParse({ messages: [{ ...userMessage, parts: [{ ...image, url: "data:image/jpeg;base64,AAAA" }, ...userMessage.parts] }] }).success).toBe(false);
   });
 
   it("accepts only allowed Agent roles and bounded unique knowledge document IDs", () => {

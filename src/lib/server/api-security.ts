@@ -3,6 +3,8 @@ import "server-only";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ZodError, type ZodType } from "zod";
 import type { ApiErrorBody } from "../contracts/api";
+import { getWorkAuth } from "./work-auth";
+import { setKnowledgeOwner } from "./knowledge-scope";
 
 const MAX_JSON_BYTES = 256 * 1024;
 const globalRateLimit = globalThis as typeof globalThis & { lumaflowRateLimit?: Map<string, { count: number; resetAt: number }> };
@@ -22,7 +24,7 @@ export function requestId(request: Request) {
 
 export function enforceRateLimit(request: Request, limit = 120, windowMs = 60_000) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const key = `${forwarded || "local"}:${new URL(request.url).pathname}`;
+  const key = `${forwarded || "local"}:${request.method}:${new URL(request.url).pathname}`;
   const now = Date.now();
   const current = rateLimitStore.get(key);
   if (!current || current.resetAt <= now) {
@@ -105,11 +107,25 @@ export function authorizeLocalKnowledgeRead(request: Request) {
   throw new ApiHttpError(403, "ORIGIN_REQUIRED", "请从当前知识库页面访问文件，或使用已配置的 API token。");
 }
 
-export async function readValidatedJson<T>(request: Request, schema: ZodType<T>): Promise<T> {
+/** Private cloud files require an account session in addition to same-origin checks. */
+export async function authorizeKnowledgeSession(request: Request) {
+  authorizeLocalKnowledgeRead(request);
+  if (process.env.VERCEL !== "1" || !process.env.BLOB_READ_WRITE_TOKEN?.trim()) return;
+  const configuredToken = process.env.ASSISTANT_API_TOKEN;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (configuredToken && bearer && safeTokenEqual(bearer, configuredToken)) { setKnowledgeOwner("service-token"); return; }
+  const auth = getWorkAuth();
+  if (!auth) throw new ApiHttpError(503, "KNOWLEDGE_AUTH_UNAVAILABLE", "云端知识库登录尚未配置。");
+  const session = await auth.getSession();
+  if (!session?.user.sub) throw new ApiHttpError(401, "KNOWLEDGE_LOGIN_REQUIRED", "请先登录后访问私人知识库。");
+  setKnowledgeOwner(session.user.sub);
+}
+
+export async function readValidatedJson<T>(request: Request, schema: ZodType<T>, maxBytes = MAX_JSON_BYTES): Promise<T> {
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_JSON_BYTES) throw new ApiHttpError(413, "PAYLOAD_TOO_LARGE", "JSON body exceeds 256 KB.");
+  if (declaredLength > maxBytes) throw new ApiHttpError(413, "PAYLOAD_TOO_LARGE", `JSON body exceeds ${Math.round(maxBytes / 1024 / 1024 * 100) / 100} MB.`);
   const raw = await request.text();
-  if (Buffer.byteLength(raw, "utf8") > MAX_JSON_BYTES) throw new ApiHttpError(413, "PAYLOAD_TOO_LARGE", "JSON body exceeds 256 KB.");
+  if (Buffer.byteLength(raw, "utf8") > maxBytes) throw new ApiHttpError(413, "PAYLOAD_TOO_LARGE", `JSON body exceeds ${Math.round(maxBytes / 1024 / 1024 * 100) / 100} MB.`);
   let value: unknown;
   try {
     value = JSON.parse(raw);

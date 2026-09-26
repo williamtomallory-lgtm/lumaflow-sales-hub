@@ -1,0 +1,5 @@
+import { z } from "zod";
+export const projectSourceSchema = z.object({ id: z.string().uuid(), title: z.string().trim().min(1).max(120), text: z.string().trim().min(1).max(150_000), createdAt: z.string().datetime() }).strict();
+export const projectSchema = z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(80), pinned: z.boolean().default(false), sectionName: z.string().trim().max(80).default(""), workspace: z.string().trim().max(2000).default(""), instructions: z.string().max(12_000).default(""), knowledgeBaseIds: z.array(z.string().uuid()).max(50).default([]), memoryMode: z.enum(["project-only", "default"]).default("project-only"), sources: z.array(projectSourceSchema).max(100).default([]), createdAt: z.string().datetime(), updatedAt: z.string().datetime() }).strict();
+export const projectPatchSchema = projectSchema.pick({ name: true, instructions: true, knowledgeBaseIds: true, sources: true, memoryMode: true, pinned: true, workspace: true, sectionName: true }).partial().strict().refine((value) => Object.keys(value).length > 0);
+export type Project = z.infer<typeof projectSchema>;

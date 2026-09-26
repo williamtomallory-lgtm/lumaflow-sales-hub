@@ -18,20 +18,21 @@ import {
   Search,
   ScanSearch,
   Settings,
-  UsersRound,
+  SquarePen,
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PRIMARY_NAV, SECONDARY_NAV, VIEW_META, type StaticNavItem, type View } from "@/config/ui-static";
 import { useBackendData } from "@/hooks/use-backend-data";
 import type { AppDataSnapshot } from "@/lib/data-snapshot";
 import type { Product } from "@/lib/catalog";
-import type { Customer } from "@/lib/crm";
-import { CustomersView, FollowupView } from "./crm-views";
+import { FollowupView } from "./crm-views";
 import { KnowledgeHub as KnowledgeBaseView } from "./knowledge-hub";
 import { AgentWorkspace } from "./agent-workspace";
 import { AgentManagement } from "./agent-management";
+import { WechatAgentWorkspace } from "./wechat-agent-workspace";
+import { ProjectSidebar, ProjectWorkspace } from "./project-workspace";
 
 type NavItem = StaticNavItem & { icon: LucideIcon };
 
@@ -40,7 +41,6 @@ const navIcons: Record<View, LucideIcon> = {
   agents: Bot,
   assistant: ScanSearch,
   salesAssistant: MessageCircleMore,
-  customers: UsersRound,
   followup: Clock3,
 };
 
@@ -61,17 +61,38 @@ function BackendState({ title, detail, action, onAction }: { title: string; deta
 function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: { initialData: AppDataSnapshot; generatedAt: string; refreshing: boolean; onRefresh: () => void }) {
   const catalog = initialData.products;
   const catalogAssets = catalog.flatMap((product) => product.assets.map((asset) => ({ ...asset, productId: product.id, productName: product.name })));
-  const [view, setView] = useState<View>("knowledge");
+  const [view, setView] = useState<View>("assistant");
+  const [newChatVersion, setNewChatVersion] = useState(0);
+  const [wechatWork, setWechatWork] = useState(false);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectPage, setProjectPage] = useState(false);
+  const [initialChatId, setInitialChatId] = useState<string | undefined>();
   const [globalQuery, setGlobalQuery] = useState("");
   const [knowledgeSearchVersion, setKnowledgeSearchVersion] = useState(0);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [knowledgeSection, setKnowledgeSection] = useState<"library" | "kit">("library");
   const [kitProductId, setKitProductId] = useState(catalog[0]?.id ?? "");
-  const [crmCustomerId, setCrmCustomerId] = useState<string>();
-  const [crmAnalysisMessage, setCrmAnalysisMessage] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [historyHost, setHistoryHost] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    let next: View;
+    if (url.searchParams.get("work") === "1") {
+      next = "salesAssistant";
+      url.searchParams.delete("work");
+    } else if (url.searchParams.get("knowledge") === "1") {
+      next = "knowledge";
+      url.searchParams.delete("knowledge");
+    } else if (url.searchParams.get("followup") === "1") {
+      next = "followup";
+      url.searchParams.delete("followup");
+    } else return;
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    const timer = window.setTimeout(() => setView(next), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   const meta = VIEW_META[view];
   const isChat = view === "assistant" || view === "salesAssistant";
   const openFollowup = initialData.followupTasks.find((task) => task.status === "open");
@@ -80,11 +101,35 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
   const sourceLabel = initialData.source === "postgres" ? "PostgreSQL" : initialData.source === "local-fallback" ? "本地回退" : initialData.source === "local" ? "本地存储" : initialData.source === "json-fallback" ? "JSON 回退" : "JSON";
 
   function navigate(next: View) {
+    setProjectPage(false); setProjectId(null); setInitialChatId(undefined);
+    setWechatWork(false);
     setView(next);
     setMobileOpen(false);
     setSelectedProduct(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  function startNewChat() {
+    if (wechatWork) {
+      window.dispatchEvent(new CustomEvent("lumaflow-wechat-new-conversation"));
+      setMobileOpen(false);
+      return;
+    }
+    setWechatWork(false);
+    setProjectPage(false); setInitialChatId(undefined);
+    setGlobalQuery("");
+    setView("assistant");
+    setNewChatVersion((current) => current + 1);
+    setMobileOpen(false);
+    setSelectedProduct(null);
+  }
+
+  function openWechatWork() {
+    navigate("salesAssistant");
+    setWechatWork(true);
+  }
+  function openProject(id: string) { setProjectId(id); setProjectPage(true); setWechatWork(false); setView("assistant"); setMobileOpen(false); }
+  function startProjectChat(id: string | null, chatId?: string, experience: "chat" | "work" = "chat") { setProjectId(id); setProjectPage(false); setWechatWork(false); setInitialChatId(chatId); setGlobalQuery(""); setView(experience === "work" ? "salesAssistant" : "assistant"); setNewChatVersion((current) => current + 1); setMobileOpen(false); }
 
   function openSalesKit(id?: string) {
     if (id) setKitProductId(id);
@@ -113,17 +158,19 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
           <button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="关闭菜单"><X size={20} /></button>
         </div>
 
+        <button type="button" className="new-chat-button" onClick={startNewChat}><SquarePen size={18} /> 新聊天</button>
+
         <nav className="nav-groups">
           <div className="nav-group">
             <span className="nav-label">工作空间</span>
             {primaryNav.map((item) => <NavButton key={item.id} item={item} active={view === item.id || (view === "salesAssistant" && item.id === "assistant")} onClick={() => navigate(item.id)} />)}
           </div>
-          <div className="nav-group nav-secondary">
-            <span className="nav-label">管理与增长</span>
-            {secondaryNav.map((item) => <NavButton key={item.id} item={item} active={view === item.id} onClick={() => navigate(item.id)} />)}
-          </div>
+          <div className="chat-sidebar-panel" hidden={!isChat}><ProjectSidebar selectedId={projectId} onSelect={openProject} onToast={showToast} onOpenChat={(chatId, id) => startProjectChat(id, chatId)} onRemoved={(id) => { if (projectId === id) navigate("assistant"); }} recentAvailable={isChat && !projectPage} recentContent={<div className="sidebar-history-host" ref={setHistoryHost} />} /></div>
         </nav>
 
+        <div className="sidebar-bottom-nav">
+          {secondaryNav.map((item) => <NavButton key={item.id} item={item} active={view === item.id} onClick={() => navigate(item.id)} />)}
+        </div>
         <div className="profile-row">
           <div className="avatar">本</div>
           <div><strong>本地工作区</strong><small>尚未连接用户身份</small></div>
@@ -154,16 +201,15 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
           </div>
         </header>
 
-        <section className={isChat ? "chat-page-wrap" : "page-wrap"}>
+        <section className={isChat ? "chat-page-wrap" : view === "knowledge" ? "page-wrap knowledge-page-wrap" : "page-wrap"}>
           {!isChat && <div className="page-heading">
             <div><span className="eyebrow">{meta.eyebrow}</span><h1>{meta.title}</h1><p>{meta.subtitle}</p></div>
           </div>}
 
-          {view === "knowledge" && <KnowledgeBaseView key={`knowledge-${knowledgeSearchVersion}`} products={catalog} assets={catalogAssets} dataSource={initialData.source} initialQuery={globalQuery} section={knowledgeSection} onSectionChange={setKnowledgeSection} kitProductId={kitProductId} onOpenProduct={setSelectedProduct} onWork={() => { setCrmAnalysisMessage(""); setCrmCustomerId(""); navigate("salesAssistant"); }} onToast={showToast} />}
-          {view === "agents" && <AgentManagement onWork={(agentId) => { try { localStorage.setItem("lumaflow.agent.id", agentId); } catch {} setCrmAnalysisMessage(""); setCrmCustomerId(""); navigate("salesAssistant"); }} onToast={showToast} />}
-          {isChat && <AgentWorkspace key={view} products={catalog} assets={catalogAssets} customers={initialData.customers} initialExperience={view === "salesAssistant" ? "work" : "chat"} initialMessage={view === "salesAssistant" ? crmAnalysisMessage : globalQuery} initialCustomerId={view === "salesAssistant" ? crmCustomerId : undefined} preferredRoleId={view === "salesAssistant" ? "sales-review" : undefined} selectAllKnowledge={view === "salesAssistant"} onOpenProduct={setSelectedProduct} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onOpenKnowledge={() => navigate("knowledge")} onToast={showToast} onAddToKit={openSalesKit} />}
-          {view === "customers" && <CustomersView customers={initialData.customers} initialCustomerId={crmCustomerId} onOpenCustomer={setCrmCustomerId} onAnalyzeCustomer={(customer) => { setCrmCustomerId(customer.id); setCrmAnalysisMessage(buildCustomerReviewPrompt(customer)); navigate("salesAssistant"); }} onToast={showToast} />}
-          {view === "followup" && <FollowupView customers={initialData.customers} tasks={initialData.followupTasks} onOpenCustomer={(id) => { setCrmCustomerId(id); navigate("customers"); }} onToast={showToast} />}
+          {view === "knowledge" && <KnowledgeBaseView key={`knowledge-${knowledgeSearchVersion}`} products={catalog} assets={catalogAssets} dataSource={initialData.source} initialQuery={globalQuery} section={knowledgeSection} onSectionChange={setKnowledgeSection} kitProductId={kitProductId} onOpenProduct={setSelectedProduct} onWork={() => navigate("salesAssistant")} onToast={showToast} />}
+          {view === "agents" && <AgentManagement onWork={(agentId) => { try { localStorage.setItem("lumaflow.agent.id", agentId); } catch {} navigate("salesAssistant"); }} onWechatWork={openWechatWork} onToast={showToast} />}
+          {isChat && projectPage && projectId ? <ProjectWorkspace key={projectId} projectId={projectId} onNewChat={(id, experience) => startProjectChat(id, undefined, experience)} onOpenChat={(chatId, id) => startProjectChat(id, chatId)} onBack={() => navigate("assistant")} onToast={showToast} /> : isChat && wechatWork ? <WechatAgentWorkspace onBack={() => navigate("agents")} onToast={showToast} historyPortalTarget={historyHost} onExperienceChange={(next) => navigate(next === "chat" ? "assistant" : "salesAssistant")} /> : isChat && <AgentWorkspace key={`${view}-${newChatVersion}`} products={catalog} assets={catalogAssets} customers={initialData.customers} initialExperience={view === "salesAssistant" ? "work" : "chat"} initialMessage={view === "salesAssistant" ? "" : globalQuery} preferredRoleId={view === "salesAssistant" ? "sales-review" : undefined} selectAllKnowledge={view === "salesAssistant"} onOpenProduct={setSelectedProduct} onOpenKnowledge={() => navigate("knowledge")} onToast={showToast} onAddToKit={openSalesKit} historyPortalTarget={historyHost} onOpenWechat={openWechatWork} projectId={projectId} initialChatId={initialChatId} onOpenProject={openProject} />}
+          {view === "followup" && <FollowupView customers={initialData.customers} tasks={initialData.followupTasks} onToast={showToast} />}
         </section>
       </main>
 
@@ -172,16 +218,6 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
       <div className={`toast ${toast ? "toast-visible" : ""}`} role="status"><CheckCircle2 size={17} /> {toast}</div>
     </div>
   );
-}
-
-function buildCustomerReviewPrompt(customer: Customer) {
-  const transcript = customer.conversations.length
-    ? customer.conversations.map((message) => `[${message.timestamp}] ${message.channel} · ${message.author} · ${message.direction}: ${message.content}`).join("\n")
-    : "（暂无聊天记录）";
-  const needs = customer.needs.length
-    ? customer.needs.map((need) => `- ${need.title}：${need.detail}（${need.status}，${need.priority}优先）`).join("\n")
-    : "- 暂无已登记需求";
-  return `请以销售复盘 Agent 身份，对下面客户的完整聊天记录做复盘，并结合本轮自动选择的全部可用知识库文件：\n\n客户：${customer.company} · ${customer.name}\n阶段：${customer.stage}\n已有记忆：${customer.contextMemory.join("；") || "无"}\n需求：\n${needs}\n\n完整聊天记录：\n${transcript}\n\n请输出：1. 客户需求与缺失信息；2. 已完成与未完成事项；3. 风险和机会；4. 下一步 Todo；5. 可直接人工审核的跟进话术。不得编造聊天和文件中没有的事实。`;
 }
 
 function NavButton({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {

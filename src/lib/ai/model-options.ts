@@ -1,5 +1,5 @@
 import type { AssistantReasoningMode } from "../contracts/api";
-import { INFERENCE_PROFILE_SETTINGS, isCurrentInferenceProfile } from "./inference-policy";
+import { INFERENCE_PROFILE_SETTINGS, isCurrentInferenceProfile, profileBudgetsForContext } from "./inference-policy";
 
 export type ModelBackend = "vllm" | "openai-compatible" | "ollama" | "vercel-ai-gateway";
 
@@ -13,6 +13,7 @@ export function getModelGenerationOptions(
   backend: ModelBackend,
   maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
   codeArtifact = false,
+  contextTokens?: number | null,
 ) {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
     throw new RangeError(`maxOutputTokens must be an integer from ${MIN_MAX_OUTPUT_TOKENS} to ${MAX_MAX_OUTPUT_TOKENS}.`);
@@ -25,7 +26,7 @@ export function getModelGenerationOptions(
     const thinkingEnabled = settings.thinkingEnabled;
     // Code artifacts need room to close a complete file; ordinary replies
     // really use the selected tier, including on the Bonsai-compatible API.
-    const budget = codeArtifact ? maxOutputTokens : Math.min(settings.maxOutputTokens, maxOutputTokens);
+    const budget = codeArtifact ? maxOutputTokens : Math.min(profileBudgetsForContext(mode, contextTokens).maxOutputTokens, maxOutputTokens);
     if (backend === "openai-compatible" || backend === "vercel-ai-gateway") {
       return {
         temperature: thinkingEnabled ? 1 : 0.7,

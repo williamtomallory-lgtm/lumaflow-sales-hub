@@ -46,26 +46,38 @@ describe("model and size settings", () => {
     expect(onModelChange).toHaveBeenCalledWith("local-qwen3-14b");
     expect(screen.queryByRole("dialog", { name: "选择模型与参数规模" })).not.toBeInTheDocument();
   });
-  it("supports Light, Medium and Ultra without switching models", () => {
+  it("lists upcoming models with memory references and disables selection", () => {
+    const onModelChange = vi.fn();
+    const upcoming = assistantModelOptionSchema.parse({ id: "local-gemma4-31b", label: "Gemma 4 31B", model: "未下载", description: "尚未安装", configured: false, reachable: false, connectionKind: "live", contextTokens: null, family: "Gemma 4", parameterSizeB: 31, supportedModes: [], installationStatus: "not-downloaded", memoryRequirement: "参考内存 ≥32 GB" });
+    render(<ModelRuntimeControls compact models={[model("local-qwen3-8b", 8), upcoming]} modelProfileId="local-qwen3-8b" mode="light" onModelChange={onModelChange} onModeChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "选择模型 Qwen3 8B" }));
+    const candidate = within(screen.getByRole("dialog", { name: "选择模型与参数规模" })).getByRole("button", { name: /Gemma 4 31B.*参考内存 ≥32 GB/ });
+    expect(candidate).toBeDisabled();
+    expect(candidate).toHaveTextContent("未下载");
+    fireEvent.click(candidate);
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+  it("supports Auto, Light, Medium and Ultra without switching models", () => {
     const onModelChange = vi.fn();
     const onModeChange = vi.fn();
-    render(<ModelRuntimeControls compact models={[model("local-qwen3-8b", 8), model("local-qwen3-14b", 14)]} modelProfileId="local-qwen3-8b" mode="light" onModelChange={onModelChange} onModeChange={onModeChange} />);
+    const options = [model("local-qwen3-8b", 8), model("local-qwen3-14b", 14)];
+    const view = render(<ModelRuntimeControls compact models={options} modelProfileId="local-qwen3-8b" mode="light" onModelChange={onModelChange} onModeChange={onModeChange} />);
     const trigger = screen.getByRole("button", { name: "选择推理强度 Light" });
-    for (const label of ["Light", "Medium", "Ultra"]) {
-      fireEvent.click(trigger);
-      const menu = screen.getByRole("dialog", { name: "选择推理强度" });
-      fireEvent.click(within(menu).getByRole("button", { name: new RegExp(`^${label}`) }));
-    }
-    expect(onModeChange).toHaveBeenNthCalledWith(1, "light");
-    expect(onModeChange).toHaveBeenNthCalledWith(2, "medium");
-    expect(onModeChange).toHaveBeenNthCalledWith(3, "ultra");
-    expect(onModelChange).not.toHaveBeenCalled();
-
     fireEvent.click(trigger);
-    const slider = screen.getByRole("slider", { name: "推理强度" });
-    expect(slider).toHaveValue("0");
-    fireEvent.change(slider, { target: { value: "2" } });
-    expect(onModeChange).toHaveBeenLastCalledWith("ultra");
+    const menu = screen.getByRole("dialog", { name: "选择推理强度" });
+    const slider = within(menu).getByRole("slider", { name: "推理强度" });
+    expect(slider).toHaveAttribute("min", "0");
+    expect(slider).toHaveAttribute("max", "3");
+    for (const [value, label] of [["2", "medium"], ["3", "ultra"], ["0", "auto"], ["1", "light"]] as const) {
+      fireEvent.change(slider, { target: { value } });
+      view.rerender(<ModelRuntimeControls compact models={options} modelProfileId="local-qwen3-8b" mode={label} onModelChange={onModelChange} onModeChange={onModeChange} />);
+      expect(slider).toHaveAttribute("aria-valuetext", label === "auto" ? "Auto" : label === "light" ? "Light" : label === "medium" ? "Medium" : "Ultra");
+    }
+    expect(onModeChange).toHaveBeenNthCalledWith(1, "medium");
+    expect(onModeChange).toHaveBeenNthCalledWith(2, "ultra");
+    expect(onModeChange).toHaveBeenNthCalledWith(3, "auto");
+    expect(onModeChange).toHaveBeenNthCalledWith(4, "light");
+    expect(onModelChange).not.toHaveBeenCalled();
   });
   it("closes compact menus with Escape or an outside click", () => {
     render(<ModelRuntimeControls compact models={[model("local-qwen3-8b", 8), model("local-qwen3-14b", 14, false)]} modelProfileId="local-qwen3-8b" mode="light" onModelChange={vi.fn()} onModeChange={vi.fn()} />);
@@ -78,7 +90,7 @@ describe("model and size settings", () => {
     const modeTrigger = screen.getByRole("button", { name: "选择推理强度 Light" });
     fireEvent.click(modeTrigger);
     const menu = screen.getByRole("dialog", { name: "选择推理强度" });
-    expect(within(menu).getByRole("button", { name: /^Ultra/ })).toBeEnabled();
+    expect(within(menu).getByRole("slider", { name: "推理强度" })).toBeEnabled();
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("dialog", { name: "选择推理强度" })).not.toBeInTheDocument();
   });

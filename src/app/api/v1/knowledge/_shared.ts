@@ -1,4 +1,4 @@
-import { ApiHttpError, apiError, authorizeLocalKnowledgeRead } from "@/lib/server/api-security";
+import { ApiHttpError, apiError, authorizeKnowledgeSession } from "@/lib/server/api-security";
 import { KnowledgeStoreError } from "@/lib/knowledge/store";
 
 export function knowledgeError(error: unknown, requestId: string) {
@@ -8,4 +8,4 @@ export function knowledgeError(error: unknown, requestId: string) {
   return apiError(error, requestId);
 }
 
-export const authorizeKnowledgeRead = authorizeLocalKnowledgeRead;
+export const authorizeKnowledgeRead = authorizeKnowledgeSession;

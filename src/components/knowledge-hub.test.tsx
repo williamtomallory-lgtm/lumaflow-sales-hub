@@ -44,6 +44,12 @@ beforeEach(() => {
       records = records.map((record) => ({ ...record, classificationSource: "manual" }));
       return Response.json({ data: records[0] });
     }
+    if (init?.method === "DELETE") {
+      mutations.push(init);
+      const id = new URL(url, "http://localhost").pathname.split("/").pop();
+      records = records.filter((record) => record.id !== id);
+      return Response.json({ data: { id, originalName: entry.originalName }, meta: { wikiStatus: "updated" } });
+    }
     const offset = Number(new URL(url, "http://localhost").searchParams.get("offset") ?? 0);
     return Response.json({
       data: records.slice(offset, offset + 200),
@@ -59,8 +65,8 @@ describe("Knowledge hub", () => {
   it("shows products and their former asset-center files in the unified knowledge page", async () => {
     render(<KnowledgeHub products={testProducts} assets={testAssets} onToast={onToast} />);
     await screen.findByText("还没有真实上传文件");
-    expect(screen.getByRole("region", { name: "统一产品与资料目录" })).toHaveTextContent(testProducts[0].name);
-    expect(screen.getByRole("region", { name: "统一产品与资料目录" })).toHaveTextContent(testAssets[0].name);
+    expect(screen.getByRole("region", { name: "自建产品与关联资料目录" })).toHaveTextContent(testProducts[0].name);
+    expect(screen.getByRole("region", { name: "自建产品与关联资料目录" })).toHaveTextContent(testAssets[0].name);
   });
 
   it("shows an empty runtime state without rendering fixture knowledge", async () => {
@@ -68,7 +74,7 @@ describe("Knowledge hub", () => {
     await screen.findByText("还没有真实上传文件");
     const metrics = screen.getByRole("region", { name: "知识库真实统计" });
     expect(within(metrics).getAllByText("0")).toHaveLength(4);
-    expect(screen.getByText(/后端尚未返回产品档案/)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "自建产品与关联资料目录" })).not.toBeInTheDocument();
     // The explicit opt-in demo control is visible, but no fixture body is
     // silently loaded into an empty company library.
     expect(screen.queryByText(/JSON seed|金桔-739-SAFE|青柠-582-SAFE/)).not.toBeInTheDocument();
@@ -101,5 +107,36 @@ describe("Knowledge hub", () => {
     render(<KnowledgeHub onToast={onToast} />);
     expect(await screen.findByText("文件 200")).toBeInTheDocument();
     expect(requests).toContain("/api/v1/knowledge?limit=200&offset=200");
+  });
+
+  it("shows selected file attributes below the row and renders its preview on the right", async () => {
+    const second = { ...entry, id: "22222222-2222-4222-8222-222222222222", title: "第二份资料", originalName: "第二份资料.md", textPreview: "右侧预览正文" };
+    records = [entry, second];
+    render(<KnowledgeHub onToast={onToast} />);
+    fireEvent.click(await screen.findByRole("button", { name: /第二份资料/ }));
+    expect(screen.getByRole("region", { name: "文件属性" })).toHaveTextContent("第二份资料.md");
+    expect(screen.getByRole("region", { name: "文件属性" })).toHaveTextContent("30 B");
+    expect(screen.getByRole("region", { name: "文件预览" })).toHaveTextContent("右侧预览正文");
+  });
+
+  it("previews archived image and PDF originals even without extracted text", async () => {
+    const image = { ...entry, id: "33333333-3333-4333-8333-333333333333", title: "图片原件", originalName: "原件.jpg", extension: "jpg", mimeType: "image/jpeg", parseStatus: "archive_only" as const, hasText: false, textPreview: "" };
+    const pdf = { ...entry, id: "44444444-4444-4444-8444-444444444444", title: "PDF原件", originalName: "原件.pdf", extension: "pdf", mimeType: "application/pdf", parseStatus: "archive_only" as const, hasText: false, textPreview: "" };
+    records = [image, pdf];
+    render(<KnowledgeHub onToast={onToast} />);
+    expect(await screen.findByRole("img", { name: "原件.jpg" })).toHaveAttribute("src", `${image.downloadUrl}?inline=1`);
+    fireEvent.click(screen.getByRole("button", { name: /PDF原件/ }));
+    expect(screen.getByTitle("原件.pdf 预览")).toHaveAttribute("src", `${pdf.downloadUrl}?inline=1`);
+  });
+
+  it("deletes the selected local file and refreshes the list", async () => {
+    records = [entry];
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<KnowledgeHub onToast={onToast} />);
+    await screen.findByRole("button", { name: new RegExp(entry.title) });
+    fireEvent.click(screen.getByRole("button", { name: "删除文件" }));
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith(expect.stringContaining("已删除")));
+    expect(mutations.some((init) => init.method === "DELETE")).toBe(true);
+    await waitFor(() => expect(screen.queryByText(entry.title)).not.toBeInTheDocument());
   });
 });

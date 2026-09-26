@@ -5,6 +5,7 @@ import {
   getDefaultModelProfileId,
   getModelHealth,
   getModelOptions,
+  configuredSupportedModes,
   LOCAL_MODEL_ID,
   LOCAL_QWEN3_14B_MODEL_ID,
 } from "./model-config";
@@ -35,6 +36,11 @@ afterEach(() => {
 });
 
 describe("allowlisted model profiles", () => {
+  it("maps legacy configured inference modes to the current Light, Medium, and Ultra labels", () => {
+    vi.stubEnv("LLM_SUPPORTED_MODES", "instant,high,extra-high,pro,unsupported");
+    expect(configuredSupportedModes()).toEqual(["light", "medium", "ultra"]);
+  });
+
   it("isolates local settings from custom model environment values", () => {
     expect(getModelConfig("local-qwen3-8b")).toMatchObject({
       model: LOCAL_MODEL_ID,
@@ -83,7 +89,7 @@ describe("allowlisted model profiles", () => {
     vi.stubEnv("LLM_SUPPORTED_MODES", "light,medium,ultra");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "custom-model" }] })));
     expect(getDefaultModelProfileId()).toBe("configured");
-    expect(await getModelOptions()).toEqual([
+    expect(await getModelOptions()).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "configured",
         label: "Ternary Bonsai 2 27B",
@@ -93,7 +99,11 @@ describe("allowlisted model profiles", () => {
         supportedModes: ["light", "medium", "ultra"],
         reachable: true,
       }),
-    ]);
+      expect.objectContaining({ id: "local-gemma4-31b", installationStatus: "not-downloaded", reachable: false }),
+      expect.objectContaining({ id: "local-gemma4-26b-a4b", installationStatus: "not-downloaded", reachable: false }),
+      expect.objectContaining({ id: "local-glm-4.7-flash", installationStatus: "not-downloaded", reachable: false }),
+      expect.objectContaining({ id: "local-deepseek-v4.1-flash", installationStatus: "not-downloaded", reachable: false }),
+    ]));
   });
 
   it("does not mark a remote OpenAI-compatible endpoint configured without its API key", async () => {
@@ -129,11 +139,12 @@ describe("allowlisted model profiles", () => {
       data: { defaultProfileId: "local-qwen3-8b", models },
       meta: { apiVersion: "v1", requestId: "models-test" },
     });
-    expect(payload.data.models).toHaveLength(3);
-    expect(payload.data.models.every((item) => item.reachable)).toBe(true);
+    expect(payload.data.models).toHaveLength(7);
+    expect(payload.data.models.filter((item) => item.installationStatus === "ready").every((item) => item.reachable)).toBe(true);
     expect(payload.data.models[0]).toMatchObject({ family: "Qwen3", parameterSizeB: 8, supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high"] });
     expect(payload.data.models[1]).toMatchObject({ family: "Qwen3", parameterSizeB: 14, supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high", "pro"] });
     expect(payload.data.models[2]).toMatchObject({ family: "custom", parameterSizeB: null, supportedModes: ["light"] });
+    expect(payload.data.models.slice(3).every((item) => item.installationStatus === "not-downloaded" && !item.reachable && item.supportedModes.length === 0)).toBe(true);
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("server-secret");
     expect(serialized).not.toContain("http://");
@@ -167,6 +178,18 @@ describe("allowlisted model profiles", () => {
     expect(response.status).toBe(200);
     const payload = assistantModelsResponseSchema.parse(await response.json());
     expect(payload.data.defaultProfileId).toBe("local-qwen3-8b");
-    expect(payload.data.models.map((item) => item.id)).toEqual(["local-qwen3-8b", "local-qwen3-14b", "configured"]);
+    expect(payload.data.models.map((item) => item.id)).toEqual(["local-qwen3-8b", "local-qwen3-14b", "configured", "local-gemma4-31b", "local-gemma4-26b-a4b", "local-glm-4.7-flash", "local-deepseek-v4.1-flash"]);
+  });
+
+  it("never treats the four catalogue-only models as downloaded or runnable", async () => {
+    vi.stubEnv("LLM_VISIBLE_PROFILES", "configured");
+    vi.stubEnv("LLM_DEFAULT_PROFILE", "local-gemma4-31b");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "custom-model" }] })));
+    expect(getDefaultModelProfileId()).toBe("configured");
+    const pending = (await getModelOptions()).filter((item) => item.installationStatus === "not-downloaded");
+    expect(pending).toHaveLength(4);
+    expect(pending.map((item) => item.memoryRequirement)).toEqual(["参考内存 ≥32 GB", "参考内存 ≥32 GB", "参考内存 ≥32 GB", "参考内存 ≥640 GB"]);
+    expect(pending.every((item) => !item.configured && !item.reachable)).toBe(true);
+    expect(() => getModelConfig("local-deepseek-v4.1-flash").baseURL).not.toThrow();
   });
 });

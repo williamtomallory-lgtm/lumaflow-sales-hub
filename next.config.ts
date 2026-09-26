@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: { cpus: 2 },
   outputFileTracingIncludes: {
     "/api/v1/assistant/*": ["./agent/**/*.json"],
   },

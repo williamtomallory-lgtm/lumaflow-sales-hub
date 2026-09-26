@@ -44,14 +44,14 @@ beforeEach(() => {
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-async function ready() { await waitFor(() => expect(screen.getByRole("button", { name: "发送问题" })).toBeEnabled()); }
+async function ready() { await waitFor(() => { expect(screen.getByText("模型已连接")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "新问题" })).toBeEnabled(); }); }
 
 describe("smart search real-model entry", () => {
   it("sends the selected Ultra policy without silently switching models", async () => {
     render(<SmartSearchView {...props} />);
     await ready();
     fireEvent.click(screen.getByRole("button", { name: /^选择推理强度 / }));
-    fireEvent.click(screen.getByRole("button", { name: "Ultra 深度处理" }));
+    fireEvent.change(screen.getByRole("slider", { name: "推理强度" }), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts[0]).toMatchObject({ mode: "ultra", modelProfileId: "local-qwen3-8b" }));
     expect(screen.getByRole("button", { name: "选择模型 Qwen3 8B" })).toBeInTheDocument();
@@ -95,7 +95,7 @@ describe("smart search real-model entry", () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: /^选择模型 / }));
     fireEvent.click(screen.getByRole("button", { name: /自定义 未配置/ }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("所选模型尚未连接"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("模型服务尚未配置或无法连接"));
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     expect(localStorage.getItem("lumaflow.assistant.model-profile")).toBe("configured");
@@ -112,7 +112,7 @@ describe("smart search real-model entry", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "停止生成" })).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /^选择模型 / })).toBeDisabled();
-    expect(screen.getByText(/正在等待本地模型/)).toBeInTheDocument();
+    expect(screen.getByTestId("activity-progress")).toHaveTextContent("正在准备请求");
     resolve(modelReply());
     await ready();
   });
@@ -145,6 +145,7 @@ describe("smart search real-model entry", () => {
     expect(screen.getByText("已停止 · 内容可能不完整")).toBeInTheDocument();
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     nextChat = async () => modelReply("停止后重新生成成功");
+    fireEvent.change(screen.getByRole("textbox", { name: "输入问题" }), { target: { value: "停止后的新问题" } });
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("停止后重新生成成功"));
   });

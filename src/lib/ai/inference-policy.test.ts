@@ -20,6 +20,17 @@ describe("inference policy", () => {
     });
   });
 
+  it("uses the verified 32K runtime without increasing 8K model budgets", () => {
+    expect(resolveInferencePolicy({ mode: "ultra", modelProfileId: "configured", configuredSupportedModes: ["ultra"], modelContextTokens: 32_768, modelMaxOutputTokens: 8_192 })).toMatchObject({
+      maxOutputTokens: 6_144,
+      inputBudget: { maxContextCharacters: 12_000 },
+    });
+    expect(resolveInferencePolicy({ mode: "ultra", modelProfileId: "configured", configuredSupportedModes: ["ultra"], modelContextTokens: 8_192, modelMaxOutputTokens: 8_192 })).toMatchObject({
+      maxOutputTokens: 3_072,
+      inputBudget: { maxContextCharacters: 4_000 },
+    });
+  });
+
   it("routes Pro from either local selection to the exact 14B profile", () => {
     expect(resolveInferencePolicy({ mode: "pro", modelProfileId: "local-qwen3-8b" })).toMatchObject({
       requestedModelProfileId: "local-qwen3-8b",

@@ -29,6 +29,6 @@ describe("cloud knowledge archive boundary", () => {
       body: new FormData(),
     }));
     expect(response.status).toBe(503);
-    expect((await response.json()).error.code).toBe("LOCAL_ARCHIVE_UNAVAILABLE");
+    expect((await response.json()).error.code).toBe("CLOUD_ARCHIVE_UNAVAILABLE");
   });
 });

@@ -44,6 +44,14 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1 -Action st
 
 这些目录已经被 `.gitignore` 排除。不要把 `.env.local`、`.env` 或模型目录提交到仓库。
 
+### 在另一台电脑保存知识文件
+
+每台电脑把项目放在自己的可写目录并运行 `Start-LumaFlow.cmd` 时，上传的知识原件、文件信息和 Wiki 分别保存在**那台电脑**的项目目录下 `.local-data/knowledge/files/`、`metadata/` 和 `wiki/`。网页只是操作界面；本机安装不会把这些私人上传文件自动发送到 GitHub 或 Vercel。不同电脑的本机知识库互相独立，新安装不会自动出现旧电脑的上传文件。
+
+需要搬迁已有知识库时，先停止两台电脑上的 LumaFlow，再把旧电脑的整个 `.local-data/knowledge/` 目录复制到新电脑项目目录下的同一相对位置；启动后核对文件列表和原件下载。这个目录也需要单独备份，重新下载项目 ZIP 不会恢复它。若同时要搬迁自建产品档案等业务数据，还需按所用数据源迁移 `.local-data/business/` 或 PostgreSQL 数据。
+
+`127.0.0.1` 只供运行服务的那台电脑访问。在别人的电脑上仅用浏览器打开 Vercel 网站，上传文件仍会进入 Vercel 私有存储，而不会写入浏览器所在电脑的 `.local-data/`。
+
 ## 故障处理
 
 如果端口冲突，先查看启动器给出的 PID/进程名；也可以换用 `-Port 3001`。不要用 `taskkill /IM node.exe` 或按名称结束进程，因为那可能影响其他项目。

@@ -1,0 +1,50 @@
+.page { min-height: 100vh; padding: 32px 18px 70px; background: #f4f7f2; color: #284535; font-family: "DM Sans Variable", "Microsoft YaHei", sans-serif; }
+.shell { width: min(960px, 100%); margin: 0 auto; }
+.back { display: inline-block; margin-bottom: 18px; color: #47775a; font-size: 14px; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+.header, .card, .notice, .error { border: 1px solid #dbe7dc; border-radius: 16px; background: #fff; box-shadow: 0 8px 26px rgba(29, 63, 36, .04); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 26px 28px; }
+.kicker { color: #62886d; font-size: 12px; font-weight: 750; letter-spacing: .06em; }
+.header h1 { margin: 7px 0 8px; font-size: clamp(26px, 3vw, 36px); line-height: 1.2; }
+.header p { margin: 0; color: #708477; font-size: 14px; }
+.status { flex: 0 0 auto; padding: 7px 11px; border-radius: 999px; background: #e9f5ec; color: #357947; font-size: 12px; font-weight: 750; }
+.card { margin-top: 15px; padding: 24px 28px; }
+.card h2 { margin: 0 0 17px; font-size: 17px; }
+.card dl { display: grid; gap: 11px; margin: 0; }
+.card dl > div { display: grid; grid-template-columns: 94px 1fr; gap: 8px; font-size: 14px; }
+.card dt { color: #809286; }
+.card dd { margin: 0; overflow-wrap: anywhere; }
+.description { margin: 20px 0 0; padding: 16px; border-radius: 9px; background: #f5f8f5; color: #516a58; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.members { display: grid; gap: 10px; }
+.member { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 10px 12px; border: 1px solid #e8eee8; border-radius: 10px; }
+.avatar { display: grid; flex: 0 0 auto; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: #548764; color: white; font-weight: 800; }
+.memberName { min-width: 0; flex: 1; }
+.memberName strong, .memberName small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memberName strong { font-size: 13px; }
+.memberName small { margin-top: 3px; color: #889b8c; font-size: 11px; }
+.online, .offline, .memberStatus { flex: 0 0 auto; padding: 5px 8px; border-radius: 7px; font-size: 11px; }
+.online { background: #e4f5e8; color: #258146; }
+.offline { background: #f0f2f0; color: #849185; }
+.memberStatus { background: #edf4ed; color: #4a7054; }
+.myStatus { display: flex; align-items: center; gap: 12px; margin-top: 18px; font-size: 13px; }
+.myStatus select, .form input, .form select, .form textarea { padding: 10px 11px; border: 1px solid #cbd9ce; border-radius: 8px; background: #fff; color: #284535; font: inherit; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.actions button, .form button, .notice button, .error button { padding: 10px 15px; border: 1px solid #a9c4af; border-radius: 8px; background: #eef7ef; color: #316c41; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.actions button:hover, .form button:hover, .notice button:hover { background: #dff0e3; }
+.actions button:disabled, .form button:disabled, .notice button:disabled { cursor: default; opacity: .55; }
+.actions .danger { border-color: #efb6af; background: #fff1ef; color: #a23e35; }
+.actions .danger:hover { background: #ffe1dd; }
+.form { display: grid; gap: 13px; margin-top: 21px; padding-top: 20px; border-top: 1px solid #e1e9e1; }
+.form label { display: grid; gap: 6px; color: #587360; font-size: 12px; font-weight: 700; }
+.form textarea { min-height: 100px; resize: vertical; }
+.formRow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.form .checkbox { display: flex; align-items: center; align-self: end; min-height: 40px; }
+.form .checkbox input { width: auto; }
+.form button { justify-self: start; }
+.notice, .error { margin-bottom: 16px; padding: 16px 18px; }
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+.notice p { margin: 0; font-size: 13px; }
+.error { color: #9c463e; border-color: #efc4be; background: #fff6f4; font-size: 13px; }
+.error button { margin-left: 10px; }
+.loading { color: #718a77; font-size: 14px; }
+@media (max-width: 640px) { .page { padding: 18px 12px 48px; } .header, .card { padding: 20px 17px; } .header, .notice { flex-direction: column; } .card dl > div { grid-template-columns: 72px 1fr; } .formRow { grid-template-columns: 1fr; } .member { flex-wrap: wrap; } }

@@ -1,8 +1,9 @@
 import { parseDocumentBuffer } from "@/lib/document-parser";
-import { assistantModelProfileIdSchema } from "@/lib/contracts/api";
+import { assistantModelProfileIdSchema, type AssistantModelProfileId } from "@/lib/contracts/api";
 import { parse as parsePath } from "node:path";
 import {
   buildKnowledgeSummary,
+  cloudKnowledgeArchiveAvailable,
   listKnowledgeRecords,
   readFileWithLimit,
   saveModelClassification,
@@ -12,7 +13,9 @@ import {
   KnowledgeStoreError,
 } from "@/lib/knowledge/store";
 import { classifyKnowledgeText } from "@/lib/knowledge/classification";
-import { KNOWLEDGE_MAX_FILE_BYTES, knowledgeListQuerySchema } from "@/lib/knowledge/contracts";
+import { classifyKnowledgeWithTypeSafe } from "@/lib/knowledge/typesafe-classification";
+import { refreshWiki } from "@/lib/knowledge/wiki";
+import { KNOWLEDGE_CLOUD_MAX_FILE_BYTES, KNOWLEDGE_MAX_FILE_BYTES, knowledgeListQuerySchema } from "@/lib/knowledge/contracts";
 import { ApiHttpError, apiJson, authorizeAssistantRequest, enforceRateLimit, requestId } from "@/lib/server/api-security";
 import { authorizeKnowledgeRead, knowledgeError } from "./_shared";
 
@@ -24,16 +27,17 @@ const parseableExtensions = new Set([
   "txt", "csv", "tsv", "md", "markdown", "json", "jsonl", "log", "xml", "html", "htm",
   "pdf", "docx", "xlsx", "pptx",
 ]);
-const MAX_MULTIPART_REQUEST_BYTES = KNOWLEDGE_MAX_FILE_BYTES + 1024 * 1024;
+const uploadLimit = () => process.env.VERCEL === "1" ? KNOWLEDGE_CLOUD_MAX_FILE_BYTES : KNOWLEDGE_MAX_FILE_BYTES;
 
 /**
  * Limit the multipart stream before calling Request.formData(). Content-Length
  * is only an early rejection hint: the reader remains the authoritative cap.
  */
 function boundedMultipartRequest(request: Request) {
+  const maxRequestBytes = uploadLimit() + 256 * 1024;
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_MULTIPART_REQUEST_BYTES) {
-    throw new KnowledgeStoreError(413, "PAYLOAD_TOO_LARGE", "上传请求超过单文件 25 MB 限制。");
+  if (declaredLength > maxRequestBytes) {
+    throw new KnowledgeStoreError(413, "PAYLOAD_TOO_LARGE", `上传请求超过单文件 ${Math.round(uploadLimit() / 1024 / 1024)} MB 限制。`);
   }
   if (!request.body) return request;
   const reader = request.body.getReader();
@@ -46,9 +50,9 @@ function boundedMultipartRequest(request: Request) {
         return;
       }
       total += result.value.byteLength;
-      if (total > MAX_MULTIPART_REQUEST_BYTES) {
+      if (total > maxRequestBytes) {
         await reader.cancel();
-        controller.error(new KnowledgeStoreError(413, "PAYLOAD_TOO_LARGE", "上传请求超过单文件 25 MB 限制。"));
+        controller.error(new KnowledgeStoreError(413, "PAYLOAD_TOO_LARGE", `上传请求超过单文件 ${Math.round(uploadLimit() / 1024 / 1024)} MB 限制。`));
         return;
       }
       controller.enqueue(result.value);
@@ -75,9 +79,19 @@ function asArrayBuffer(bytes: Buffer) {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function classifyIfPossible(id: string, originalName: string, text: string, modelProfileId?: "local-qwen3-8b" | "local-qwen3-14b" | "configured") {
+async function classifyIfPossible(id: string, originalName: string, text: string, modelProfileId?: AssistantModelProfileId) {
   try {
-    const classification = await classifyKnowledgeText({ text, originalName, modelProfileId });
+    let classification = null;
+    try { classification = await classifyKnowledgeWithTypeSafe({ text, originalName }); }
+    catch { console.warn("TypeSafe category judgment unavailable; trying the configured model."); }
+    // Cloud uploads must complete even when the selected inference endpoint is unreachable.
+    // Keep the original and let the user retry classification after the short attempt.
+    classification ??= await classifyKnowledgeText({
+      text,
+      originalName,
+      modelProfileId,
+      abortSignal: process.env.VERCEL === "1" ? AbortSignal.timeout(12_000) : undefined,
+    });
     return { record: await saveModelClassification(id, classification), classified: true };
   } catch {
     console.warn("Knowledge classification failed; original file retained.");
@@ -89,13 +103,13 @@ export async function GET(request: Request) {
   const id = requestId(request);
   try {
     enforceRateLimit(request, 120);
-    authorizeKnowledgeRead(request);
+    await authorizeKnowledgeRead(request);
     const query = knowledgeListQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
-    if (process.env.VERCEL === "1") {
+    if (process.env.VERCEL === "1" && !cloudKnowledgeArchiveAvailable()) {
       return apiJson({
         data: [],
         summary: buildKnowledgeSummary([]),
-        meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, archiveAvailable: false, limit: query.limit, offset: query.offset },
+        meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, archiveAvailable: false, uploadLimitBytes: uploadLimit(), limit: query.limit, offset: query.offset },
       }, 200, id);
     }
     const allRecords = await listKnowledgeRecords();
@@ -110,7 +124,7 @@ export async function GET(request: Request) {
     return apiJson({
       data,
       summary: buildKnowledgeSummary(allRecords),
-      meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, archiveAvailable: true, limit: query.limit, offset: query.offset },
+      meta: { apiVersion: "v1" as const, requestId: id, source: "local-files" as const, demoEntriesExcluded: true as const, archiveAvailable: true, uploadLimitBytes: uploadLimit(), limit: query.limit, offset: query.offset },
     }, 200, id);
   } catch (error) {
     return knowledgeError(error, id);
@@ -121,9 +135,9 @@ export async function POST(request: Request) {
   const id = requestId(request);
   try {
     enforceRateLimit(request, 10);
-    authorizeKnowledgeRead(request);
+    await authorizeKnowledgeRead(request);
     authorizeAssistantRequest(request);
-    if (process.env.VERCEL === "1") throw new ApiHttpError(503, "LOCAL_ARCHIVE_UNAVAILABLE", "云端尚未配置持久文件存储。请在本机站点上传，或先配置云端存储。");
+    if (process.env.VERCEL === "1" && !cloudKnowledgeArchiveAvailable()) throw new ApiHttpError(503, "CLOUD_ARCHIVE_UNAVAILABLE", "云端尚未配置私有持久文件存储。请先连接知识库存储。");
     const formData = await boundedMultipartRequest(request).formData();
     const file = formData.get("file");
     if (!(file instanceof File)) throw new ApiHttpError(400, "FILE_REQUIRED", "请选择一个文件。");
@@ -133,7 +147,7 @@ export async function POST(request: Request) {
       : typeof modelProfileValue === "string"
         ? assistantModelProfileIdSchema.parse(modelProfileValue)
         : (() => { throw new ApiHttpError(422, "INVALID_MODEL_PROFILE", "modelProfileId 必须是模型配置 ID。"); })();
-    const bytes = await readFileWithLimit(file);
+    const bytes = await readFileWithLimit(file, uploadLimit());
     let parseResult: Parameters<typeof saveUploadedKnowledge>[0]["parse"];
     if (!mayParse(file.name, file.type)) {
       parseResult = { status: "archive_only", error: "当前文件类型仅归档未理解；未接入该类型的文本/OCR解析。" };
@@ -156,9 +170,16 @@ export async function POST(request: Request) {
       result = classification.record;
       classified = classification.classified;
     }
+    let wikiStatus: "updated" | "failed" = "updated";
+    try {
+      await refreshWiki(result.id);
+    } catch {
+      wikiStatus = "failed";
+      console.warn("Wiki refresh failed; source file remains available.");
+    }
     return apiJson({
       data: toPublicKnowledgeEntry(result),
-      meta: { apiVersion: "v1" as const, requestId: id, deduplicated: saved.deduplicated, classificationAttempted, classified },
+      meta: { apiVersion: "v1" as const, requestId: id, deduplicated: saved.deduplicated, classificationAttempted, classified, wikiStatus },
     }, saved.deduplicated ? 200 : 201, id, { Location: `/api/v1/knowledge/${result.id}` });
   } catch (error) {
     return knowledgeError(error, id);
