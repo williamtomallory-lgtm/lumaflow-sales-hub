@@ -2181,7 +2181,7 @@ export function AgentWorkspace({
         <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
           <button type="button" aria-pressed={activeView === "chat"} onClick={() => changeExperience("chat")}>Chat</button>
           <button type="button" aria-pressed={activeView === "work"}>Work</button>
-          <button type="button" aria-pressed={activeView === "image"} disabled>Image</button>
+          <button type="button" aria-pressed={activeView === "image"} onClick={() => toggleImageOperationMode(true, undefined, true)}>Image</button>
           {onOpenWechat && !activeProjectId && <button type="button" aria-pressed={false} onClick={onOpenWechat}>Wechat Agent</button>}
         </div>
         <span aria-hidden="true" />
