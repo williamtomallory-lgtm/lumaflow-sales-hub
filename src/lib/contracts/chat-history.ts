@@ -47,7 +47,12 @@ export const chatSessionSchema = z.object({
 export type LocalChatSession = z.infer<typeof chatSessionSchema>;
 export type LocalChatTurn = z.infer<typeof turnSchema>;
 export type LocalChatTurnVersion = z.infer<typeof turnVersionSchema>;
-export type LocalChatSummary = Pick<LocalChatSession, "id" | "experience" | "title" | "agentId" | "createdAt" | "updatedAt" | "pinned" | "archived" | "projectId"> & { turnCount: number };
+/**
+ * `hasImage` is derived from the saved turns when the summary is listed. It
+ * deliberately stays out of the persisted session schema so old local JSON
+ * files continue to load unchanged.
+ */
+export type LocalChatSummary = Pick<LocalChatSession, "id" | "experience" | "title" | "agentId" | "createdAt" | "updatedAt" | "pinned" | "archived" | "projectId"> & { turnCount: number; hasImage?: boolean; searchableText?: string };
 
 /** Metadata changes are deliberately narrow so a history action cannot
  * overwrite the saved conversation body. */

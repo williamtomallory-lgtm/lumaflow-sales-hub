@@ -1,0 +1,458 @@
+{
+  "products": [
+    {
+      "id": "DEMO-PRODUCT-01",
+      "name": "演示产品 · ARC 轨道射灯",
+      "model": "DEMO-ARC-T18",
+      "sku": "DEMO-SKU-ARC-T18",
+      "category": "轨道灯",
+      "family": "商业照明",
+      "status": "在售",
+      "power": "18W（演示参数）",
+      "lumens": "1,620 lm（演示参数）",
+      "colorTemp": "3000K / 4000K（演示可选）",
+      "material": "压铸铝（演示材质）",
+      "dimensions": "Ø62 × H138 mm（演示尺寸）",
+      "colors": [
+        "曜石黑（演示色）",
+        "珍珠白（演示色）"
+      ],
+      "scenarios": [
+        "服装店（演示场景）",
+        "展厅（演示场景）",
+        "画廊（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 128,
+      "priceRange": "¥239–289（模拟价）",
+      "moq": 10,
+      "stock": 126,
+      "leadTime": "演示交期：现货 24 小时内发（模拟）",
+      "warranty": "演示质保：3 年（模拟）",
+      "description": "LumaFlow 演示用高显色窄光束轨道射灯。名称、参数、库存和价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "linear-gradient(145deg, #1f2937 0%, #111827 55%, #c9a96e 56%, #efddbd 100%)",
+      "accent": "#c89b52",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-01-01",
+          "name": "DEMO ARC T18 演示场景图",
+          "type": "图片",
+          "size": "2.4 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-01-02",
+          "name": "DEMO ARC T18 演示参数表",
+          "type": "参数表",
+          "size": "486 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-01-03",
+          "name": "DEMO ARC T18 演示安装尺寸图",
+          "type": "尺寸图",
+          "size": "820 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-02",
+      "name": "演示产品 · HALO 环形吊灯",
+      "model": "DEMO-HALO-P36",
+      "sku": "DEMO-SKU-HALO-P36",
+      "category": "吊灯",
+      "family": "装饰照明",
+      "status": "在售",
+      "power": "36W（演示参数）",
+      "lumens": "2,880 lm（演示参数）",
+      "colorTemp": "2700K–4000K（演示可调）",
+      "material": "铝合金 + 亚克力（演示材质）",
+      "dimensions": "Ø600 × H80 mm；吊线 1.5 m（演示尺寸）",
+      "colors": [
+        "香槟金（演示色）",
+        "哑光黑（演示色）"
+      ],
+      "scenarios": [
+        "餐厅（演示场景）",
+        "酒店（演示场景）",
+        "办公区（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 426,
+      "priceRange": "¥759–899（模拟价）",
+      "moq": 5,
+      "stock": 42,
+      "leadTime": "演示交期：现货 48 小时内发（模拟）",
+      "warranty": "演示质保：3 年（模拟）",
+      "description": "LumaFlow 演示用环形吊灯，支持无级调光调色的场景说明仅用于界面演示。库存、成本与价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "radial-gradient(circle at 50% 44%, transparent 0 21%, #e8c989 22% 28%, transparent 29%), linear-gradient(155deg, #f2eadb, #cab994)",
+      "accent": "#b9853b",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-02-01",
+          "name": "DEMO HALO P36 演示空间图",
+          "type": "图片",
+          "size": "3.1 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-02-02",
+          "name": "DEMO HALO P36 演示规格书",
+          "type": "参数表",
+          "size": "572 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-02-03",
+          "name": "DEMO HALO P36 演示安装说明",
+          "type": "说明书",
+          "size": "1.4 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-03",
+      "name": "演示产品 · LINE 磁吸线条灯",
+      "model": "DEMO-LINE-L24",
+      "sku": "DEMO-SKU-LINE-L24",
+      "category": "磁吸灯",
+      "family": "无主灯",
+      "status": "在售",
+      "power": "24W（演示参数）",
+      "lumens": "2,160 lm（演示参数）",
+      "colorTemp": "3000K / 4000K（演示可选）",
+      "material": "6063 铝型材（演示材质）",
+      "dimensions": "L600 × W22 × H45 mm（演示尺寸）",
+      "colors": [
+        "曜石黑（演示色）"
+      ],
+      "scenarios": [
+        "办公室（演示场景）",
+        "住宅（演示场景）",
+        "精品店（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 166,
+      "priceRange": "¥299–349（模拟价）",
+      "moq": 10,
+      "stock": 89,
+      "leadTime": "演示交期：现货 24 小时内发（模拟）",
+      "warranty": "演示质保：5 年（模拟）",
+      "description": "LumaFlow 演示用低眩光磁吸线条灯，展示模块化产品资料与检索字段。所有功率、库存、成本和价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "linear-gradient(165deg, #dedbd2 0 44%, #25272a 45% 52%, #f3d17d 53% 58%, #45484c 59% 100%)",
+      "accent": "#e0b448",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-03-01",
+          "name": "DEMO LINE L24 演示安装效果图",
+          "type": "图片",
+          "size": "2.8 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-03-02",
+          "name": "DEMO LINE L24 演示参数表",
+          "type": "参数表",
+          "size": "441 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-03-03",
+          "name": "DEMO 磁吸系统演示安装视频说明",
+          "type": "视频",
+          "size": "24.6 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-04",
+      "name": "演示产品 · VEIL 洗墙灯",
+      "model": "DEMO-VEIL-W12",
+      "sku": "DEMO-SKU-VEIL-W12",
+      "category": "洗墙灯",
+      "family": "商业照明",
+      "status": "低库存",
+      "power": "12W（演示参数）",
+      "lumens": "960 lm（演示参数）",
+      "colorTemp": "3000K（演示参数）",
+      "material": "压铸铝 + 光学玻璃（演示材质）",
+      "dimensions": "L168 × W45 × H72 mm（演示尺寸）",
+      "colors": [
+        "珍珠白（演示色）",
+        "曜石黑（演示色）"
+      ],
+      "scenarios": [
+        "博物馆（演示场景）",
+        "画廊（演示场景）",
+        "走廊（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 198,
+      "priceRange": "¥369–429（模拟价）",
+      "moq": 6,
+      "stock": 8,
+      "leadTime": "演示交期：现货售完后 12 天（模拟）",
+      "warranty": "演示质保：3 年（模拟）",
+      "description": "LumaFlow 演示用非对称配光洗墙灯，故意保留低库存状态供筛选和提醒流程演示。库存与价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "linear-gradient(110deg, #d8d5cc 0 46%, #fffdf4 47% 62%, #a9a69f 63% 100%)",
+      "accent": "#83765d",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-04-01",
+          "name": "DEMO VEIL W12 演示洗墙图",
+          "type": "图片",
+          "size": "2.1 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-04-02",
+          "name": "DEMO VEIL W12 演示配光参数表",
+          "type": "参数表",
+          "size": "620 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-05",
+      "name": "演示产品 · MOSS 户外壁灯",
+      "model": "DEMO-MOSS-O8",
+      "sku": "DEMO-SKU-MOSS-O8",
+      "category": "户外灯",
+      "family": "户外照明",
+      "status": "预售",
+      "power": "8W（演示参数）",
+      "lumens": "640 lm（演示参数）",
+      "colorTemp": "3000K（演示参数）",
+      "material": "铝合金 + 钢化玻璃（演示材质）",
+      "dimensions": "L180 × W92 × H55 mm（演示尺寸）",
+      "colors": [
+        "苔藓绿（演示色）",
+        "深空灰（演示色）"
+      ],
+      "scenarios": [
+        "民宿（演示场景）",
+        "庭院（演示场景）",
+        "露台（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 151,
+      "priceRange": "¥289–329（模拟价）",
+      "moq": 12,
+      "stock": 0,
+      "leadTime": "演示交期：预计 2026-09-18 到仓（模拟）",
+      "warranty": "演示质保：3 年；IP65 为模拟标注",
+      "description": "LumaFlow 演示用双向出光户外壁灯，故意保留预售与零库存状态供流程演示。防护等级、库存和价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "linear-gradient(155deg, #9fac91 0 38%, #53604d 39% 69%, #d9c29c 70% 100%)",
+      "accent": "#69785e",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-05-01",
+          "name": "DEMO MOSS O8 演示户外场景图",
+          "type": "图片",
+          "size": "3.4 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-05-02",
+          "name": "DEMO MOSS O8 演示防护参数表",
+          "type": "参数表",
+          "size": "530 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-05-03",
+          "name": "DEMO MOSS O8 演示检测证书",
+          "type": "证书",
+          "size": "1.4 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-06",
+      "name": "演示产品 · BEAM 深防眩筒灯",
+      "model": "DEMO-BEAM-S30",
+      "sku": "DEMO-SKU-BEAM-S30",
+      "category": "筒灯",
+      "family": "基础照明",
+      "status": "在售",
+      "power": "30W（演示参数）",
+      "lumens": "2,700 lm（演示参数）",
+      "colorTemp": "3000K / 4000K / 5000K（演示可选）",
+      "material": "压铸铝 + PC（演示材质）",
+      "dimensions": "Ø145 × H118 mm；开孔 Ø125 mm（演示尺寸）",
+      "colors": [
+        "珍珠白（演示色）"
+      ],
+      "scenarios": [
+        "商场（演示场景）",
+        "办公室（演示场景）",
+        "酒店（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 96,
+      "priceRange": "¥169–219（模拟价）",
+      "moq": 20,
+      "stock": 214,
+      "leadTime": "演示交期：现货 24 小时内发（模拟）",
+      "warranty": "演示质保：3 年（模拟）",
+      "description": "LumaFlow 演示用深防眩筒灯，用于展示高库存基础照明产品。光效、库存、成本和价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "radial-gradient(circle at 50% 48%, #4b4c4d 0 15%, #f5f1e8 16% 29%, #c7c4bc 30% 36%, transparent 37%), linear-gradient(145deg, #e3dfd7, #a7a49e)",
+      "accent": "#6f7b83",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-06-01",
+          "name": "DEMO BEAM S30 演示产品图",
+          "type": "图片",
+          "size": "1.9 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-06-02",
+          "name": "DEMO BEAM S30 演示参数表",
+          "type": "参数表",
+          "size": "398 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-06-03",
+          "name": "DEMO BEAM S30 演示安装说明书",
+          "type": "说明书",
+          "size": "1.2 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-07",
+      "name": "演示产品 · ORBIT 阅读台灯",
+      "model": "DEMO-ORBIT-D12",
+      "sku": "DEMO-SKU-ORBIT-D12",
+      "category": "台灯",
+      "family": "家居照明",
+      "status": "在售",
+      "power": "12W（演示参数）",
+      "lumens": "900 lm（演示参数）",
+      "colorTemp": "2700K–5000K（演示可调）",
+      "material": "铝合金 + 织物灯罩（演示材质）",
+      "dimensions": "W180 × D180 × H420 mm（演示尺寸）",
+      "colors": [
+        "暖砂色（演示色）",
+        "墨黑色（演示色）"
+      ],
+      "scenarios": [
+        "书房（演示场景）",
+        "卧室（演示场景）",
+        "酒店客房（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 178,
+      "priceRange": "¥329–399（模拟价）",
+      "moq": 8,
+      "stock": 57,
+      "leadTime": "演示交期：现货 3 个工作日内发（模拟）",
+      "warranty": "演示质保：2 年（模拟）",
+      "description": "LumaFlow 演示用可调色温阅读台灯，补充家居照明分类和场景搜索样例。灯具参数、库存和价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "linear-gradient(145deg, #f2ddc6 0 36%, #252525 37% 58%, #8f765d 59% 100%)",
+      "accent": "#b97849",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-07-01",
+          "name": "DEMO ORBIT D12 演示桌面场景图",
+          "type": "图片",
+          "size": "2.0 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-07-02",
+          "name": "DEMO ORBIT D12 演示使用说明",
+          "type": "说明书",
+          "size": "740 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    },
+    {
+      "id": "DEMO-PRODUCT-08",
+      "name": "演示产品 · PIVOT 庭院投光灯",
+      "model": "DEMO-PIVOT-O24",
+      "sku": "DEMO-SKU-PIVOT-O24",
+      "category": "投光灯",
+      "family": "户外照明",
+      "status": "预售",
+      "power": "24W（演示参数）",
+      "lumens": "2,100 lm（演示参数）",
+      "colorTemp": "2200K / 2700K / 3000K（演示可选）",
+      "material": "铝合金 + 钢化玻璃（演示材质）",
+      "dimensions": "L210 × W96 × H148 mm（演示尺寸）",
+      "colors": [
+        "深空灰（演示色）",
+        "沙砾灰（演示色）"
+      ],
+      "scenarios": [
+        "庭院（演示场景）",
+        "景观步道（演示场景）",
+        "民宿入口（演示场景）"
+      ],
+      "supplier": "DEMO 演示供应商（虚构）",
+      "cost": 244,
+      "priceRange": "¥459–529（模拟价）",
+      "moq": 6,
+      "stock": 0,
+      "leadTime": "演示交期：预计 2026-10-08 到仓（模拟）",
+      "warranty": "演示质保：3 年；IP66 为模拟标注",
+      "description": "LumaFlow 演示用可调角度庭院投光灯，补充预售、零库存和户外场景的检索样例。防护等级、库存和价格均为模拟数据，不代表真实商品或报价。",
+      "gradient": "linear-gradient(135deg, #4e5961 0 44%, #20272d 45% 71%, #b79b6b 72% 100%)",
+      "accent": "#8f7653",
+      "assets": [
+        {
+          "id": "DEMO-ASSET-08-01",
+          "name": "DEMO PIVOT O24 演示庭院场景图",
+          "type": "图片",
+          "size": "2.7 MB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-08-02",
+          "name": "DEMO PIVOT O24 演示配光参数表",
+          "type": "参数表",
+          "size": "612 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        },
+        {
+          "id": "DEMO-ASSET-08-03",
+          "name": "DEMO PIVOT O24 演示防护说明",
+          "type": "说明书",
+          "size": "930 KB（模拟）",
+          "version": "demo-v1",
+          "updatedAt": "演示日期 2026-09-17"
+        }
+      ]
+    }
+  ]
+}

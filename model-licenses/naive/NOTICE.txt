@@ -1,0 +1,5 @@
+Source: https://huggingface.co/NaiveAI/Naive-N0.5-Flash-FP8
+Source revision: 1cd079a56408064751b45c31da60d3c4ee8dd930
+Original copyrights and license apply to model weights.
+
+LumaFlow modified original weights: retained all 48 layers but only expert 0 of 256 in each MoE layer; grouped INT4. NAIVE_INT4.json lists every conversion. Language quality validation FAILED.

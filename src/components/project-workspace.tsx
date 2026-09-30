@@ -1,27 +1,43 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FolderOpen, Plus, ArrowLeft, Upload, Trash2, X, ChevronRight, ChevronDown, Eye, MoreHorizontal, Pin } from "lucide-react";
 import { type Project } from "@/lib/contracts/project";
 import type { LocalChatSummary } from "@/lib/contracts/chat-history";
+import { wechatConversationPageSchema, wechatMessagePageSchema, type WechatConversation } from "@/lib/contracts/wechat-conversation";
 import { ProjectContextMenu, ProjectEditDialog, ProjectSectionDialog } from "./project-actions";
 import { WorkspaceFolderField } from "./workspace-folder-field";
-import { ConversationHistoryList } from "./conversation-history-list";
+import { ConversationHistoryList, type ConversationHistoryItem } from "./conversation-history-list";
 import styles from "./project-workspace.module.css";
+export type HistoryCategory = "chat" | "work" | "image" | "wechat";
+const historyCategoryLabels: Record<HistoryCategory, string> = { chat: "Chat", work: "Work", image: "Image", wechat: "Wechat Agent" };
 export async function projectRequest<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(url, { method, cache: "no-store", ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
   const result = await response.json(); if (!response.ok) throw new Error(result?.error?.message || "项目操作失败"); return result.data;
 }
+async function wechatHistoryRequest<T>(url: string, schema: { parse: (value: unknown) => T }, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { cache: "no-store", signal, headers: { Accept: "application/json" } });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error?.message || "微信 Agent 历史暂不可用");
+  return schema.parse(result?.data);
+}
 export function projectsUpdated() { window.dispatchEvent(new Event("lumaflow-projects-updated")); }
-export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, recentAvailable = true, onOpenChat, onRemoved }: { selectedId?: string | null; onSelect: (id: string) => void; onToast?: (text: string) => void; recentContent?: ReactNode; recentAvailable?: boolean; onOpenChat?: (chatId: string, projectId: string | null) => void; onRemoved?: (id: string) => void }) {
+export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, recentAvailable = true, onOpenChat, onOpenHistory, onRemoved, onNewHistory }: { selectedId?: string | null; onSelect: (id: string) => void; onToast?: (text: string) => void; recentContent?: ReactNode; recentAvailable?: boolean; onOpenChat?: (chatId: string, projectId: string | null) => void; onOpenHistory?: (category: HistoryCategory, id: string, projectId?: string | null) => void; onRemoved?: (id: string) => void; onNewHistory?: (category: HistoryCategory) => void }) {
   const [sectionProject, setSectionProject] = useState<Project | null>(null);
   const [projectMenu, setProjectMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
   const [editingProject, setEditingProject] = useState<{ project: Project; remove: boolean } | null>(null);
   const closeProjectMenu = useCallback(() => setProjectMenu(null), []);
-  const [tab, setTab] = useState<"recent" | "projects">(recentContent ? "recent" : "projects");
+  const [historyCategory, setHistoryCategory] = useState<HistoryCategory>("chat");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [projectChats, setProjectChats] = useState<Record<string, LocalChatSummary[]>>({});
   const [recentChats, setRecentChats] = useState<LocalChatSummary[]>([]);
+  const [wechatChats, setWechatChats] = useState<WechatConversation[]>([]);
+  const [wechatCursor, setWechatCursor] = useState<string | null>(null);
+  const [wechatPaging, setWechatPaging] = useState(false);
+  const [wechatSearchQuery, setWechatSearchQuery] = useState("");
+  const [wechatSearchText, setWechatSearchText] = useState<Record<string, string>>({});
+  const wechatSearchController = useRef<AbortController | null>(null);
+  const wechatAllLoadedRef = useRef(false);
   const [loadingProject, setLoadingProject] = useState<string | null>(null);
   async function loadChats(id: string) {
     setLoadingProject(id);
@@ -49,6 +65,127 @@ export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, r
   const createButton = useRef<HTMLButtonElement>(null);
   const refresh = useCallback(() => { void projectRequest<Project[]>("/api/v1/projects").then(setProjects).catch(() => {}); }, []);
   useEffect(() => { refresh(); window.addEventListener("lumaflow-projects-updated", refresh); return () => window.removeEventListener("lumaflow-projects-updated", refresh); }, [refresh]);
+  const refreshWechat = useCallback(async () => {
+    wechatAllLoadedRef.current = false;
+    try {
+      const page = await wechatHistoryRequest("/api/v1/wechat-agent?action=conversations", wechatConversationPageSchema);
+      setWechatChats(page.items);
+      setWechatCursor(page.nextCursor ?? null);
+    } catch {
+      // A disconnected WeChat runtime still leaves the local history shell usable.
+    }
+  }, []);
+  useEffect(() => {
+    if (historyCategory !== "wechat") return;
+    queueMicrotask(() => { void refreshWechat(); });
+    window.addEventListener("lumaflow-wechat-agent-updated", refreshWechat);
+    return () => window.removeEventListener("lumaflow-wechat-agent-updated", refreshWechat);
+  }, [historyCategory, refreshWechat]);
+  useEffect(() => {
+    wechatSearchController.current?.abort();
+    const needle = wechatSearchQuery.trim().toLocaleLowerCase();
+    if (!needle) {
+      queueMicrotask(() => setWechatSearchText({}));
+      wechatSearchController.current = null;
+      return;
+    }
+    const controller = new AbortController();
+    wechatSearchController.current = controller;
+    const readSearchText = async () => {
+      let searchableConversations = wechatChats;
+      let remainingCursor = wechatCursor || undefined;
+      if (!wechatAllLoadedRef.current) {
+        try {
+          const loaded = [...wechatChats];
+          while (remainingCursor && !controller.signal.aborted) {
+            const params = new URLSearchParams({ action: "conversations", cursor: remainingCursor });
+            const page = await wechatHistoryRequest(`/api/v1/wechat-agent?${params.toString()}`, wechatConversationPageSchema, controller.signal);
+            loaded.push(...page.items);
+            remainingCursor = page.nextCursor ?? undefined;
+          }
+          if (!controller.signal.aborted) {
+            searchableConversations = [...new Map(loaded.map((item) => [item.id, item])).values()];
+            wechatAllLoadedRef.current = true;
+            if (searchableConversations.length !== wechatChats.length || wechatCursor) {
+              setWechatChats(searchableConversations);
+              setWechatCursor(null);
+            }
+          }
+        } catch {
+          if (controller.signal.aborted) return;
+        }
+      }
+      const results = await Promise.all(searchableConversations.map(async (conversation) => {
+        const chunks = [conversation.title, conversation.preview || ""];
+        let cursor: string | undefined;
+        try {
+          do {
+            const params = new URLSearchParams({ action: "messages", conversationId: conversation.id });
+            if (cursor) params.set("cursor", cursor);
+            const page = await wechatHistoryRequest(`${"/api/v1/wechat-agent"}?${params.toString()}`, wechatMessagePageSchema, controller.signal);
+            chunks.push(...page.items.map((message) => message.text));
+            cursor = page.nextCursor ?? undefined;
+          } while (cursor && !controller.signal.aborted);
+        } catch {
+          if (controller.signal.aborted) return null;
+        }
+        const searchableText = chunks.join("\n");
+        return searchableText.toLocaleLowerCase().includes(needle) ? [conversation.id, searchableText] as const : null;
+      }));
+      if (controller.signal.aborted) return;
+      setWechatSearchText(Object.fromEntries(results.filter((result): result is readonly [string, string] => result !== null)));
+    };
+    void readSearchText();
+    return () => {
+      controller.abort();
+      if (wechatSearchController.current === controller) wechatSearchController.current = null;
+    };
+  }, [wechatChats, wechatCursor, wechatSearchQuery]);
+  useEffect(() => () => wechatSearchController.current?.abort(), []);
+  function selectHistoryCategory(next: HistoryCategory) {
+    setHistoryCategory(next);
+    // AgentWorkspace and WechatAgentWorkspace render their history into the
+    // host supplied by SalesHub. The event makes a tab change reactive for a
+    // portal child while the data attribute also covers a remount.
+    window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: next } }));
+  }
+  useEffect(() => {
+    const onHistoryCategoryChanged = (event: Event) => {
+      const category = (event as CustomEvent<{ category?: string }>).detail?.category;
+      if (category === "chat" || category === "work" || category === "image" || category === "wechat") setHistoryCategory(category);
+    };
+    window.addEventListener("lumaflow-history-category-changed", onHistoryCategoryChanged);
+    return () => window.removeEventListener("lumaflow-history-category-changed", onHistoryCategoryChanged);
+  }, []);
+  function startHistory() {
+    if (onNewHistory) onNewHistory(historyCategory);
+    else window.dispatchEvent(new CustomEvent("lumaflow-new-history-session", { detail: { category: historyCategory } }));
+  }
+  async function loadMoreWechat() {
+    if (!wechatCursor || wechatPaging) return;
+    setWechatPaging(true);
+    try {
+      const page = await wechatHistoryRequest(`/api/v1/wechat-agent?action=conversations&cursor=${encodeURIComponent(wechatCursor)}`, wechatConversationPageSchema);
+      setWechatChats((old) => [...new Map([...old, ...page.items].map((item) => [item.id, item])).values()]);
+      setWechatCursor(page.nextCursor ?? null);
+      if (!page.nextCursor) wechatAllLoadedRef.current = true;
+    } catch (issue) {
+      onToast?.(issue instanceof Error ? issue.message : "微信历史读取失败");
+    } finally {
+      setWechatPaging(false);
+    }
+  }
+  async function updateWechatConversation(id: string, patch: { title?: string; pinned?: boolean }) {
+    try {
+      const response = await fetch("/api/v1/wechat-agent", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ action: "updateConversation", conversationId: id, ...patch }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error?.message || "微信对话更新失败");
+      await refreshWechat();
+      onToast?.(patch.title ? "对话名称已更新" : patch.pinned ? "对话已置顶" : "对话已取消置顶");
+    } catch (issue) {
+      onToast?.(issue instanceof Error ? issue.message : "微信对话更新失败");
+    }
+  }
   function close() { if (busy) return; setCreating(false); setError(""); createButton.current?.focus(); }
   async function create() {
     if (busy || !name.trim()) return;
@@ -88,14 +225,32 @@ export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, r
       </form>
     </section>
   </div>, document.body);
-  return <section className={styles.sidebar} aria-label="最近与项目">
-    {recentContent && <div className={styles.sidebarTabs} role="tablist" aria-label="对话导航"><button role="tab" aria-selected={tab === "recent"} onClick={() => setTab("recent")}>最近</button><button role="tab" aria-selected={tab === "projects"} onClick={() => setTab("projects")}>项目</button></div>}
-    {recentContent && <div hidden={tab !== "recent"} role="tabpanel" aria-label="最近对话"><div hidden={!recentAvailable}>{recentContent}</div>{!recentAvailable && <ConversationHistoryList items={recentChats} onSelect={(id) => { const chat = recentChats.find((item) => item.id === id); onOpenChat?.(id, chat?.projectId || null); }} onRename={(id, title) => void changeChat(id, { title })} onPin={(id, pinned) => void changeChat(id, { pinned })} />}</div>}
-    <div hidden={tab !== "projects"} role="tabpanel" aria-label="项目"><header><strong>项目</strong><button ref={createButton} aria-label="创建项目" title="创建项目" onClick={() => setCreating(true)}><Plus size={17} /></button></header>
+  const renderedRecentContent = isValidElement(recentContent)
+    ? cloneElement(recentContent as ReactElement<{ "data-history-category"?: string }>, { "data-history-category": historyCategory })
+    : recentContent;
+  const visibleRecentChats = recentChats.filter((chat) => historyCategory === "image" ? chat.hasImage === true : historyCategory === "chat" ? chat.experience === "chat" && chat.hasImage !== true : historyCategory === "work" ? chat.experience === "work" && chat.hasImage !== true : false);
+  const localHistoryItems: ConversationHistoryItem[] = visibleRecentChats.map((chat) => ({ id: chat.id, title: chat.title, experience: chat.experience, turnCount: chat.turnCount, pinned: chat.pinned, archived: chat.archived, searchableText: chat.searchableText }));
+  const wechatHistoryItems: ConversationHistoryItem[] = wechatChats.map((chat) => ({ id: chat.id, title: chat.title, pinned: chat.pinned, searchableText: wechatSearchText[chat.id] || chat.preview || "" }));
+  const historyItems = historyCategory === "wechat" ? wechatHistoryItems : localHistoryItems;
+  function openHistory(id: string) {
+    if (historyCategory === "wechat") {
+      if (onOpenHistory) onOpenHistory("wechat", id);
+      else window.dispatchEvent(new CustomEvent("lumaflow-open-wechat-conversation", { detail: { id } }));
+      return;
+    }
+    const chat = recentChats.find((item) => item.id === id);
+    if (onOpenHistory) onOpenHistory(historyCategory, id, chat?.projectId || null);
+    else onOpenChat?.(id, chat?.projectId || null);
+  }
+  const historySearchChange = historyCategory === "wechat" ? setWechatSearchQuery : undefined;
+  return <section className={styles.sidebar} aria-label="项目与对话记录">
+    <div className={styles.projectRegion}><div className={styles.projectSection} aria-label="项目"><header><strong>项目</strong><button ref={createButton} aria-label="创建项目" title="创建项目" onClick={() => setCreating(true)}><Plus size={17} /></button></header>
     {projects.length === 0 && <p className={styles.sidebarHint}>点击加号创建项目</p>}
     {[...projects].sort((a, b) => (a.sectionName || "").localeCompare(b.sectionName || "")).map((project, index, list) => <div className={styles.projectGroup} key={project.id}>{project.sectionName && (index === 0 || list[index - 1].sectionName !== project.sectionName) && <h4 className={styles.sectionHeading}>{project.sectionName}</h4>}<div className={styles.projectRow} onContextMenu={(event) => { event.preventDefault(); setProjectMenu({ project, x: event.clientX, y: event.clientY }); }}><button aria-label={`${expanded[project.id] ? "收起" : "展开"}项目 ${project.name}`} aria-expanded={Boolean(expanded[project.id])} onClick={() => { const opening = !expanded[project.id]; setExpanded((old) => ({ ...old, [project.id]: opening })); if (opening) void loadChats(project.id); }}>{expanded[project.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button><button className={selectedId === project.id ? styles.selected : ""} onClick={() => onSelect(project.id)} title={`${project.name}\n${project.instructions || "尚未设置项目规则"}\n${project.knowledgeBaseIds.length} 个文件 · ${project.sources.length} 份资料`}><FolderOpen size={16} /><span>{project.name}</span>{project.pinned && <Pin size={12} />}</button><button className={styles.previewButton} aria-label={`预览项目 ${project.name}`} title="预览项目" onClick={() => onSelect(project.id)}><Eye size={15} /></button><button aria-label={`项目更多操作 ${project.name}`} aria-haspopup="menu" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setProjectMenu({ project, x: rect.right, y: rect.bottom }); }}><MoreHorizontal size={16} /></button></div>
-    {expanded[project.id] && <div className={styles.projectChildren}>{loadingProject === project.id ? <p>正在读取…</p> : <ConversationHistoryList hideToolbar items={projectChats[project.id] || []} onSelect={(id) => onOpenChat?.(id, project.id)} onRename={(id, title) => void changeChat(id, { title }, project.id)} onPin={(id, pinned) => void changeChat(id, { pinned }, project.id)} />}</div>}</div>)}
-    </div>{modal}
+    {expanded[project.id] && <div className={styles.projectChildren}>{loadingProject === project.id ? <p>正在读取…</p> : <ConversationHistoryList hideToolbar items={projectChats[project.id] || []} onSelect={(id) => { const chat = projectChats[project.id]?.find((item) => item.id === id); if (onOpenHistory && chat) onOpenHistory(chat.hasImage ? "image" : chat.experience, id, project.id); else onOpenChat?.(id, project.id); }} onRename={(id, title) => void changeChat(id, { title }, project.id)} onPin={(id, pinned) => void changeChat(id, { pinned }, project.id)} />}</div>}</div>)}
+    </div></div>
+    {recentContent && <div className={styles.historySection} aria-label="对话记录"><div className={styles.historyTabs} role="tablist" aria-label="对话分类">{(Object.keys(historyCategoryLabels) as HistoryCategory[]).map((category) => <button key={category} role="tab" aria-selected={historyCategory === category} onClick={() => selectHistoryCategory(category)}>{historyCategoryLabels[category]}</button>)}</div><div className={styles.historyPanel} role="tabpanel" aria-label={`${historyCategoryLabels[historyCategory]} 对话`}><header><strong>{historyCategoryLabels[historyCategory]} 对话</strong><button type="button" aria-label={`新建${historyCategoryLabels[historyCategory]}对话`} title={`新建${historyCategoryLabels[historyCategory]}对话`} onClick={startHistory}><Plus size={15} /></button></header><div className={styles.historyContent}><div className={styles.portalHistory} hidden data-history-source={recentAvailable ? "portal" : "local"}>{renderedRecentContent}</div><ConversationHistoryList key={historyCategory} items={historyItems} onSearchChange={historySearchChange} onSelect={openHistory} onRename={(id, title) => historyCategory === "wechat" ? void updateWechatConversation(id, { title }) : void changeChat(id, { title })} onPin={(id, pinned) => historyCategory === "wechat" ? void updateWechatConversation(id, { pinned }) : void changeChat(id, { pinned })} /></div>{historyCategory === "wechat" && wechatCursor && <button type="button" className={styles.historyMore} disabled={wechatPaging} onClick={() => void loadMoreWechat()}>{wechatPaging ? "正在读取…" : "加载更多会话"}</button>}</div></div>}
+    {modal}
     {projectMenu && <ProjectContextMenu project={projectMenu.project} position={projectMenu} onClose={closeProjectMenu} onEdit={() => setEditingProject({ project: projectMenu.project, remove: false })} onRemove={() => setEditingProject({ project: projectMenu.project, remove: true })} onSection={() => setSectionProject(projectMenu.project)} onToast={onToast} />}
     {sectionProject && <ProjectSectionDialog project={sectionProject} sections={[...new Set(projects.map((project) => project.sectionName).filter(Boolean))]} onClose={() => setSectionProject(null)} />}
     {editingProject && <ProjectEditDialog key={editingProject.project.id} project={editingProject.project} remove={editingProject.remove} onClose={() => setEditingProject(null)} onRemoved={onRemoved} />}

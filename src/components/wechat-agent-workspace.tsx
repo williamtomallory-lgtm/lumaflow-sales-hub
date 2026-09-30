@@ -1,8 +1,9 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element -- Local authenticated Agent avatars and QR images. */
-import { MessageCircle, Plus, RefreshCw, Settings, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ImagePlus, MessageCircle, Paperclip, Plus, RefreshCw, Settings, X } from "lucide-react";
+import type { FileUIPart } from "ai";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   wechatAgentStateSchema, wechatAgentConfigPatchSchema, wechatConversationPageSchema, wechatMessagePageSchema,
@@ -12,11 +13,75 @@ import { WorkspaceFolderField } from "./workspace-folder-field";
 import { AgentKnowledgePicker } from "./agent-knowledge-picker";
 import styles from "./wechat-agent-workspace.module.css";
 import { ConversationHistoryList, type ConversationHistoryItem } from "./conversation-history-list";
+import { WechatLocalImagePanel } from "./wechat-local-image-panel";
+import { isImageOperationPrompt } from "@/lib/client/image-operation-intent";
 
 const endpoint = "/api/v1/wechat-agent";
 const connectionLabels = { connected: "已连接", waiting: "等待连接", disconnected: "未连接" };
 const WECHAT_AGENT_DISPLAY_NAME = "WeixinClawBot";
 const configSavedMessage = "Agent设置已保存";
+const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"] as const);
+const maxImageCount = 4;
+const maxImageBytes = 2_400_000;
+const wechatDraftStoragePrefix = "lumaflow.wechat-agent.draft.v1:";
+const pendingNewConversationStorageKey = "lumaflow.wechat-agent.pending-new-conversation.v1";
+type WechatImageMediaType = "image/jpeg" | "image/png" | "image/webp";
+type WechatImage = { type: "file"; mediaType: WechatImageMediaType; filename: string; url: string; size: number };
+type WechatDraft = { text: string; images: WechatImage[] };
+type HistoryCategory = "chat" | "work" | "image" | "wechat";
+function isHistoryCategory(value: string | undefined): value is HistoryCategory { return value === "chat" || value === "work" || value === "image" || value === "wechat"; }
+
+function emptyDraft(): WechatDraft { return { text: "", images: [] }; }
+function draftStorageKey(conversationId: string) { return `${wechatDraftStoragePrefix}${encodeURIComponent(conversationId)}`; }
+function dataUrlSize(url: string) {
+  const comma = url.indexOf(",");
+  if (comma < 0) return 0;
+  const payload = url.slice(comma + 1);
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(payload.length * 0.75) - padding);
+}
+function readDraft(conversationId: string): WechatDraft {
+  if (typeof window === "undefined" || !conversationId) return emptyDraft();
+  try {
+    const raw = window.sessionStorage.getItem(draftStorageKey(conversationId));
+    if (!raw) return emptyDraft();
+    const parsed = JSON.parse(raw) as Partial<WechatDraft> | string;
+    if (typeof parsed === "string") return { text: parsed, images: [] };
+    const images = Array.isArray(parsed.images) ? parsed.images.filter((image): image is WechatImage => Boolean(image && typeof image === "object" && image.type === "file" && acceptedImageTypes.has(image.mediaType as WechatImageMediaType) && typeof image.filename === "string" && typeof image.url === "string" && image.url.startsWith(`data:${image.mediaType};base64,`))).slice(0, maxImageCount).map((image) => ({ ...image, size: typeof image.size === "number" ? image.size : dataUrlSize(image.url) })) : [];
+    return { text: typeof parsed.text === "string" ? parsed.text.slice(0, 12_000) : "", images };
+  } catch {
+    return emptyDraft();
+  }
+}
+function writeDraft(conversationId: string, draft: WechatDraft) {
+  if (typeof window === "undefined" || !conversationId) return;
+  try {
+    if (!draft.text.trim() && !draft.images.length) window.sessionStorage.removeItem(draftStorageKey(conversationId));
+    else window.sessionStorage.setItem(draftStorageKey(conversationId), JSON.stringify(draft));
+  } catch {
+    // Draft persistence is best effort; the in-memory value remains usable.
+  }
+}
+function clearDraft(conversationId: string) {
+  if (typeof window === "undefined" || !conversationId) return;
+  try { window.sessionStorage.removeItem(draftStorageKey(conversationId)); } catch { /* optional browser storage */ }
+}
+function writePendingNewConversationId(conversationId: string) {
+  if (typeof window === "undefined") return;
+  try { window.sessionStorage.setItem(pendingNewConversationStorageKey, conversationId); } catch { /* optional browser storage */ }
+}
+function clearPendingNewConversationId() {
+  if (typeof window === "undefined") return;
+  try { window.sessionStorage.removeItem(pendingNewConversationStorageKey); } catch { /* optional browser storage */ }
+}
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("图片读取失败"));
+    reader.onerror = () => reject(reader.error ?? new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
 const permissionModes = [
   { id: "request", label: "请求批准", summary: "读取、创建和修改都需要确认。", permissions: { read: "confirm", create: "confirm", modify: "confirm", tools: "confirm", delete: "confirm", send: "confirm", moments: "confirm" } },
   { id: "assist", label: "帮我批准", summary: "读取、创建和工作目录内工具自动执行，修改需要确认。", permissions: { read: "auto", create: "auto", modify: "confirm", tools: "auto", delete: "confirm", send: "auto", moments: "confirm" } },
@@ -199,31 +264,110 @@ export type WechatAgentWorkspaceProps = {
   onBack?: () => void;
   onToast?: (message: string) => void;
   historyPortalTarget?: HTMLElement | null;
-  onExperienceChange?: (next: "chat" | "work") => void;
+  onExperienceChange?: (next: "chat" | "work" | "image") => void;
+  newConversationSignal?: number;
+  requestedConversation?: { id: string; nonce: number } | null;
 };
 
-function ExperienceTabs({ onChange }: { onChange?: (next: "chat" | "work") => void }) {
-  return <div className={styles.experienceTabs} role="group" aria-label="工作模式"><button type="button" aria-pressed={false} disabled={!onChange} onClick={() => onChange?.("chat")}>Chat</button><button type="button" aria-pressed={false} disabled={!onChange} onClick={() => onChange?.("work")}>Work</button><button type="button" aria-pressed={true}>Wechat Agent</button></div>;
+function ExperienceTabs({ onChange }: { onChange?: (next: "chat" | "work" | "image") => void }) {
+  return <div className={styles.experienceTabs} role="group" aria-label="工作模式"><button type="button" aria-pressed={false} disabled={!onChange} onClick={() => onChange?.("chat")}>Chat</button><button type="button" aria-pressed={false} disabled={!onChange} onClick={() => onChange?.("work")}>Work</button><button type="button" aria-pressed={false} disabled={!onChange} onClick={() => onChange?.("image")}>Image</button><button type="button" aria-pressed={true}>Wechat Agent</button></div>;
 }
 
-export function WechatAgentWorkspace({ onBack, onToast, historyPortalTarget, onExperienceChange }: WechatAgentWorkspaceProps) {
+export function WechatAgentWorkspace({ onBack, onToast, historyPortalTarget, onExperienceChange, newConversationSignal = 0, requestedConversation }: WechatAgentWorkspaceProps) {
   const { state, error, acting, refresh, action, setState } = useWechatAgentState();
   const [extraConversations, setExtraConversations] = useState<{ items: WechatConversation[]; nextCursor?: string | null } | null>(null);
   const conversationId = state?.currentConversationId || "";
-  const conversations = mergeItems(extraConversations?.items || [], state?.conversations.items || []).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const conversations = useMemo(() => mergeItems(extraConversations?.items || [], state?.conversations.items || []).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [extraConversations, state?.conversations.items]);
   const conversationCursor = extraConversations ? extraConversations.nextCursor : state?.conversations.nextCursor;
   const [feed, setFeed] = useState<{ conversationId: string; page: WechatMessagePage; olderPagesStarted: boolean } | null>(null);
   const page = feed?.conversationId === conversationId ? feed.page : { items: [], pendingActions: [] };
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const draft = drafts[conversationId] || "";
   const setDraft = (value: string) => setDrafts((old) => ({ ...old, [conversationId]: value }));
+  const [draftImages, setDraftImages] = useState<Record<string, WechatImage[]>>({});
+  const images = useMemo(() => draftImages[conversationId] || [], [draftImages, conversationId]);
+  const [imageComposerState, setImageComposerState] = useState({ conversationId: "", active: false, autoSubmit: false });
+  const imageMode = imageComposerState.conversationId === conversationId && imageComposerState.active;
+  const imageAutoSubmit = imageMode && imageComposerState.autoSubmit;
+  const setImageMode = (active: boolean) => setImageComposerState((old) => ({ ...old, conversationId, active, autoSubmit: active && old.conversationId === conversationId ? old.autoSubmit : false }));
+  const setImageAutoSubmit = (autoSubmit: boolean) => setImageComposerState((old) => ({ ...old, conversationId, autoSubmit }));
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [feedIssue, setFeedIssue] = useState<{ conversationId: string; text: string } | null>(null);
   const feedError = feedIssue?.conversationId === conversationId ? feedIssue.text : "";
   const [configOpen, setConfigOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const [paging, setPaging] = useState(false);
+  const [historyCategory, setHistoryCategory] = useState<HistoryCategory>(() => isHistoryCategory(historyPortalTarget?.dataset.historyCategory) ? historyPortalTarget.dataset.historyCategory : "wechat");
+  const [conversationSearchQuery, setConversationSearchQuery] = useState("");
+  const [conversationSearchText, setConversationSearchText] = useState<Record<string, string>>({});
+  const handledNewConversationSignalRef = useRef(0);
+  const handledSelectionSignalRef = useRef(0);
+  const searchController = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const syncFromHost = () => {
+      const category = historyPortalTarget?.dataset.historyCategory;
+      if (isHistoryCategory(category)) setHistoryCategory(category);
+    };
+    const onHistoryCategoryChanged = (event: Event) => {
+      const category = (event as CustomEvent<{ category?: string }>).detail?.category;
+      if (isHistoryCategory(category)) setHistoryCategory(category);
+    };
+    syncFromHost();
+    window.addEventListener("lumaflow-history-category-changed", onHistoryCategoryChanged);
+    return () => window.removeEventListener("lumaflow-history-category-changed", onHistoryCategoryChanged);
+  }, [historyPortalTarget]);
+  useEffect(() => {
+    searchController.current?.abort();
+    const needle = conversationSearchQuery.trim().toLocaleLowerCase();
+    if (!needle) {
+      queueMicrotask(() => setConversationSearchText({}));
+      searchController.current = null;
+      return;
+    }
+    const controller = new AbortController();
+    searchController.current = controller;
+    const loadSearchText = async () => {
+      const results = await Promise.all(conversations.map(async (conversation) => {
+        const chunks = [conversation.title, conversation.preview || ""];
+        let cursor: string | undefined;
+        try {
+          do {
+            const params = new URLSearchParams({ action: "messages", conversationId: conversation.id });
+            if (cursor) params.set("cursor", cursor);
+            const page = await request(`${endpoint}?${params.toString()}`, wechatMessagePageSchema, { signal: controller.signal });
+            chunks.push(...page.items.map((message) => message.text));
+            cursor = page.nextCursor ?? undefined;
+          } while (cursor && !controller.signal.aborted);
+        } catch {
+          if (controller.signal.aborted) return null;
+        }
+        const searchableText = chunks.join("\n");
+        return searchableText.toLocaleLowerCase().includes(needle) ? [conversation.id, searchableText] as const : null;
+      }));
+      if (controller.signal.aborted) return;
+      setConversationSearchText(Object.fromEntries(results.filter((result): result is readonly [string, string] => result !== null)));
+    };
+    void loadSearchText();
+    return () => {
+      controller.abort();
+      if (searchController.current === controller) searchController.current = null;
+    };
+  }, [conversationSearchQuery, conversations]);
+  useEffect(() => () => searchController.current?.abort(), []);
   const feedController = useRef<AbortController | null>(null);
   const connected = state?.connection.status === "connected";
+  useEffect(() => {
+    if (!conversationId) return;
+    const saved = readDraft(conversationId);
+    queueMicrotask(() => {
+      setDrafts((old) => ({ ...old, [conversationId]: saved.text }));
+      setDraftImages((old) => ({ ...old, [conversationId]: saved.images }));
+    });
+  }, [conversationId]);
+  useEffect(() => {
+    if (!conversationId) return;
+    writeDraft(conversationId, { text: draft, images });
+  }, [conversationId, draft, images]);
   useEffect(() => {
     if (!conversationId) return;
     const controller = new AbortController(); feedController.current = controller; let timer: ReturnType<typeof setTimeout>;
@@ -245,16 +389,40 @@ export function WechatAgentWorkspace({ onBack, onToast, historyPortalTarget, onE
   const newConversation = useCallback(async () => {
     if (!connected || acting) return;
     const next = await action({ action: "createConversation" });
-    if (next?.currentConversationId) setDrafts((old) => ({ ...old, [next.currentConversationId!]: "" }));
+    if (next?.currentConversationId) {
+      writePendingNewConversationId(next.currentConversationId);
+      const saved = readDraft(next.currentConversationId);
+      setDrafts((old) => ({ ...old, [next.currentConversationId!]: saved.text }));
+      setDraftImages((old) => ({ ...old, [next.currentConversationId!]: saved.images }));
+    }
   }, [action, acting, connected]);
+  useEffect(() => {
+    if (!state || !newConversationSignal || handledNewConversationSignalRef.current === newConversationSignal) return;
+    handledNewConversationSignalRef.current = newConversationSignal;
+    void newConversation();
+  }, [state, newConversationSignal, newConversation]);
   useEffect(() => {
     const onNewConversation = () => { void newConversation(); };
     window.addEventListener("lumaflow-wechat-new-conversation", onNewConversation);
     return () => window.removeEventListener("lumaflow-wechat-new-conversation", onNewConversation);
   }, [newConversation]);
-  async function selectConversation(id: string) {
+  const selectConversation = useCallback(async (id: string) => {
+    if (conversationId) writeDraft(conversationId, { text: draft, images });
     await action({ action: "activate", conversationId: id });
-  }
+  }, [action, conversationId, draft, images]);
+  useEffect(() => {
+    if (!state || !requestedConversation?.id || handledSelectionSignalRef.current === requestedConversation.nonce) return;
+    handledSelectionSignalRef.current = requestedConversation.nonce;
+    if (conversationId !== requestedConversation.id) void selectConversation(requestedConversation.id);
+  }, [state, requestedConversation, conversationId, selectConversation]);
+  useEffect(() => {
+    const onSelectConversation = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (id && conversations.some((conversation) => conversation.id === id)) void selectConversation(id);
+    };
+    window.addEventListener("lumaflow-wechat-select-conversation", onSelectConversation);
+    return () => window.removeEventListener("lumaflow-wechat-select-conversation", onSelectConversation);
+  }, [conversations, selectConversation]);
   async function updateConversation(id: string, patch: { title?: string; pinned?: boolean }) {
     const next = await action({ action: "updateConversation", conversationId: id, ...patch });
     if (next) onToast?.(patch.title ? "对话名称已更新" : patch.pinned ? "对话已置顶" : "对话已取消置顶");
@@ -275,10 +443,35 @@ export function WechatAgentWorkspace({ onBack, onToast, historyPortalTarget, onE
     } catch (issue) { onToast?.(issue instanceof Error ? issue.message : "复制对话失败"); }
   }
   async function send() {
-    const text = draft.trim(); if (!text || !conversationId) return;
-    const next = await action({ action: "send", conversationId, text, clientMessageId: crypto.randomUUID() });
-    if (next) { setDraft(""); setRevision((value) => value + 1); }
+    if ((!draft.trim() && !images.length) || !conversationId || acting) return;
+    if (images.length || isImageOperationPrompt(draft)) {
+      // Image work remains local; it never sends a generated prompt or an
+      // unverified result to the bound WeChat conversation.
+      setImageMode(true);
+      setImageAutoSubmit(true);
+      return;
+    }
+    const next = await action({ action: "send", conversationId, text: draft.trim(), clientMessageId: crypto.randomUUID() });
+    if (next) { clearDraft(conversationId); clearPendingNewConversationId(); setDraft(""); setDraftImages((old) => ({ ...old, [conversationId]: [] })); setRevision((value) => value + 1); }
   }
+  async function addImages(files: FileList | File[]) {
+    const selected = Array.from(files).filter((file) => acceptedImageTypes.has(file.type as WechatImageMediaType));
+    if (!selected.length) { onToast?.("请选择 JPG、PNG 或 WebP 图片。"); return; }
+    if (images.length + selected.length > maxImageCount) { onToast?.("一条微信任务最多附加 4 张图片。"); return; }
+    let total = images.reduce((sum, image) => sum + image.size, 0);
+    const additions: WechatImage[] = [];
+    for (const file of selected) {
+      if (total + file.size > maxImageBytes) { onToast?.("图片总大小不能超过 2.4 MB。"); break; }
+      try { const url = await readFileAsDataUrl(file); additions.push({ type: "file", mediaType: file.type as WechatImageMediaType, filename: file.name.slice(0, 160), url, size: file.size }); total += file.size; }
+      catch { onToast?.(`${file.name} 读取失败，请重新选择。`); }
+    }
+    if (additions.length) {
+      setDraftImages((old) => ({ ...old, [conversationId]: [...(old[conversationId] || []), ...additions] }));
+      setImageAutoSubmit(false);
+      setImageMode(true);
+    }
+  }
+  function removeImage(index: number) { setDraftImages((old) => ({ ...old, [conversationId]: (old[conversationId] || []).filter((_, itemIndex) => itemIndex !== index) })); }
   async function loadConversations() {
     if (!conversationCursor) return; setPaging(true);
     try { const next = await request(`${endpoint}?action=conversations&cursor=${encodeURIComponent(conversationCursor)}`, wechatConversationPageSchema); setExtraConversations((old) => ({ items: mergeItems(next.items, old?.items || []), nextCursor: next.nextCursor ?? null })); }
@@ -294,21 +487,25 @@ export function WechatAgentWorkspace({ onBack, onToast, historyPortalTarget, onE
       if (!controller?.signal.aborted) setFeed((old) => old?.conversationId === requestedConversation ? { ...old, page: { ...old.page, nextCursor: next.nextCursor, items: mergeItems(next.items, old.page.items).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) } } : old);
     } catch (issue) { if (!controller?.signal.aborted) setFeedIssue({ conversationId: requestedConversation, text: issue instanceof Error ? issue.message : "消息读取失败" }); } finally { setPaging(false); }
   }
-  const historyItems: ConversationHistoryItem[] = conversations.map((item) => ({ id: item.id, title: item.title, pinned: "pinned" in item ? Boolean(item.pinned) : false }));
-  const conversationHistory = <aside className={styles.wechatHistory} aria-label="微信 Agent 对话记录"><header><strong>微信对话</strong><button type="button" className={styles.historyNew} disabled={acting} onClick={() => void newConversation()}><Plus size={13} /> 新对话</button></header><ConversationHistoryList items={historyItems} selectedId={conversationId} onSelect={(id) => void selectConversation(id)} onRename={(id, title) => void updateConversation(id, { title })} onPin={(id, pinned) => void updateConversation(id, { pinned })} onDelete={(id) => void deleteConversation(id)} onShare={(id) => void shareConversation(id)} />{conversationCursor && <button type="button" className={styles.historyMore} disabled={paging} onClick={() => void loadConversations()}>{paging ? "正在读取…" : "加载更多会话"}</button>}</aside>;
-  const sidebarHistory = historyPortalTarget ? createPortal(conversationHistory, historyPortalTarget) : null;
-  if (!state) return <section className={styles.card}>{error ? <p className={styles.error} role="alert">{error}</p> : <p className={styles.empty}>正在读取微信工作区…</p>}<button className={styles.secondary} onClick={() => void refresh()}>重新读取</button></section>;
+  const historyItems: ConversationHistoryItem[] = conversations.map((item) => ({ id: item.id, title: item.title, pinned: "pinned" in item ? Boolean(item.pinned) : false, searchableText: conversationSearchText[item.id] || item.preview || "" }));
+  const conversationHistory = <aside className={styles.wechatHistory} aria-label="微信 Agent 对话记录">{!historyPortalTarget && <header><strong>微信对话</strong><button type="button" className={styles.historyNew} disabled={acting || !connected} title={connected ? "新建微信对话" : "连接微信后可新建微信对话"} onClick={() => void newConversation()}><Plus size={13} /> 新对话</button></header>}<ConversationHistoryList items={historyItems} onSearchChange={setConversationSearchQuery} selectedId={conversationId} onSelect={(id) => void selectConversation(id)} onRename={(id, title) => void updateConversation(id, { title })} onPin={(id, pinned) => void updateConversation(id, { pinned })} onDelete={(id) => void deleteConversation(id)} onShare={(id) => void shareConversation(id)} />{conversationCursor && <button type="button" className={styles.historyMore} disabled={paging} onClick={() => void loadConversations()}>{paging ? "正在读取…" : "加载更多会话"}</button>}</aside>;
+  const sidebarHistory = historyPortalTarget && historyCategory === "wechat" ? createPortal(conversationHistory, historyPortalTarget) : null;
+  const historyView = sidebarHistory || (!historyPortalTarget ? conversationHistory : null);
+  if (!state) return <section className={styles.root} aria-label="微信 Agent 工作区">
+    <header className={styles.header}><div className={styles.identity}><ClawBotAvatar /><div><h2>{WECHAT_AGENT_DISPLAY_NAME}</h2><p>本产品微信 Agent · 独立工作与消息记录</p></div></div><ExperienceTabs onChange={onExperienceChange} /><div className={styles.headerActions}>{onBack && <button className={styles.secondary} onClick={onBack}>返回智能体</button>}</div></header>
+    {historyView}<section className={styles.card}>{error ? <p className={styles.error} role="alert">{error}</p> : <p className={styles.empty}>正在读取微信工作区…</p>}<button className={styles.secondary} onClick={() => void refresh()}>重新读取</button></section>
+  </section>;
   if (!connected) return <section className={styles.root} aria-label="微信 Agent 工作区">
-    <header className={styles.header}><ClawBotAvatar /><div><h2>{WECHAT_AGENT_DISPLAY_NAME}</h2><p>本产品微信 Agent · 连接后开放工作区</p></div><ExperienceTabs onChange={onExperienceChange} /><ConnectionStatus state={state} />{onBack && <button className={styles.secondary} onClick={onBack}>返回智能体</button>}</header>
+    <header className={styles.header}><div className={styles.identity}><ClawBotAvatar /><div><h2>{WECHAT_AGENT_DISPLAY_NAME}</h2><p>本产品微信 Agent · 连接后开放工作区</p></div></div><ExperienceTabs onChange={onExperienceChange} /><div className={styles.headerActions}><ConnectionStatus state={state} />{onBack && <button className={styles.secondary} onClick={onBack}>返回智能体</button>}</div></header>
     {(error || state.connection.error) && <p className={styles.error} role="alert">{error || state.connection.error}</p>}
-    <ConnectionGuide state={state} acting={acting} onConnect={() => void action({ action: "connect" })} onRefresh={() => void refresh()} />
+    {historyView}<ConnectionGuide state={state} acting={acting} onConnect={() => void action({ action: "connect" })} onRefresh={() => void refresh()} />
   </section>;
   return <section className={styles.root} aria-label="微信 Agent 工作区">
-    <header className={styles.header}><ClawBotAvatar /><div><h2>{WECHAT_AGENT_DISPLAY_NAME}</h2><p>本产品微信 Agent · 独立工作与消息记录</p></div><ExperienceTabs onChange={onExperienceChange} /><ConnectionStatus state={state} /><button type="button" className={styles.icon} aria-label="配置微信 Agent" onClick={() => setConfigOpen(true)}><Settings size={16} /></button>{onBack && <button className={styles.secondary} onClick={onBack}>返回智能体</button>}</header>
-    {sidebarHistory}<div className={styles.body}>
+    <header className={styles.header}><div className={styles.identity}><ClawBotAvatar /><div><h2>{WECHAT_AGENT_DISPLAY_NAME}</h2><p>本产品微信 Agent · 独立工作与消息记录</p></div></div><ExperienceTabs onChange={onExperienceChange} /><div className={styles.headerActions}><ConnectionStatus state={state} /><button type="button" className={styles.icon} aria-label="配置微信 Agent" onClick={() => setConfigOpen(true)}><Settings size={16} /></button>{onBack && <button className={styles.secondary} onClick={onBack}>返回智能体</button>}</div></header>
+    {historyView}<div className={styles.body}>
       <div className={styles.chat}><div className={styles.chatHeading}>{conversations.find((item) => item.id === conversationId)?.title || "微信工作会话"}</div><div className={styles.feed} aria-label="微信工作与同步消息">{(error || feedError) && <p className={styles.error} role="alert">{error || feedError}</p>}{page.nextCursor && <button type="button" className={styles.secondary} disabled={paging} onClick={() => void loadOlder()}>查看更早消息</button>}{!conversationId ? <p className={styles.empty}>新建一个对话，开始微信 Agent 的工作。</p> : !page.items.length && !feedError ? <p className={styles.empty}>当前会话暂无已记录消息。</p> : page.items.filter((message) => message.conversationId === conversationId).map((message) => <CanonicalMessage key={message.id} message={message} agentName={WECHAT_AGENT_DISPLAY_NAME} />)}
         {page.pendingActions.filter((item) => item.conversationId === conversationId && item.state === "pending").map((item) => <section className={styles.pending} key={item.id} aria-label={`待确认：${item.title}`}><strong>待确认 · {item.title}</strong>{item.detail && <p>{item.detail}</p>}<div><button type="button" className={styles.primary} disabled={acting} onClick={async () => { if (await action({ action: "confirmAction", actionId: item.id, approved: true })) setRevision((value) => value + 1); }}>确认执行</button><button type="button" className={styles.secondary} disabled={acting} onClick={async () => { if (await action({ action: "confirmAction", actionId: item.id, approved: false })) setRevision((value) => value + 1); }}>拒绝</button></div></section>)}
-      </div><div className={styles.composer}><textarea aria-label="微信 Agent 工作指令" placeholder="描述任务，或询问当前微信会话…" maxLength={12_000} value={draft} disabled={!conversationId || acting} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} /><footer><small>{state.connection.status === "connected" && state.agent.syncEnabled ? "微信同步已开启" : "微信未同步"} · 回复自动发送到绑定的微信会话</small><button type="button" className={styles.primary} disabled={!conversationId || !draft.trim() || acting} onClick={() => void send()}>{acting ? "正在提交…" : "提交任务"}</button></footer></div></div>
+      </div><div className={styles.composer} hidden={imageMode} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void addImages(event.dataTransfer.files); }}><textarea aria-label="微信 Agent 工作指令" placeholder="描述任务，或询问当前微信会话…" maxLength={12_000} value={draft} disabled={!conversationId || acting} onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addImages(files); } }} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />{images.length > 0 && <div className={styles.imageAttachments} aria-label="待识别图片">{images.map((image, index) => <div key={`${image.filename}-${index}`}><img src={image.url} alt={image.filename || `图片 ${index + 1}`} /><span>{image.filename}</span><button type="button" aria-label={`移除 ${image.filename || `图片 ${index + 1}`} `} onClick={() => removeImage(index)}><X size={13} /></button></div>)}</div>}<p className={styles.imageHint}>上传图片进入本机图片操作，不会自动发送到微信</p><footer><input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(event) => { void addImages(event.target.files || []); event.currentTarget.value = ""; }} /><button type="button" className={styles.secondary} disabled={!conversationId || acting} onClick={() => imageInputRef.current?.click()}><Paperclip size={14} /> 添加图片</button><button type="button" className={styles.secondary} disabled={!conversationId || acting} onClick={() => { setImageAutoSubmit(false); setImageMode(true); }}><ImagePlus size={14} /> 生图</button><small>{state.connection.status === "connected" && state.agent.syncEnabled ? "微信同步已开启" : "微信未同步"} · 回复自动发送到绑定的微信会话</small><button type="button" className={styles.primary} disabled={!conversationId || (!draft.trim() && !images.length) || acting} onClick={() => void send()}>{acting ? "正在提交…" : "提交任务"}</button></footer></div>{imageMode && <div className={styles.imageComposer}><WechatLocalImagePanel key={conversationId} conversationId={conversationId} prompt={draft} onPromptChange={setDraft} onExit={() => { setImageAutoSubmit(false); setImageMode(false); }} onToast={onToast} disabled={!conversationId || acting} initialImages={images as FileUIPart[]} autoSubmit={imageAutoSubmit} /></div>}</div>
     </div>{configOpen && <WechatConfigDialog agent={state.agent} onClose={() => setConfigOpen(false)} onSaved={(next) => { setState(next); setConfigOpen(false); onToast?.(configSavedMessage); }} />}
   </section>;
 }

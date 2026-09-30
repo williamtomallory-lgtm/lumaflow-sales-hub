@@ -4,9 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentWorkspace } from "./agent-workspace";
 import { chatSessionSchema } from "@/lib/contracts/chat-history";
 import type { AgentProgress } from "@/lib/contracts/agent-progress";
+import { composerDraftKey } from "@/lib/client/composer-draft";
 import { testAssets, testCustomers, testProducts } from "../test/fixtures";
 
 const posts: Record<string, unknown>[] = [];
+const runtimePosts: string[] = [];
+const imageCancelPosts: Record<string, unknown>[] = [];
 const historyPosts: Record<string, unknown>[] = [];
 const documentId = "11111111-1111-4111-8111-111111111111";
 let includeInternalAgent = false;
@@ -58,11 +61,14 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   posts.length = 0;
+  runtimePosts.length = 0;
+  imageCancelPosts.length = 0;
   historyPosts.length = 0;
   includeInternalAgent = false;
   replyActivity = [];
   replyText = "模型生成的客服草稿";
   localStorage.clear();
+  sessionStorage.clear();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/assistant/history")) {
       if (init?.method === "POST") { const session = JSON.parse(String(init.body)) as Record<string, unknown>; historyPosts.push(session); return Response.json({ data: session }); }
@@ -71,6 +77,19 @@ beforeEach(() => {
       return Response.json({ data: requestedId ? latest.find((item) => item.id === requestedId) ?? null : latest.map((item) => ({ ...item, turnCount: Array.isArray(item.turns) ? item.turns.length : 0 })) });
     }
     if (url.endsWith("/parse-document")) return Response.json({ text: "已解析的 PDF 正文", characters: 12, truncated: false });
+    if (url.endsWith("/assistant/runtime")) {
+      runtimePosts.push(JSON.parse(String(init?.body)) as string);
+      return Response.json({ data: { ok: true } });
+    }
+    if (url.endsWith("/image-operations/cancel")) {
+      imageCancelPosts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ data: { cancelled: true } });
+    }
+    if (url.endsWith("/image-operations")) {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      posts.push({ imageOperation: body });
+      return Response.json({ data: { text: "图片已处理", model: "Qwen-Image-2.1 · 本机", operation: body.operation, images: [{ url: "/api/v1/assistant/image-operations/assets/0123456789abcdef0123456789abcdef.png", filename: "处理结果.png", width: 512, height: 512 }] } });
+    }
     if (url.endsWith("/chat")) {
       posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return modelReply(replyText);
@@ -117,7 +136,7 @@ beforeEach(() => {
     const profileId = url.includes("modelProfileId=configured") ? "configured" : "local-qwen3-8b";
     const meta = { apiVersion: "v1", requestId: "test", checkedAt: new Date().toISOString() };
     if (url.endsWith("/models")) return Response.json({ data: { defaultProfileId: "local-qwen3-8b", models: [
-      { id: "local-qwen3-8b", label: "本地 Qwen3 8B", model: "local-test", description: "本地模型", configured: true, reachable: true, connectionKind: "live", contextTokens: 8192 },
+      { id: "local-qwen3-8b", label: "本地 Qwen3 8B", model: "local-test", description: "本地模型", configured: true, reachable: true, runtimeManaged: true, connectionKind: "live", contextTokens: 8192 },
       { id: "configured", label: "自定义模型", model: "offline", description: "尚未接通", configured: false, reachable: false, connectionKind: "live", contextTokens: null },
     ] }, meta });
     return Response.json({ data: { configured: profileId !== "configured", reachable: profileId !== "configured", profileId, provider: "vllm-openai-compatible", model: profileId === "configured" ? "offline" : "local-test", connectionKind: "live", contextTokens: 8192, latencyMs: 1 }, meta });
@@ -568,6 +587,28 @@ describe("Agent workspace", () => {
     expect(screen.getAllByTestId("answer-agent-name").map((element) => element.textContent)).toEqual(["原主 Agent 名称", "朋友圈运营 Agent"]);
   });
 
+  it("turns a saved local image artifact path into a thumbnail, download link, and full preview", async () => {
+    const artifactUrl = "/api/v1/assistant/image-operations/assets/abcdef0123456789abcdef0123456789.png";
+    historyPosts.push({
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", experience: "chat", title: "历史图片", createdAt: "2026-09-25T11:00:00.000Z", updatedAt: "2026-09-25T11:01:00.000Z", turns: [
+        { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", user: "第二张图片", assistant: `图片已由本机图片模型生成。\n图片文件：\n- generated.png: ${artifactUrl}\n- 本地文件: C:\\Users\\Willi\\secret.png`, createdAt: "2026-09-25T11:00:00.000Z", attachments: [] },
+      ],
+    });
+    render(<AgentWorkspace {...props} initialExperience="chat" initialMessage="占位" />);
+    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
+    const history = screen.getByRole("complementary", { name: "本机对话记录" });
+    fireEvent.click(await within(history).findByRole("button", { name: /历史图片.*1 轮/ }));
+    const gallery = await screen.findByRole("region", { name: "历史图片结果" });
+    expect(within(gallery).getByRole("img", { name: "generated.png" })).toBeInTheDocument();
+    expect(within(gallery).getByRole("link", { name: "下载" })).toHaveAttribute("href", artifactUrl);
+    expect(screen.queryByText(artifactUrl)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "本地文件" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开完整预览" }));
+    const preview = screen.getByRole("dialog", { name: "图片完整预览" });
+    expect(within(preview).getByRole("img", { name: "generated.png" })).toBeInTheDocument();
+    expect(within(preview).getByRole("link", { name: /下载/ })).toHaveAttribute("href", artifactUrl);
+  });
+
   it("links versions in older saved conversations by creation order", async () => {
     const firstId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const secondId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -702,7 +743,10 @@ describe("Agent workspace", () => {
     const role = await screen.findByRole("combobox", { name: "选择本地 Agent" });
     expect(role).toHaveTextContent("产品销售顾问");
     fireEvent.click(role);
-    expect(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getAllByRole("option")).toHaveLength(3);
+    expect(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getAllByRole("option")).toHaveLength(4);
+    fireEvent.click(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /^不选择 Agent/ }));
+    expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("不选择 Agent");
+    fireEvent.click(role);
     fireEvent.click(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /销售复盘 Agent/ }));
     expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("销售复盘 Agent");
     expect(screen.getByRole("combobox", { name: "选择本地 Agent" }).querySelector("img")?.getAttribute("src")).toContain("sales-review/avatar");
@@ -715,6 +759,85 @@ describe("Agent workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts[1]).toMatchObject({ agentRoleId: "sales-consultant", modelProfileId: "local-qwen3-8b" }));
     await idle();
+  });
+
+  it("keeps Chat, Work, Image, and Wechat Agent as mutually exclusive top-level views", async () => {
+    const openWechat = vi.fn();
+    render(<AgentWorkspace {...props} initialExperience="chat" onOpenWechat={openWechat} />);
+    await ready();
+    const activeTabCount = () => screen.getAllByRole("button").filter((button) => button.getAttribute("aria-pressed") === "true").length;
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    expect(activeTabCount()).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Image" }));
+    expect(screen.getByRole("button", { name: "Image" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("image-mode-notice")).toBeInTheDocument();
+    expect(activeTabCount()).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    await waitFor(() => expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    expect(activeTabCount()).toBe(1);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Work" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Work" }));
+    expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute("aria-pressed", "true");
+    expect(activeTabCount()).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Wechat Agent" }));
+    expect(openWechat).toHaveBeenCalledTimes(1);
+    expect(activeTabCount()).toBe(1);
+  });
+
+  it("keeps Image as a Chat composer when opened from Work", async () => {
+    render(<AgentWorkspace {...props} initialExperience="chat" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "Work" }));
+    await screen.findByRole("combobox", { name: "选择本地 Agent" });
+    fireEvent.click(screen.getByRole("button", { name: "Image" }));
+    await waitFor(() => expect(screen.getByTestId("image-mode-notice")).toBeInTheDocument());
+    expect(screen.getByTestId("chat-ai-workspace")).toHaveAttribute("data-image-mode", "true");
+    expect(screen.queryByRole("combobox", { name: "选择本地 Agent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "@ 添加协作 Agent" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/CowAgent 后端/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    await waitFor(() => expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("textbox", { name: "输入问题" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "选择本地 Agent" })).not.toBeInTheDocument();
+  });
+
+  it("starts an Image route in the image composer and restores the ordinary Chat draft", async () => {
+    render(<AgentWorkspace {...props} initialExperience="chat" initialImageMode initialMessage="普通 Chat 草稿" />);
+    await waitFor(() => expect(screen.getByTestId("image-mode-notice")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Image" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "热门图片风格" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "输入问题" }), { target: { value: "图片提示词" } });
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    await waitFor(() => expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("region", { name: "热门图片风格" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "输入问题" })).toHaveValue("普通 Chat 草稿");
+  });
+
+  it("keeps a normal Chat route off even when an older draft stored Image mode", async () => {
+    sessionStorage.setItem(composerDraftKey("chat"), JSON.stringify({
+      text: "普通问题",
+      images: [],
+      imageOperationMode: true,
+      documentIds: [],
+      customerId: "",
+      collaboratorIds: [],
+      capabilityIds: [],
+      workflowMode: "normal",
+      goal: "",
+    }));
+    render(<AgentWorkspace {...props} initialExperience="chat" />);
+    await ready();
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Image" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument();
   });
 
   it("clears customer and file context for a new question without navigating on customer selection", async () => {
@@ -764,7 +887,7 @@ describe("Agent workspace", () => {
     expect(posts[0]).not.toHaveProperty("customerId");
   });
 
-  it("attaches and sends a photo through the chat transport", async () => {
+  it("automatically sends an uploaded photo to the local image operation endpoint", async () => {
     const { container } = render(<AgentWorkspace {...props} />);
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
@@ -776,10 +899,153 @@ describe("Agent workspace", () => {
     expect(await screen.findByRole("img", { name: "product.png" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0].messages).toEqual([expect.objectContaining({
-      role: "user",
-      parts: expect.arrayContaining([expect.objectContaining({ type: "file", mediaType: "image/png", filename: "product.png", url: expect.stringMatching(/^data:image\/png;base64,/) })]),
-    })]);
+    expect(posts[0].imageOperation).toMatchObject({ operation: "analyze", restoreModelProfileId: "local-qwen3-8b", images: [expect.objectContaining({ type: "file", mediaType: "image/png", filename: "product.png", url: expect.stringMatching(/^data:image\/png;base64,/) })] });
+    expect(await screen.findByRole("region", { name: "图片识别结果" })).toHaveTextContent("处理结果.png");
+    expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute("href", "/api/v1/assistant/image-operations/assets/0123456789abcdef0123456789abcdef.png");
+  });
+
+  it("does not render an arbitrary local image path returned by the image endpoint", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/image-operations")) return Response.json({ data: { text: "图片服务返回了不可展示的路径。", model: "Qwen-Image-2.1 · 本机", operation: "generate", images: [{ url: "C:\\Users\\Willi\\secret.png", filename: "secret.png", width: 512, height: 512 }] } });
+      return originalFetch(url, init);
+    }));
+    render(<AgentWorkspace {...props} initialMessage="生成一张测试图片" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(screen.getByTestId("agent-answer")).toHaveTextContent("图片服务返回了不可展示的路径"));
+    expect(screen.queryByRole("img", { name: "secret.png" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "生图结果" })).not.toBeInTheDocument();
+  });
+
+  it("uses the 生图 mode for generation and keeps it out of the text model request", async () => {
+    render(<AgentWorkspace {...props} initialMessage="做一个产品海报" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    const menu = screen.getByRole("menu", { name: "添加内容与模式" });
+    const imageMode = within(menu).getByRole("menuitemcheckbox", { name: /生图/ });
+    expect(imageMode).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(imageMode);
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].imageOperation).toMatchObject({ operation: "generate", prompt: "做一个产品海报" });
+    expect(posts[0].imageOperation).not.toHaveProperty("restoreModelProfileId");
+    expect(screen.getByTestId("agent-answer")).toHaveTextContent("图片已处理");
+    expect(await screen.findByRole("region", { name: "生图结果" })).toBeInTheDocument();
+  });
+
+  it("shows the image style gallery and keeps a selected preset in image mode", async () => {
+    render(<AgentWorkspace {...props} initialMessage="请准备一张图片" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    const gallery = screen.getByRole("region", { name: "热门图片风格" });
+    expect(within(gallery).getByRole("button", { name: "上传照片" })).toBeInTheDocument();
+    expect(within(gallery).getByRole("button", { name: "使用迪斯科风风格" })).toBeInTheDocument();
+    fireEvent.click(within(gallery).getByRole("button", { name: "使用迪斯科风风格" }));
+    expect((screen.getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement).value).toContain("迪斯科风格");
+    expect(screen.getByTestId("image-mode-notice")).toHaveTextContent("生图功能启动");
+  });
+
+  it("routes the gallery upload card through the existing image attachment flow", async () => {
+    const { container } = render(<AgentWorkspace {...props} initialMessage="请编辑这张图片" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    fireEvent.click(screen.getByRole("button", { name: "上传照片" }));
+    const imageInput = container.querySelector<HTMLInputElement>('input[type="file"][accept="image/jpeg,image/png,image/webp"]');
+    expect(imageInput).not.toBeNull();
+    const image = new File([new Uint8Array([137, 80, 78, 71])], "style-source.png", { type: "image/png" });
+    fireEvent.change(imageInput!, { target: { files: [image] } });
+    expect(await screen.findByRole("img", { name: "style-source.png" })).toBeInTheDocument();
+    expect(screen.getByTestId("image-mode-notice")).toBeInTheDocument();
+  });
+
+  it("shows the image model temporarily and restores the selected text model when closed", async () => {
+    render(<AgentWorkspace {...props} />);
+    await ready();
+    expect(screen.getByRole("button", { name: "选择模型 本地 Qwen3 8B" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    expect(screen.getByTestId("image-mode-notice")).toHaveTextContent("生图功能启动");
+    expect(screen.getByTestId("image-model-control")).toHaveTextContent("Qwen Image 2.1");
+    expect(screen.getByTestId("image-model-control")).toHaveTextContent("图片模型待调用");
+    expect(screen.queryByRole("button", { name: "选择模型 本地 Qwen3 8B" })).not.toBeInTheDocument();
+    expect(screen.queryByText("模型已连接")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /已启用 · 生图/ }));
+    await waitFor(() => expect(runtimePosts).toEqual(["local-qwen3-8b"]));
+    expect(screen.getByRole("button", { name: "选择模型 本地 Qwen3 8B" })).toBeInTheDocument();
+    expect(screen.queryByTestId("image-model-control")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument();
+  });
+
+  it("lets the image mode close button exit the mode and restore the saved text model", async () => {
+    render(<AgentWorkspace {...props} />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    const notice = screen.getByTestId("image-mode-notice");
+    expect(within(notice).getByRole("button", { name: "退出生图模式" })).toBeInTheDocument();
+    fireEvent.click(within(notice).getByRole("button", { name: "退出生图模式" }));
+    await waitFor(() => expect(runtimePosts).toEqual(["local-qwen3-8b"]));
+    expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择模型 本地 Qwen3 8B" })).toBeInTheDocument();
+  });
+
+  it("starts a new image conversation from the sidebar event", async () => {
+    render(<AgentWorkspace {...props} initialExperience="chat" initialMessage="占位" />);
+    await ready();
+    act(() => { window.dispatchEvent(new Event("lumaflow-new-image-conversation")); });
+    expect(screen.getByTestId("image-mode-notice")).toHaveTextContent("生图功能启动");
+    expect(screen.getByTestId("image-model-control")).toHaveTextContent("Qwen Image 2.1");
+  });
+
+  it("cancels an active image job through the local cancel route before restoring the text model", async () => {
+    const originalFetch = fetch;
+    let imageJobId = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/image-operations")) {
+        imageJobId = (JSON.parse(String(init?.body)) as Record<string, unknown>).jobId as string;
+        return new Promise<Response>((_, reject) => {
+          const abort = () => reject(new DOMException("Aborted", "AbortError"));
+          if (init?.signal?.aborted) abort();
+          else init?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      return originalFetch(url, init);
+    }));
+    render(<AgentWorkspace {...props} initialMessage="生成一张测试图片" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await screen.findByTestId("image-operation-progress");
+    fireEvent.click(within(screen.getByTestId("image-mode-notice")).getByRole("button", { name: "退出生图模式" }));
+    await waitFor(() => expect(imageCancelPosts).toEqual([{ jobId: imageJobId }]));
+    await waitFor(() => expect(runtimePosts).toEqual(["local-qwen3-8b"]));
+    expect(screen.queryByTestId("image-mode-notice")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("图片处理已停止");
+  });
+
+  it("shows an unavailable image model state when the local image endpoint fails", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/image-operations")) return Response.json({ error: { message: "Qwen Image 2.1 尚未安装" } }, { status: 503 });
+      return originalFetch(url, init);
+    }));
+    render(<AgentWorkspace {...props} initialMessage="生成一张测试图片" />);
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
+    fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(screen.getByTestId("image-model-control")).toHaveTextContent("图片模型未安装或不可用"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Qwen Image 2.1 尚未安装");
+    expect(screen.queryByText("模型已连接")).not.toBeInTheDocument();
   });
 
   it("clears the previous output when switching role and does not invent an answer", async () => {
@@ -793,12 +1059,12 @@ describe("Agent workspace", () => {
     expect(screen.getByText("选一位 Agent，一起把工作做好。")).toBeInTheDocument();
   });
 
-  it("removes the standalone WeChat import option while keeping the desktop connection", async () => {
+  it("removes the standalone WeChat connection controls from Work", async () => {
     render(<AgentWorkspace {...props} />);
     await ready();
     expect(screen.queryByRole("button", { name: "导入微信记录" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "导入微信记录" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /检测 \/ 连接微信|检测到微信 · 连接|微信只读连接/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /检测 \/ 连接微信|检测到微信 · 连接|微信只读连接/ })).not.toBeInTheDocument();
   });
 
   it("clears output and persists the selected model when switching models", async () => {
@@ -812,33 +1078,6 @@ describe("Agent workspace", () => {
     expect(screen.queryByTestId("agent-answer")).not.toBeInTheDocument();
     expect(localStorage.getItem("lumaflow.assistant.model-profile")).toBe("configured");
     expect(screen.getByRole("button", { name: "发送问题" })).toBeDisabled();
-  });
-
-  it("passes a confirmed WeChat snapshot into a local Agent request and blocks external model selection", async () => {
-    const originalFetch = fetch;
-    const snapshotId = "33333333-3333-4333-8333-333333333333";
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      if (!url.endsWith("/integrations/wechat")) return originalFetch(url, init);
-      const action = init?.body ? JSON.parse(String(init.body)).action : "probe";
-      if (action === "connect") return Response.json({ data: { connectionId: documentId, chatLabel: "虚构测试", loadedItems: 1 } });
-      if (action === "read") return Response.json({ data: { id: snapshotId, chatLabel: "虚构测试", loadedItems: 1, capturedAt: new Date().toISOString(), entries: [{ kind: "text", text: "需要30套轨道灯" }] } });
-      return Response.json({ data: { running: true, canRead: false, windows: [{ processId: 123, version: "4.1", application: "Weixin" }] } });
-    }));
-    render(<AgentWorkspace {...props} />); await ready();
-    fireEvent.click(await screen.findByRole("button", { name: "检测到微信 · 连接" }));
-    fireEvent.click(screen.getByRole("button", { name: "连接当前微信会话" }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: /我确认这是要分析的会话/ }));
-    fireEvent.click(screen.getByRole("button", { name: "只读预览当前会话" }));
-    fireEvent.click(await screen.findByRole("button", { name: "把选中记录放入任务" }));
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("需要30套");
-    fireEvent.click(screen.getByRole("button", { name: /^选择模型 / }));
-    fireEvent.click(screen.getByRole("button", { name: /自定义模型/ }));
-    expect(screen.getByRole("button", { name: /选择模型 本地 Qwen3 8B/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    await waitFor(() => expect(posts.at(-1)).toMatchObject({ wechatSnapshotId: snapshotId, modelProfileId: "local-qwen3-8b" }));
-    await screen.findByTestId("agent-answer");
-    fireEvent.click(screen.getByRole("button", { name: "新问题" }));
-    expect(screen.queryByText(/已附加微信只读快照/)).not.toBeInTheDocument();
   });
 
   it("adds text through the general file picker and rejects malformed UTF-8 or too many files", async () => {

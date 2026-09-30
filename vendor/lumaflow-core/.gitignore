@@ -1,0 +1,24 @@
+# Root-level local state
+.local-data/
+.local-runtime/
+*.log
+
+# Frontend generated/private files
+frontend/.env*
+!frontend/.env.example
+frontend/node_modules/
+frontend/.next/
+frontend/artifacts/
+
+# Backend generated/private files
+backend/config.json
+backend/.env*
+backend/.venv/
+backend/tmp/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/*.sqlite*
+backend/*credentials*.json
+backend/*token*.json
+

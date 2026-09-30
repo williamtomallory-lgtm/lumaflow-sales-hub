@@ -97,6 +97,16 @@ describe("single canonical WeChat Agent", () => {
     expect(screen.queryByText("已连接")).not.toBeInTheDocument();
   });
 
+  it("keeps all four workspace destinations usable when WeChat state cannot load", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("微信服务暂不可用"); }));
+    const onExperienceChange = vi.fn();
+    renderWorkspace({ onExperienceChange });
+    expect(await screen.findByRole("alert")).toHaveTextContent("微信服务暂不可用");
+    for (const name of ["Chat", "Work", "Image", "Wechat Agent"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(onExperienceChange).toHaveBeenCalledWith("chat");
+  });
+
   it("saves typed configuration with selected knowledge and required confirmations", async () => {
     const onToast = vi.fn(); render(<WechatAgentCard onToast={onToast} />);
     fireEvent.click(await screen.findByRole("button", { name: "配置" }));
@@ -135,10 +145,20 @@ describe("single canonical WeChat Agent", () => {
     await screen.findByText("售后独立上下文");
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(onExperienceChange).toHaveBeenCalledWith("chat");
-    fireEvent.click(within(historyHost).getByRole("button", { name: "新对话" }));
-    await screen.findByRole("button", { name: "新工作会话" });
+    fireEvent.click(screen.getByRole("button", { name: "Image" }));
+    expect(onExperienceChange).toHaveBeenCalledWith("image");
     act(() => window.dispatchEvent(new CustomEvent("lumaflow-wechat-new-conversation")));
-    await waitFor(() => expect(requests.filter((item) => item.body.action === "createConversation")).toHaveLength(2));
+    await screen.findByRole("button", { name: "新工作会话" });
+    await waitFor(() => expect(requests.filter((item) => item.body.action === "createConversation")).toHaveLength(1));
+  });
+
+  it("searches WeChat history by a full message body when the title does not match", async () => {
+    renderWorkspace();
+    await screen.findByText("微信同步的实际回复");
+    const history = within(historyHost);
+    fireEvent.change(history.getByLabelText("搜索对话"), { target: { value: "工作页面输入" } });
+    await waitFor(() => expect(history.getByRole("button", { name: "采购资料" })).toBeInTheDocument());
+    expect(history.queryByRole("button", { name: "售后记录" })).not.toBeInTheDocument();
   });
 
   it("does not report a successful configuration save after an API failure", async () => {
@@ -166,7 +186,7 @@ describe("single canonical WeChat Agent", () => {
     expect(feed).toHaveTextContent("工作页面输入的原文"); expect(feed).toHaveTextContent("已发送到微信");
     fireEvent.click(screen.getByRole("button", { name: "售后记录" }));
     await screen.findByText("售后独立上下文"); expect(screen.queryByText("工作页面输入的原文")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    act(() => window.dispatchEvent(new CustomEvent("lumaflow-wechat-new-conversation")));
     await screen.findByRole("button", { name: "新工作会话" });
     expect(screen.queryByText("售后独立上下文")).not.toBeInTheDocument();
     expect(state.conversations.items).toHaveLength(3);
@@ -176,6 +196,26 @@ describe("single canonical WeChat Agent", () => {
     expect(requests.at(-1)?.body).toMatchObject({ action: "send", conversationId: "new", text: "只整理本机草稿" });
     expect(requests.at(-1)?.body.clientMessageId).toMatch(/^[0-9a-f-]{36}$/);
     expect(screen.getByLabelText("微信 Agent 工作指令")).toHaveValue("");
+  });
+
+  it("routes an image prompt to the local image panel without sending it to WeChat", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/assistant/image-operations" && init?.method === "POST") {
+        return Response.json({ data: { text: "图片操作测试结果", model: "Qwen Image 2.1", operation: "generate", images: [] } });
+      }
+      return originalFetch(url, init);
+    }));
+    renderWorkspace();
+    await screen.findByText("微信同步的实际回复");
+    fireEvent.click(screen.getByRole("button", { name: "生图" }));
+    expect(screen.getByTestId("wechat-local-image-panel")).toHaveTextContent("Qwen Image 2.1");
+    fireEvent.click(screen.getByRole("button", { name: "退出生图模式" }));
+    fireEvent.change(screen.getByLabelText("微信 Agent 工作指令"), { target: { value: "生成一张台灯图片" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交任务" }));
+    await screen.findByTestId("wechat-local-image-panel");
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/v1/assistant/image-operations", expect.objectContaining({ method: "POST" })));
+    expect(requests.some((request) => request.body.action === "send")).toBe(false);
   });
 
   it("keeps pending external sends unconfirmed and ignores actions from another conversation", async () => {
@@ -244,7 +284,7 @@ describe("single canonical WeChat Agent", () => {
     renderWorkspace(); await screen.findByText("微信同步的实际回复");
     holdState = true; act(() => window.dispatchEvent(new CustomEvent("lumaflow-wechat-agent-updated")));
     await act(async () => { await Promise.resolve(); });
-    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    act(() => window.dispatchEvent(new CustomEvent("lumaflow-wechat-new-conversation")));
     await screen.findByRole("button", { name: "新工作会话" });
     await act(async () => release());
     expect(screen.getByRole("button", { name: "新工作会话" })).toHaveAttribute("aria-current", "true");

@@ -2,13 +2,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/server/cowagent-client", () => ({ requestWechatAgent: vi.fn(async () => ({ currentConversationId: "one" })) }));
+vi.mock("@/lib/ai/local-model-runtime", () => ({ ensureLocalModel: vi.fn(async () => true) }));
 import { requestWechatAgent } from "@/lib/server/cowagent-client";
+import { ensureLocalModel } from "@/lib/ai/local-model-runtime";
+import { ApiHttpError } from "@/lib/server/api-security";
 import { GET, PATCH, POST } from "./route";
 const address = "http://localhost:3000/api/v1/wechat-agent";
 function request(method = "GET", body?: unknown, query = "") {
   return new Request(address + query, { method, headers: { origin: "http://localhost:3000", "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
-beforeEach(() => vi.mocked(requestWechatAgent).mockClear());
+beforeEach(() => vi.clearAllMocks());
 describe("canonical WeChat conversations API", () => {
   it("does not let automatic history polling consume the submission limit", async () => {
     const pollingUrl = "http://localhost:3000/api/v1/wechat-agent";
@@ -35,7 +38,15 @@ describe("canonical WeChat conversations API", () => {
   it("preserves a stable client message ID for runtime deduplication", async () => {
     const body = { action: "send", conversationId: "one", text: "Task", clientMessageId: "8037e8a7-9129-429b-917b-c9dc1cf14c5c" };
     expect((await POST(request("POST", body))).status).toBe(200);
+    expect(ensureLocalModel).toHaveBeenCalledWith("configured");
+    expect(vi.mocked(ensureLocalModel).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(requestWechatAgent).mock.invocationCallOrder[0]);
     expect(requestWechatAgent).toHaveBeenCalledWith({ method: "POST", body });
+  });
+  it("keeps a busy image task running and does not submit a text task", async () => {
+    vi.mocked(ensureLocalModel).mockRejectedValueOnce(new ApiHttpError(409, "MODEL_BUSY", "模型正在处理图片。"));
+    const body = { action: "send", conversationId: "one", text: "Task", clientMessageId: "8037e8a7-9129-429b-917b-c9dc1cf14c5c" };
+    expect((await POST(request("POST", body))).status).toBe(409);
+    expect(requestWechatAgent).not.toHaveBeenCalled();
   });
   it("rejects cross-origin and remote runtime access before forwarding", async () => {
     const remote = new Request("https://example.com/api/v1/wechat-agent", { headers: { origin: "https://example.com" } });

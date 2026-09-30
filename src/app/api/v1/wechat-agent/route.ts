@@ -1,6 +1,7 @@
 import { ApiHttpError, apiError, apiJson, authorizeAssistantRequest, authorizeLocalKnowledgeRead, enforceRateLimit, readValidatedJson, requestId } from "@/lib/server/api-security";
 import { requestWechatAgent } from "@/lib/server/cowagent-client";
 import { wechatAgentActionSchema, wechatAgentConfigPatchSchema, wechatAgentQuerySchema } from "@/lib/contracts/wechat-conversation";
+import { ensureLocalModel } from "@/lib/ai/local-model-runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
   try {
     authorize(request, true);
     const body = await readValidatedJson(request, wechatAgentActionSchema);
+    if (body.action === "send") await ensureLocalModel("configured");
     return apiJson({ data: await requestWechatAgent({ method: "POST", body }) }, 200, id);
   } catch (error) { return apiError(error, id); }
 }

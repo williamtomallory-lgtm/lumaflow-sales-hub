@@ -12,24 +12,22 @@ export const LOCAL_QWEN3_8B_MODEL_ID = "lumaflow-qwen3-8b:latest";
 export const LOCAL_QWEN3_14B_MODEL_ID = "qwen3:14b";
 // Backwards-compatible name used by the existing verification script/tests.
 export const LOCAL_MODEL_ID = LOCAL_QWEN3_8B_MODEL_ID;
+export const NAIVE_INT4_MODEL_ID = "naive-n0.5-flash-int4-48l-1e";
+export const NAIVE_INT4_PROFILE_ID = "naive-n05-flash-int4-experimental";
 
-const PENDING_MODEL_PROFILES = {
-  "local-gemma4-31b": { label: "Gemma 4 31B", family: "Gemma 4", parameterSizeB: 31, memoryRequirement: "参考内存 ≥32 GB", modelVariant: "Ollama Q4 约 20 GB 权重" },
-  "local-gemma4-26b-a4b": { label: "Gemma 4 26B-A4B", family: "Gemma 4", parameterSizeB: 26, memoryRequirement: "参考内存 ≥32 GB", modelVariant: "Ollama Q4 约 19 GB 权重" },
-  "local-glm-4.7-flash": { label: "GLM-4.7-Flash", family: "GLM", parameterSizeB: null, memoryRequirement: "参考内存 ≥32 GB", modelVariant: "Ollama Q4 约 19 GB 权重" },
-  "local-deepseek-v4.1-flash": { label: "DeepSeek V4.1 Flash", family: "DeepSeek", parameterSizeB: null, memoryRequirement: "参考内存 ≥640 GB", modelVariant: "官方 FP8 文件约 510 GB，暂无同名本地 Ollama 版本" },
-} as const;
-type PendingModelProfileId = keyof typeof PENDING_MODEL_PROFILES;
-function isPendingModelProfile(id: AssistantModelProfileId): id is PendingModelProfileId {
-  return Object.hasOwn(PENDING_MODEL_PROFILES, id);
+export function isManagedLocalModel(profileId: string) {
+  if (process.env.LOCAL_MODEL_SWITCHING !== "true" || process.platform !== "win32" || process.env.VERCEL === "1") return false;
+  if (profileId === NAIVE_INT4_PROFILE_ID) return true;
+  return profileId === "configured" && process.env.LLM_MODEL?.trim() === "ternary-bonsai-2-27b"
+    && process.env.LLM_BASE_URL?.trim().replace(/\/$/, "") === "http://127.0.0.1:8081/v1";
 }
 
 export function getDefaultModelProfileId(): AssistantModelProfileId {
   const configured = assistantModelProfileIdSchema.safeParse(process.env.LLM_DEFAULT_PROFILE?.trim());
   const visible = process.env.LLM_VISIBLE_PROFILES?.split(",").map((id) => id.trim());
-  if (configured.success && !isPendingModelProfile(configured.data) && (!visible || visible.includes(configured.data))) return configured.data;
+  if (configured.success && (!visible || visible.includes(configured.data))) return configured.data;
   if (visible && !visible.includes(DEFAULT_MODEL_PROFILE_ID)) {
-    const firstReady = visible.map((id) => assistantModelProfileIdSchema.safeParse(id)).find((item) => item.success && !isPendingModelProfile(item.data));
+    const firstReady = visible.map((id) => assistantModelProfileIdSchema.safeParse(id)).find((item) => item.success);
     if (firstReady?.success) return firstReady.data;
   }
   return DEFAULT_MODEL_PROFILE_ID;
@@ -90,10 +88,13 @@ const MODEL_PROFILES = {
     parameterSizeB: null,
     supportedModes: ["light"] as const,
   },
-  "local-gemma4-31b": { ...PENDING_MODEL_PROFILES["local-gemma4-31b"], supportedModes: [] as const },
-  "local-gemma4-26b-a4b": { ...PENDING_MODEL_PROFILES["local-gemma4-26b-a4b"], supportedModes: [] as const },
-  "local-glm-4.7-flash": { ...PENDING_MODEL_PROFILES["local-glm-4.7-flash"], supportedModes: [] as const },
-  "local-deepseek-v4.1-flash": { ...PENDING_MODEL_PROFILES["local-deepseek-v4.1-flash"], supportedModes: [] as const },
+  "naive-n05-flash-int4-experimental": {
+    label: "Naive N0.5 Flash · 3.7 GB 实验版",
+    description: "源自 Naive 官方权重，保留 48 层但每层仅 1/256 个专家并量化为 INT4。仅保留最后 128 输入 token、最多生成 16 token；实测输出乱码或重复词，不能正常聊天。",
+    family: "Naive N0.5 Flash",
+    parameterSizeB: null,
+    supportedModes: ["light"] as const,
+  },
 } as const;
 
 function configurationError(message: string) {
@@ -104,18 +105,20 @@ function configurationError(message: string) {
 
 export function getModelConfig(profileId: AssistantModelProfileId = "configured") {
   assistantModelProfileIdSchema.parse(profileId);
-  if (isPendingModelProfile(profileId)) return {
-    profileId,
-    label: PENDING_MODEL_PROFILES[profileId].label,
-    description: `未下载。${PENDING_MODEL_PROFILES[profileId].modelVariant}；内存为本机运行粗略参考，实际取决于量化版本和上下文。`,
-    baseURL: null,
-    backend: "ollama" as ModelBackend,
-    maxOutputTokens: 4_096,
-    apiKey: "",
-    model: "未下载",
-    connectionKind: "live" as const,
-    contextTokens: null,
-  };
+  if (profileId === NAIVE_INT4_PROFILE_ID) {
+    return {
+      profileId,
+      label: MODEL_PROFILES[profileId].label,
+      description: MODEL_PROFILES[profileId].description,
+      baseURL: "http://127.0.0.1:8083/v1",
+      backend: "openai-compatible" as ModelBackend,
+      maxOutputTokens: 256,
+      apiKey: "naive-local",
+      model: NAIVE_INT4_MODEL_ID,
+      connectionKind: "live" as const,
+      contextTokens: 128,
+    };
+  }
   if (profileId === "local-qwen3-8b" || profileId === "local-qwen3-14b") {
     const is14b = profileId === "local-qwen3-14b";
     return {
@@ -170,7 +173,7 @@ export function getAssistantTimeoutMs() {
 export function assertModelConfigured(profileId?: AssistantModelProfileId) {
   const config = getModelConfig(profileId);
   if (!config.baseURL) {
-    throw configurationError(isPendingModelProfile(config.profileId) ? `${config.label} 尚未下载，当前不能使用。` : "The local model is not configured. Set LLM_BACKEND, LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL on the server.");
+    throw configurationError("The local model is not configured. Set LLM_BACKEND, LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL on the server.");
   }
   if (remoteOpenAIKeyRequired(config.baseURL, config.backend) && !config.apiKey) {
     throw configurationError("A remote OpenAI-compatible model requires LLM_API_KEY on the server.");
@@ -186,6 +189,7 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
     model: config.model,
     profileId: config.profileId,
     contextTokens: config.contextTokens,
+    runtimeManaged: isManagedLocalModel(config.profileId),
   };
   if (!config.baseURL) {
     return { ...publicConfig, configured: false, reachable: false, latencyMs: null };
@@ -215,9 +219,7 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
 export async function getModelOptions() {
   const visibleSetting = process.env.LLM_VISIBLE_PROFILES?.trim();
   const requestedIds = visibleSetting ? visibleSetting.split(",").map((id) => id.trim()) : undefined;
-  // Planned models stay visible as "未下载" even when a deployment hides
-  // other installed profiles with LLM_VISIBLE_PROFILES.
-  const visibleIds = assistantModelProfileIdSchema.options.filter((id) => isPendingModelProfile(id) || !requestedIds || requestedIds.includes(id));
+  const visibleIds = assistantModelProfileIdSchema.options.filter((id) => requestedIds ? requestedIds.includes(id) : id !== NAIVE_INT4_PROFILE_ID);
   if (visibleIds.length === 0) throw configurationError("LLM_VISIBLE_PROFILES must include a known model profile.");
   return Promise.all(visibleIds.map(async (id) => {
     try {
@@ -235,8 +237,8 @@ export async function getModelOptions() {
         family: id === "configured" ? configuredModelMetadata().family : MODEL_PROFILES[id].family,
         parameterSizeB: id === "configured" ? configuredModelMetadata().parameterSizeB : MODEL_PROFILES[id].parameterSizeB,
         supportedModes: id === "configured" ? configuredSupportedModes() : [...MODEL_PROFILES[id].supportedModes],
-        installationStatus: isPendingModelProfile(id) ? "not-downloaded" as const : "ready" as const,
-        memoryRequirement: isPendingModelProfile(id) ? PENDING_MODEL_PROFILES[id].memoryRequirement : undefined,
+        installationStatus: "ready" as const,
+        runtimeManaged: isManagedLocalModel(id),
       };
     } catch (error) {
       // A broken optional custom profile must not hide the independent local model.

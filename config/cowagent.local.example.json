@@ -1,0 +1,19 @@
+{
+  "cow_lang": "zh-CN",
+  "channel_type": "web",
+  "bot_type": "openai",
+  "model": "ternary-bonsai-2-27b",
+  "open_ai_api_key": "local",
+  "open_ai_api_base": "http://127.0.0.1:8081/v1",
+  "web_host": "127.0.0.1",
+  "web_port": 9876,
+  "web_password": "",
+  "agent": true,
+  "agent_max_context_tokens": 24576,
+  "agent_max_context_turns": 20,
+  "agent_max_steps": 20,
+  "agent_permission_mode": "confirm",
+  "enable_thinking": false,
+  "knowledge": true,
+  "self_evolution_enabled": false
+}

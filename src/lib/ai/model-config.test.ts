@@ -8,6 +8,8 @@ import {
   configuredSupportedModes,
   LOCAL_MODEL_ID,
   LOCAL_QWEN3_14B_MODEL_ID,
+  NAIVE_INT4_MODEL_ID,
+  NAIVE_INT4_PROFILE_ID,
 } from "./model-config";
 import { assistantModelsResponseSchema } from "../contracts/api";
 
@@ -65,6 +67,25 @@ describe("allowlisted model profiles", () => {
     expect(getModelConfig("local-qwen3-14b").description).toContain("CPU/GPU 混合");
   });
 
+  it("lists the original-weight Naive prune only when explicitly visible and only reports the exact running model ready", async () => {
+    vi.stubEnv("LLM_VISIBLE_PROFILES", `configured,${NAIVE_INT4_PROFILE_ID}`);
+    vi.stubEnv("LLM_DEFAULT_PROFILE", "configured");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json({
+      data: [{ id: url.includes("8083") ? NAIVE_INT4_MODEL_ID : "custom-model" }],
+    })));
+    expect(getModelConfig(NAIVE_INT4_PROFILE_ID)).toMatchObject({
+      model: NAIVE_INT4_MODEL_ID,
+      backend: "openai-compatible",
+      baseURL: "http://127.0.0.1:8083/v1",
+    });
+    const models = await getModelOptions();
+    expect(models.map((model) => model.id)).toEqual(["configured", NAIVE_INT4_PROFILE_ID]);
+    expect(models[1]).toMatchObject({ reachable: true, installationStatus: "ready", parameterSizeB: null });
+    expect(models[1].description).toContain("不能正常聊天");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "some-other-model" }] })));
+    expect(await getModelHealth(NAIVE_INT4_PROFILE_ID)).toMatchObject({ configured: true, reachable: false });
+  });
+
   it("configures Vercel AI Gateway without exposing or requiring a static API key", () => {
     vi.stubEnv("LLM_BACKEND", "vercel-ai-gateway");
     vi.stubEnv("LLM_BASE_URL", undefined);
@@ -89,7 +110,7 @@ describe("allowlisted model profiles", () => {
     vi.stubEnv("LLM_SUPPORTED_MODES", "light,medium,ultra");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "custom-model" }] })));
     expect(getDefaultModelProfileId()).toBe("configured");
-    expect(await getModelOptions()).toEqual(expect.arrayContaining([
+    expect(await getModelOptions()).toEqual([
       expect.objectContaining({
         id: "configured",
         label: "Ternary Bonsai 2 27B",
@@ -99,11 +120,7 @@ describe("allowlisted model profiles", () => {
         supportedModes: ["light", "medium", "ultra"],
         reachable: true,
       }),
-      expect.objectContaining({ id: "local-gemma4-31b", installationStatus: "not-downloaded", reachable: false }),
-      expect.objectContaining({ id: "local-gemma4-26b-a4b", installationStatus: "not-downloaded", reachable: false }),
-      expect.objectContaining({ id: "local-glm-4.7-flash", installationStatus: "not-downloaded", reachable: false }),
-      expect.objectContaining({ id: "local-deepseek-v4.1-flash", installationStatus: "not-downloaded", reachable: false }),
-    ]));
+    ]);
   });
 
   it("does not mark a remote OpenAI-compatible endpoint configured without its API key", async () => {
@@ -139,12 +156,11 @@ describe("allowlisted model profiles", () => {
       data: { defaultProfileId: "local-qwen3-8b", models },
       meta: { apiVersion: "v1", requestId: "models-test" },
     });
-    expect(payload.data.models).toHaveLength(7);
+    expect(payload.data.models).toHaveLength(3);
     expect(payload.data.models.filter((item) => item.installationStatus === "ready").every((item) => item.reachable)).toBe(true);
     expect(payload.data.models[0]).toMatchObject({ family: "Qwen3", parameterSizeB: 8, supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high"] });
     expect(payload.data.models[1]).toMatchObject({ family: "Qwen3", parameterSizeB: 14, supportedModes: ["light", "medium", "ultra", "instant", "high", "extra-high", "pro"] });
     expect(payload.data.models[2]).toMatchObject({ family: "custom", parameterSizeB: null, supportedModes: ["light"] });
-    expect(payload.data.models.slice(3).every((item) => item.installationStatus === "not-downloaded" && !item.reachable && item.supportedModes.length === 0)).toBe(true);
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("server-secret");
     expect(serialized).not.toContain("http://");
@@ -178,18 +194,21 @@ describe("allowlisted model profiles", () => {
     expect(response.status).toBe(200);
     const payload = assistantModelsResponseSchema.parse(await response.json());
     expect(payload.data.defaultProfileId).toBe("local-qwen3-8b");
-    expect(payload.data.models.map((item) => item.id)).toEqual(["local-qwen3-8b", "local-qwen3-14b", "configured", "local-gemma4-31b", "local-gemma4-26b-a4b", "local-glm-4.7-flash", "local-deepseek-v4.1-flash"]);
+    expect(payload.data.models.map((item) => item.id)).toEqual(["local-qwen3-8b", "local-qwen3-14b", "configured"]);
   });
 
-  it("never treats the four catalogue-only models as downloaded or runnable", async () => {
-    vi.stubEnv("LLM_VISIBLE_PROFILES", "configured");
+  it("ignores retired profiles in deployment settings and rejects their API requests", async () => {
+    vi.stubEnv("LLM_VISIBLE_PROFILES", "local-gemma4-31b,configured");
     vi.stubEnv("LLM_DEFAULT_PROFILE", "local-gemma4-31b");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "custom-model" }] })));
     expect(getDefaultModelProfileId()).toBe("configured");
-    const pending = (await getModelOptions()).filter((item) => item.installationStatus === "not-downloaded");
-    expect(pending).toHaveLength(4);
-    expect(pending.map((item) => item.memoryRequirement)).toEqual(["参考内存 ≥32 GB", "参考内存 ≥32 GB", "参考内存 ≥32 GB", "参考内存 ≥640 GB"]);
-    expect(pending.every((item) => !item.configured && !item.reachable)).toBe(true);
-    expect(() => getModelConfig("local-deepseek-v4.1-flash").baseURL).not.toThrow();
+    expect((await getModelOptions()).map((item) => item.id)).toEqual(["configured"]);
+    vi.mocked(fetch).mockClear();
+    const { GET } = await import("../../app/api/v1/assistant/health/route");
+    for (const id of ["local-gemma4-31b", "local-gemma4-26b-a4b", "local-glm-4.7-flash", "local-deepseek-v4.1-flash"]) {
+      const response = await GET(new Request(`http://localhost:3000/api/v1/assistant/health?modelProfileId=${id}`));
+      expect(response.status).toBe(422);
+    }
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

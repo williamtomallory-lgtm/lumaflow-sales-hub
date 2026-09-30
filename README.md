@@ -42,9 +42,9 @@
 
 ### 新 Windows 电脑：一键部署
 
-下载仓库 ZIP 并解压，双击根目录 **Start-LumaFlow.cmd**。首次自动准备 Node.js 22、锁定依赖、Ollama、默认 8B 权重与生产构建，再打开本地页面；不需要预装 Codex、Git 或购买模型 API。已有环境文件和本地知识资料保留。
+下载仓库 ZIP 并解压，先双击 **Setup-LumaFlow.cmd**，再双击 **Start-LumaFlow.cmd**。安装器从本仓库的 [完整本地模型 Release](https://github.com/williamtomallory-lgtm/lumaflow-sales-hub/releases/tag/local-bundle-20260929) 下载 Bonsai 2 27B、Muse Glimmer Q1_0、Image 与 Naive 实验权重，校验 SHA-256，准备 Node.js 22、Python 3.11、依赖和随仓库提供的 CowAgent 后端。首次运行默认不加载任何模型。
 
-首次下载需要网络、数 GB 空间和等待时间；默认面向 Windows 10/11 x64、16GB 内存，14B 需更多资源。完整参数、日志和启动故障处理见 [一键部署说明](docs/one-click-deploy.md)。
+首次下载需要网络；建议至少 65GB 可用磁盘空间（权重、下载缓存、Python/CUDA 依赖）。面向 Windows 10/11 x64；实际 RAM/显存需求高于模型文件大小。Qwen Image 低位量化与 Naive 剪枝版的质量测试已失败，Muse Q1_0 尚未验证，不应当作为可用业务模型。Qwen Image 仅供研究/评估。微信、云日历等需要在新电脑登录自己的账号。完整参数与验证边界见 [完整本地安装说明](docs/portable-local-bundle.md)。旧 Qwen3/Ollama 启动路径仍保留在 `scripts/bootstrap.ps1`，不再是默认双击入口。
 
 ### 开发模式（不自动启动模型）
 

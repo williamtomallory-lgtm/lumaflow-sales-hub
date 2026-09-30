@@ -259,8 +259,7 @@ export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum([
 export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantInferenceProfileSchema = z.enum(["light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantModelProfileIdSchema = z.enum([
-  "local-qwen3-8b", "local-qwen3-14b", "configured",
-  "local-gemma4-31b", "local-gemma4-26b-a4b", "local-glm-4.7-flash", "local-deepseek-v4.1-flash",
+  "local-qwen3-8b", "local-qwen3-14b", "configured", "naive-n05-flash-int4-experimental",
 ]);
 
 const assistantUiMessageSchema = z.object({
@@ -315,6 +314,7 @@ export const assistantHealthResponseSchema = z.object({
     profileId: assistantModelProfileIdSchema,
     contextTokens: z.number().int().positive().nullable(),
     latencyMs: z.number().int().nonnegative().nullable(),
+    runtimeManaged: z.boolean().optional(),
   }),
   meta: z.object({
     apiVersion: z.literal("v1"),
@@ -339,6 +339,7 @@ export const assistantModelOptionSchema = z.object({
   supportedModes: z.array(assistantInferenceProfileSchema).default(["light"]),
   installationStatus: z.enum(["ready", "not-downloaded"]).default("ready"),
   memoryRequirement: z.string().trim().max(100).optional(),
+  runtimeManaged: z.boolean().optional(),
 });
 
 export const assistantModelsResponseSchema = z.object({

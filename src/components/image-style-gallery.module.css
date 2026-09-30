@@ -1,0 +1,177 @@
+.root {
+  width: 100%;
+  max-width: 960px;
+  margin: 18px auto 0;
+  padding: 0 2px 4px;
+  color: #33483b;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.hotTag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 37px;
+  padding: 0 18px;
+  border-radius: 22px;
+  color: #4b4b4b;
+  background: #e6e1e1;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.hint {
+  color: #8c9890;
+  font-size: 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card {
+  position: relative;
+  min-width: 0;
+  aspect-ratio: 230 / 289;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 17px;
+  color: #fff;
+  background: #e5e0e0;
+  box-shadow: 0 2px 6px rgba(25, 37, 28, 0.04);
+  cursor: pointer;
+  isolation: isolate;
+  text-align: left;
+  transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+}
+
+.card:hover:not(:disabled),
+.card:focus-visible:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(25, 37, 28, 0.16);
+}
+
+.card:focus-visible {
+  outline: 3px solid rgba(42, 118, 84, .34);
+  outline-offset: 3px;
+}
+
+.card:disabled {
+  cursor: not-allowed;
+  opacity: .52;
+}
+
+.visual,
+.uploadVisual {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.visual {
+  background-image: var(--sprite-url);
+  background-position: center;
+  background-size: cover;
+}
+
+/* The source image is kept unchanged. Each card uses the source as a small
+   sprite and reveals its corresponding 230 × 289 crop. */
+.visual::before {
+  position: absolute;
+  top: calc(-1 * var(--sprite-y));
+  left: calc(-1 * var(--sprite-x));
+  width: 466.52%;
+  height: 355.71%;
+  background-image: var(--sprite-url);
+  background-position: 0 0;
+  background-size: 100% 100%;
+  content: "";
+}
+
+.visual {
+  background-image: none;
+  background-color: #ddd8d8;
+}
+
+.uploadVisual {
+  display: grid;
+  place-items: center;
+  color: #636363;
+  background: #e1dddd;
+}
+
+.uploadCard::after,
+.card:not(.uploadCard)::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 34%;
+  background: linear-gradient(to top, rgba(10, 14, 12, .76), rgba(10, 14, 12, 0));
+  content: "";
+  pointer-events: none;
+  z-index: 1;
+}
+
+.uploadCard::after {
+  background: linear-gradient(to top, rgba(35, 31, 31, .16), transparent);
+}
+
+/* The supplied style photos already include a gradient and a white label. */
+.card:not(.uploadCard)::after { display: none; }
+
+.cardLabel {
+  position: absolute;
+  right: 13px;
+  bottom: 14px;
+  left: 13px;
+  z-index: 2;
+  overflow: hidden;
+  color: #fff;
+  font-size: clamp(13px, 1.55vw, 18px);
+  font-weight: 800;
+  letter-spacing: -.03em;
+  line-height: 1.2;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The supplied sprite already contains each preset's Chinese label. Keep that
+   source lettering as the single label so it cannot be doubled by the overlay
+   label at the bottom of the card. The upload tile still uses its own label. */
+.card:not(.uploadCard) .cardLabel {
+  display: none;
+}
+
+.uploadCard .cardLabel {
+  color: #4e4d4d;
+  text-shadow: none;
+}
+
+.uploadMark {
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  z-index: 2;
+  color: #6c6a6a;
+}
+
+@media (max-width: 720px) {
+  .root { margin-top: 14px; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .cardLabel { right: 10px; bottom: 11px; left: 10px; font-size: 14px; }
+  .hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card { transition: none; }
+}

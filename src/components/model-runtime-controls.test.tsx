@@ -48,10 +48,10 @@ describe("model and size settings", () => {
   });
   it("lists upcoming models with memory references and disables selection", () => {
     const onModelChange = vi.fn();
-    const upcoming = assistantModelOptionSchema.parse({ id: "local-gemma4-31b", label: "Gemma 4 31B", model: "未下载", description: "尚未安装", configured: false, reachable: false, connectionKind: "live", contextTokens: null, family: "Gemma 4", parameterSizeB: 31, supportedModes: [], installationStatus: "not-downloaded", memoryRequirement: "参考内存 ≥32 GB" });
+    const upcoming = assistantModelOptionSchema.parse({ id: "local-qwen3-14b", label: "Qwen3 14B", model: "未下载", description: "尚未安装", configured: false, reachable: false, connectionKind: "live", contextTokens: null, family: "Qwen3", parameterSizeB: 14, supportedModes: [], installationStatus: "not-downloaded", memoryRequirement: "参考内存 ≥16 GB" });
     render(<ModelRuntimeControls compact models={[model("local-qwen3-8b", 8), upcoming]} modelProfileId="local-qwen3-8b" mode="light" onModelChange={onModelChange} onModeChange={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "选择模型 Qwen3 8B" }));
-    const candidate = within(screen.getByRole("dialog", { name: "选择模型与参数规模" })).getByRole("button", { name: /Gemma 4 31B.*参考内存 ≥32 GB/ });
+    const candidate = within(screen.getByRole("dialog", { name: "选择模型与参数规模" })).getByRole("button", { name: /Qwen3 14B.*参考内存 ≥16 GB/ });
     expect(candidate).toBeDisabled();
     expect(candidate).toHaveTextContent("未下载");
     fireEvent.click(candidate);

@@ -4,7 +4,7 @@ setlocal
 rem This file is safe to double-click from any current directory, including
 rem a project path containing spaces. The PowerShell script owns all setup,
 rem downloads, health checks, and process-scope safety decisions.
-set "LUMAFLOW_SCRIPT=%~dp0scripts\bootstrap.ps1"
+set "LUMAFLOW_SCRIPT=%~dp0scripts\start-portable.ps1"
 
 where pwsh.exe >nul 2>&1
 if not errorlevel 1 (

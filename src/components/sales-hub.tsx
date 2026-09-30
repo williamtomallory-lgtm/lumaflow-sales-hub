@@ -32,7 +32,7 @@ import { KnowledgeHub as KnowledgeBaseView } from "./knowledge-hub";
 import { AgentWorkspace } from "./agent-workspace";
 import { AgentManagement } from "./agent-management";
 import { WechatAgentWorkspace } from "./wechat-agent-workspace";
-import { ProjectSidebar, ProjectWorkspace } from "./project-workspace";
+import { ProjectSidebar, ProjectWorkspace, type HistoryCategory } from "./project-workspace";
 
 type NavItem = StaticNavItem & { icon: LucideIcon };
 
@@ -76,6 +76,17 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [historyHost, setHistoryHost] = useState<HTMLDivElement | null>(null);
+  const [workspaceCategory, setWorkspaceCategory] = useState<HistoryCategory>("chat");
+  const [newWechatConversationSignal, setNewWechatConversationSignal] = useState(0);
+  const [requestedWechatConversation, setRequestedWechatConversation] = useState<{ id: string; nonce: number } | null>(null);
+  useEffect(() => {
+    const onCategoryChange = (event: Event) => {
+      const category = (event as CustomEvent<{ category?: HistoryCategory }>).detail?.category;
+      if (category === "chat" || category === "work" || category === "image" || category === "wechat") setWorkspaceCategory(category);
+    };
+    window.addEventListener("lumaflow-history-category-changed", onCategoryChange);
+    return () => window.removeEventListener("lumaflow-history-category-changed", onCategoryChange);
+  }, []);
   useEffect(() => {
     const url = new URL(window.location.href);
     let next: View;
@@ -90,7 +101,7 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
       url.searchParams.delete("followup");
     } else return;
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-    const timer = window.setTimeout(() => setView(next), 0);
+    const timer = window.setTimeout(() => { setView(next); if (next === "salesAssistant") window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: "work" } })); }, 0);
     return () => window.clearTimeout(timer);
   }, []);
   const meta = VIEW_META[view];
@@ -103,16 +114,52 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
   function navigate(next: View) {
     setProjectPage(false); setProjectId(null); setInitialChatId(undefined);
     setWechatWork(false);
+    setNewWechatConversationSignal(0);
+    setRequestedWechatConversation(null);
     setView(next);
+    if (next === "assistant" && workspaceCategory !== "chat") setNewChatVersion((current) => current + 1);
     setMobileOpen(false);
     setSelectedProduct(null);
+    if (next === "assistant" || next === "salesAssistant") window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: next === "assistant" ? "chat" : "work" } }));
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function startHistory(category: HistoryCategory) {
+    setMobileOpen(false);
+    setProjectPage(false); setProjectId(null); setInitialChatId(undefined); setGlobalQuery("");
+    if (category === "wechat") {
+      setView("salesAssistant"); setWechatWork(true);
+      setNewWechatConversationSignal((current) => current + 1);
+      setRequestedWechatConversation(null);
+      window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category } }));
+      return;
+    }
+    setWechatWork(false);
+    setView(category === "work" ? "salesAssistant" : "assistant");
+    setNewChatVersion((current) => current + 1);
+    window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category } }));
+  }
+  function openImageWorkspace() {
+    setProjectPage(false); setProjectId(null); setInitialChatId(undefined); setGlobalQuery(""); setWechatWork(false); setNewWechatConversationSignal(0); setRequestedWechatConversation(null); setView("assistant"); setNewChatVersion((current) => current + 1); setMobileOpen(false);
+    window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: "image" } }));
   }
 
   function startNewChat() {
     if (wechatWork) {
       window.dispatchEvent(new CustomEvent("lumaflow-wechat-new-conversation"));
       setMobileOpen(false);
+      return;
+    }
+    if (isChat && !projectPage) {
+      window.dispatchEvent(new CustomEvent("lumaflow-new-chat"));
+      setWechatWork(false);
+      setProjectPage(false);
+      setInitialChatId(undefined);
+      setGlobalQuery("");
+      setView(workspaceCategory === "work" ? "salesAssistant" : "assistant");
+      setNewChatVersion((current) => current + 1);
+      setMobileOpen(false);
+      window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: workspaceCategory === "image" ? "image" : workspaceCategory === "work" ? "work" : "chat" } }));
       return;
     }
     setWechatWork(false);
@@ -127,9 +174,20 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
   function openWechatWork() {
     navigate("salesAssistant");
     setWechatWork(true);
+    window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: "wechat" } }));
   }
-  function openProject(id: string) { setProjectId(id); setProjectPage(true); setWechatWork(false); setView("assistant"); setMobileOpen(false); }
-  function startProjectChat(id: string | null, chatId?: string, experience: "chat" | "work" = "chat") { setProjectId(id); setProjectPage(false); setWechatWork(false); setInitialChatId(chatId); setGlobalQuery(""); setView(experience === "work" ? "salesAssistant" : "assistant"); setNewChatVersion((current) => current + 1); setMobileOpen(false); }
+  function openHistory(category: HistoryCategory, id: string, fromProjectId?: string | null) {
+    if (category === "wechat") {
+      setProjectPage(false); setProjectId(null); setInitialChatId(undefined); setGlobalQuery(""); setView("salesAssistant"); setWechatWork(true); setMobileOpen(false);
+      setNewWechatConversationSignal(0);
+      setRequestedWechatConversation((current) => ({ id, nonce: (current?.nonce ?? 0) + 1 }));
+      window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: "wechat" } }));
+      return;
+    }
+    startProjectChat(fromProjectId ?? null, id, category === "work" ? "work" : "chat", category === "image");
+  }
+  function openProject(id: string) { setProjectId(id); setProjectPage(true); setWechatWork(false); setView("assistant"); setMobileOpen(false); window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: "chat" } })); }
+  function startProjectChat(id: string | null, chatId?: string, experience: "chat" | "work" = "chat", image = false) { setProjectId(id); setProjectPage(false); setWechatWork(false); setInitialChatId(chatId); setGlobalQuery(""); setView(experience === "work" ? "salesAssistant" : "assistant"); setNewChatVersion((current) => current + 1); setMobileOpen(false); window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: image ? "image" : experience } })); }
 
   function openSalesKit(id?: string) {
     if (id) setKitProductId(id);
@@ -165,7 +223,7 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
             <span className="nav-label">工作空间</span>
             {primaryNav.map((item) => <NavButton key={item.id} item={item} active={view === item.id || (view === "salesAssistant" && item.id === "assistant")} onClick={() => navigate(item.id)} />)}
           </div>
-          <div className="chat-sidebar-panel" hidden={!isChat}><ProjectSidebar selectedId={projectId} onSelect={openProject} onToast={showToast} onOpenChat={(chatId, id) => startProjectChat(id, chatId)} onRemoved={(id) => { if (projectId === id) navigate("assistant"); }} recentAvailable={isChat && !projectPage} recentContent={<div className="sidebar-history-host" ref={setHistoryHost} />} /></div>
+          <div className="chat-sidebar-panel" hidden={!isChat}><ProjectSidebar selectedId={projectId} onSelect={openProject} onToast={showToast} onOpenChat={(chatId, id) => startProjectChat(id, chatId)} onOpenHistory={openHistory} onRemoved={(id) => { if (projectId === id) navigate("assistant"); }} onNewHistory={startHistory} recentAvailable={isChat && !projectPage} recentContent={<div className="sidebar-history-host" ref={setHistoryHost} />} /></div>
         </nav>
 
         <div className="sidebar-bottom-nav">
@@ -208,7 +266,7 @@ function SalesHubWorkspace({ initialData, generatedAt, refreshing, onRefresh }: 
 
           {view === "knowledge" && <KnowledgeBaseView key={`knowledge-${knowledgeSearchVersion}`} products={catalog} assets={catalogAssets} dataSource={initialData.source} initialQuery={globalQuery} section={knowledgeSection} onSectionChange={setKnowledgeSection} kitProductId={kitProductId} onOpenProduct={setSelectedProduct} onWork={() => navigate("salesAssistant")} onToast={showToast} />}
           {view === "agents" && <AgentManagement onWork={(agentId) => { try { localStorage.setItem("lumaflow.agent.id", agentId); } catch {} navigate("salesAssistant"); }} onWechatWork={openWechatWork} onToast={showToast} />}
-          {isChat && projectPage && projectId ? <ProjectWorkspace key={projectId} projectId={projectId} onNewChat={(id, experience) => startProjectChat(id, undefined, experience)} onOpenChat={(chatId, id) => startProjectChat(id, chatId)} onBack={() => navigate("assistant")} onToast={showToast} /> : isChat && wechatWork ? <WechatAgentWorkspace onBack={() => navigate("agents")} onToast={showToast} historyPortalTarget={historyHost} onExperienceChange={(next) => navigate(next === "chat" ? "assistant" : "salesAssistant")} /> : isChat && <AgentWorkspace key={`${view}-${newChatVersion}`} products={catalog} assets={catalogAssets} customers={initialData.customers} initialExperience={view === "salesAssistant" ? "work" : "chat"} initialMessage={view === "salesAssistant" ? "" : globalQuery} preferredRoleId={view === "salesAssistant" ? "sales-review" : undefined} selectAllKnowledge={view === "salesAssistant"} onOpenProduct={setSelectedProduct} onOpenKnowledge={() => navigate("knowledge")} onToast={showToast} onAddToKit={openSalesKit} historyPortalTarget={historyHost} onOpenWechat={openWechatWork} projectId={projectId} initialChatId={initialChatId} onOpenProject={openProject} />}
+          {isChat && projectPage && projectId ? <ProjectWorkspace key={projectId} projectId={projectId} onNewChat={(id, experience) => startProjectChat(id, undefined, experience)} onOpenChat={(chatId, id) => startProjectChat(id, chatId)} onBack={() => navigate("assistant")} onToast={showToast} /> : isChat && wechatWork ? <WechatAgentWorkspace onBack={() => navigate("agents")} onToast={showToast} historyPortalTarget={historyHost} newConversationSignal={newWechatConversationSignal} requestedConversation={requestedWechatConversation} onExperienceChange={(next) => next === "image" ? openImageWorkspace() : navigate(next === "chat" ? "assistant" : "salesAssistant")} /> : isChat && <AgentWorkspace key={`${view}-${newChatVersion}`} products={catalog} assets={catalogAssets} customers={initialData.customers} initialExperience={workspaceCategory === "image" ? "chat" : view === "salesAssistant" ? "work" : "chat"} initialImageMode={workspaceCategory === "image"} initialMessage={workspaceCategory !== "image" && view === "salesAssistant" ? "" : globalQuery} preferredRoleId={workspaceCategory !== "image" && view === "salesAssistant" ? "sales-review" : undefined} selectAllKnowledge={workspaceCategory !== "image" && view === "salesAssistant"} onOpenProduct={setSelectedProduct} onOpenKnowledge={() => navigate("knowledge")} onToast={showToast} onAddToKit={openSalesKit} historyPortalTarget={historyHost} onOpenWechat={openWechatWork} projectId={projectId} initialChatId={initialChatId} onOpenProject={openProject} />}
           {view === "followup" && <FollowupView customers={initialData.customers} tasks={initialData.followupTasks} onToast={showToast} />}
         </section>
       </main>

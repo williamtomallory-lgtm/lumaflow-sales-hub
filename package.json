@@ -18,6 +18,9 @@
     "local:setup": "node scripts/local-model.mjs setup",
     "local:up": "node scripts/local-model.mjs up",
     "verify:local": "node scripts/verify-local-model.mjs",
+    "local:bonsai": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-bonsai.ps1",
+    "benchmark:bonsai": "python scripts/benchmark-bonsai.py",
+    "verify:bonsai": "node scripts/verify-bonsai.mjs",
     "db:setup": "node --env-file-if-exists=.env.local scripts/seed-postgres.mjs"
   },
   "dependencies": {

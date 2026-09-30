@@ -37,6 +37,12 @@ describe("ConversationHistoryList", () => {
     expect(screen.getByRole("button", { name: "已归档的记录" })).toBeInTheDocument();
   });
 
+  it("searches saved message text when the title does not match", () => {
+    renderList({ items: [{ id: "body", title: "未命中的标题", searchableText: "采购合同中的隐藏关键词" }] });
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索对话" }), { target: { value: "隐藏关键词" } });
+    expect(screen.getByRole("button", { name: "未命中的标题" })).toBeInTheDocument();
+  });
+
   it("exposes keyboard friendly menu actions and inline rename", () => {
     const onRename = vi.fn();
     const onPin = vi.fn();

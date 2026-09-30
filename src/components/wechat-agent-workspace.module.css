@@ -41,12 +41,19 @@
 .qrError { padding:14px; border:1px solid #efd8d1; border-radius:11px; background:#fff7f4; color:#9e5e50; }
 .qrError p { margin:0 0 10px; }
 .boundary { color:#7c8f81; font-size:11px; }
-.root { display:flex; flex-direction:column; height:calc(100dvh - 100px); min-height:400px; overflow:hidden; }
-.header { padding:16px 22px; border-bottom:1px solid #e8eee9; flex-wrap:wrap; }
+.root { display:flex; flex-direction:column; height:calc(100dvh - 74px); min-height:400px; overflow:hidden; border:0; border-radius:0; }
+.header { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:16px; padding:22px 32px; box-shadow:inset 0 -1px #e8eee9; }
+.identity { display:flex; align-items:center; gap:12px; min-width:0; }
+.identity > div { min-width:0; }
+.identity h2,.identity p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.headerActions { display:flex; align-items:center; justify-content:flex-end; gap:8px; min-width:0; }
+.headerActions .status { margin-left:0; white-space:nowrap; }
+.headerActions .secondary { white-space:nowrap; }
 .header h2 { font-size:18px; }
-.experienceTabs { display:flex; align-items:center; gap:3px; margin-left:14px; padding:3px; border:1px solid #dfe9e1; border-radius:10px; background:#f7faf7; }
-.experienceTabs button { padding:6px 9px; border:0; border-radius:7px; background:transparent; color:#789080; font:inherit; font-size:11px; cursor:pointer; }
-.experienceTabs button[aria-pressed=true] { background:#e0efe3; color:#256043; font-weight:600; }
+.experienceTabs { display:flex; align-items:center; height:54px; padding:0; border-radius:999px; background:#e5e9e5; }
+.experienceTabs button { flex:0 0 158px; height:54px; padding:0 16px; border:0; border-radius:999px; background:transparent; color:#53645b; font:inherit; font-size:18px; white-space:nowrap; cursor:pointer; }
+.experienceTabs button[aria-pressed=true] { background:#f4f6f3; color:#214737; box-shadow:0 2px 5px #21473714,inset 0 0 0 1px #d8dfd8; font-weight:600; }
+.experienceTabs button:focus-visible { outline:2px solid #256043; outline-offset:2px; }
 .experienceTabs button:disabled { cursor:default; opacity:.6; }
 .body { display:flex; min-height:0; flex:1; }
 .conversations { display:flex; flex-direction:column; gap:8px; width:230px; flex-shrink:0; padding:16px 12px; border-right:1px solid #e7eee8; background:#f8faf7; overflow:auto; }
@@ -69,9 +76,18 @@
 .pending p { font-size:12px; color:#8b7e63; white-space:pre-wrap; line-height:1.7; }
 .pending div { display:flex; gap:8px; }
 .composer { padding:13px 20px 18px; border-top:1px solid #e8eee9; }
+.composer[hidden] { display:none; }
+.imageComposer { flex:0 1 auto; max-height:min(70dvh,740px); overflow-y:auto; overscroll-behavior:contain; padding:10px 20px 16px; border-top:1px solid #e8eee9; }
 .composer textarea { width:100%; box-sizing:border-box; resize:vertical; min-height:70px; max-height:180px; padding:12px; border:1px solid #dae6dc; border-radius:12px; background:#fbfcfa; color:#244832; font:inherit; font-size:13px; }
 .composer footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:9px; }
 .composer small { color:#91a094; font-size:10px; }
+.composer footer { flex-wrap:wrap; }
+.imageAttachments { display:flex; flex-wrap:wrap; gap:8px; padding:0 0 8px; }
+.imageAttachments > div { display:flex; align-items:center; gap:6px; max-width:220px; padding:4px 7px 4px 4px; border:1px solid #dce8de; border-radius:9px; background:#f7fbf7; color:#567261; font-size:10px; }
+.imageAttachments img { width:34px; height:34px; border-radius:6px; object-fit:cover; }
+.imageAttachments span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.imageAttachments button { display:grid; place-items:center; border:0; background:transparent; color:#89998d; cursor:pointer; }
+.imageHint { margin:0; color:#8b9b90; font-size:10px; }
 .modal { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:20px; background:#14342366; backdrop-filter:blur(5px); }
 .config { width:min(680px,100%); max-height:calc(100dvh - 40px); overflow:hidden; display:flex; flex-direction:column; border-radius:18px; background:#fff; box-shadow:0 15px 60px #183b342b; }
 .configHeader { display:flex; justify-content:space-between; align-items:center; padding:21px 24px; border-bottom:1px solid #e9efea; }
@@ -108,4 +124,6 @@
 .historyMore { width:100%; margin-top:5px; padding:6px; border:1px solid #dce7de; border-radius:7px; background:#fff; color:#5f7967; font:inherit; font-size:10px; cursor:pointer; }
 .historyMore:disabled { opacity:.5; cursor:default; }
 .configFooter { padding:16px 24px; border-top:1px solid #e9efea; justify-content:flex-end; }
-@media(max-width:740px) { .fields { grid-template-columns:1fr; } .card { padding:20px; } .feed { padding:14px; } .header { padding:14px; } .experienceTabs { order:3; width:100%; margin-left:0; } .experienceTabs button { flex:1; } .permissionModes { grid-template-columns:1fr; } .composer { padding:12px; } .composer footer small { max-width:170px; } .message { max-width:100%; } .modal { padding:8px; } .config { max-height:calc(100dvh - 16px); } }
+@media(max-width:740px) { .fields { grid-template-columns:1fr; } .card { padding:20px; } .feed { padding:14px; } .permissionModes { grid-template-columns:1fr; } .composer { padding:12px; } .composer footer small { max-width:170px; } .message { max-width:100%; } .modal { padding:8px; } .config { max-height:calc(100dvh - 16px); } }
+@media(min-width:701px) and (max-width:1050px) { .header { grid-template-columns:minmax(0,1fr) 36px; } .experienceTabs { grid-column:1; grid-row:1; width:min(474px,100%); min-width:0; justify-self:center; } .experienceTabs button { flex:1 1 0; min-width:0; padding:0 8px; font-size:16px; } .identity { grid-column:1; grid-row:2; } .headerActions { grid-column:1 / -1; grid-row:3; justify-content:flex-start; flex-wrap:wrap; } }
+@media(max-width:700px) { .header { grid-template-columns:minmax(0,1fr) 36px; padding:17px 15px; gap:8px; } .experienceTabs { grid-column:1; grid-row:1; width:100%; min-width:0; } .experienceTabs button { flex:1 1 0; min-width:0; padding:0 8px; font-size:14px; } .identity { grid-column:1 / -1; grid-row:2; } .headerActions { grid-column:1 / -1; grid-row:3; justify-content:flex-start; flex-wrap:wrap; } }

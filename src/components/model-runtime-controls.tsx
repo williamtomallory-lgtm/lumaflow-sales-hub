@@ -20,7 +20,7 @@ const familyOf = (model: AssistantModelOption) => model.family && model.family !
 const familyLabel = (model: AssistantModelOption) => familyOf(model) === "custom" ? "自定义服务" : familyOf(model);
 const sizeLabel = (model: AssistantModelOption) => model.installationStatus === "not-downloaded" ? model.label : model.parameterSizeB ? `${model.parameterSizeB}B` : "服务器配置";
 const modelDisplayLabel = (model: AssistantModelOption) => model.installationStatus === "not-downloaded" ? `${model.label}${model.memoryRequirement ? `（${model.memoryRequirement}）` : ""}` : model.parameterSizeB ? `${familyLabel(model)} ${sizeLabel(model)}` : model.label;
-const modelConnectionLabel = (model: AssistantModelOption) => model.installationStatus === "not-downloaded" ? "未下载" : model.reachable ? "已连接，可调用" : model.configured ? "已配置，但当前未连接" : "未配置 / 未安装";
+const modelConnectionLabel = (model: AssistantModelOption) => model.installationStatus === "not-downloaded" ? "未下载" : model.reachable ? "已连接，可调用" : model.runtimeManaged ? "待加载，选择后启动" : model.configured ? "已配置，但当前未连接" : "未配置 / 未安装";
 
 function isInside(ref: React.RefObject<HTMLElement | null>, target: EventTarget | null) {
   return target instanceof Node && Boolean(ref.current?.contains(target));
@@ -184,7 +184,7 @@ export function ModelRuntimeControls({ models, modelProfileId, mode, disabled, o
                 </button>)}
               </div>)}
             </div>
-            <p className={styles.compactCaveat}>括号中的内存是按所列量化版本与权重大小估算的本机参考值，实际需求取决于上下文、硬件和运行方式。未下载模型目前不能选择。</p>
+            {pendingModels.length > 0 && <p className={styles.compactCaveat}>括号中的内存是按所列量化版本与权重大小估算的本机参考值，实际需求取决于上下文、硬件和运行方式。未下载模型目前不能选择。</p>}
           </dialog>
         </div>
 

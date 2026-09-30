@@ -76,7 +76,7 @@ export async function completeAnswerResponse(input: {
           }
         } finally { reader.releaseLock(); }
         finishReason = await result.finishReason;
-        if (finishReason !== "length" || !await result.text) break;
+        if (input.options.modelProfileId === "naive-n05-flash-int4-experimental" || finishReason !== "length" || !await result.text) break;
       }
       signal.throwIfAborted();
       if (!fullText.trim()) throw new Error("Model returned an empty final answer");

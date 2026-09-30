@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { testSnapshot } from "@/test/fixtures";
@@ -15,13 +15,13 @@ vi.mock("@/hooks/use-backend-data", () => ({
 // Verify shell wiring independently of inference: both entry paths use this
 // exact component and pass the intended experience/customer, not two page trees.
 vi.mock("./agent-workspace", () => ({
-  AgentWorkspace: (props: { initialExperience: string; initialMessage?: string; onOpenKnowledge: () => void; onOpenWechat: () => void }) => {
+  AgentWorkspace: (props: { initialExperience: string; initialImageMode?: boolean; initialMessage?: string; onOpenKnowledge: () => void; onOpenWechat: () => void }) => {
     const [draft, setDraft] = useState("临时草稿");
-    return <div data-testid="unified-chat">{props.initialExperience}<span>{props.initialMessage}</span><button onClick={props.onOpenKnowledge}>归档资料</button><button onClick={props.onOpenWechat}>Wechat Agent</button><button onClick={() => setDraft("已修改的草稿")}>{draft}</button></div>;
+    return <div data-testid="unified-chat" data-image-mode={String(Boolean(props.initialImageMode))}>{props.initialExperience}<span>{props.initialMessage}</span><button onClick={props.onOpenKnowledge}>归档资料</button><button onClick={props.onOpenWechat}>Wechat Agent</button><button onClick={() => setDraft("已修改的草稿")}>{draft}</button></div>;
   },
 }));
 vi.mock("./wechat-agent-workspace", () => ({
-  WechatAgentWorkspace: (props: { historyPortalTarget?: HTMLElement | null; onExperienceChange: (next: "chat" | "work") => void }) => <div data-testid="wechat-destination" data-sidebar={Boolean(props.historyPortalTarget)}><button onClick={() => props.onExperienceChange("chat")}>回到 Chat</button><button onClick={() => props.onExperienceChange("work")}>回到 Work</button></div>,
+  WechatAgentWorkspace: (props: { historyPortalTarget?: HTMLElement | null; onExperienceChange: (next: "chat" | "work" | "image") => void }) => <div data-testid="wechat-destination" data-sidebar={Boolean(props.historyPortalTarget)}><button onClick={() => props.onExperienceChange("chat")}>回到 Chat</button><button onClick={() => props.onExperienceChange("work")}>回到 Work</button><button onClick={() => props.onExperienceChange("image")}>回到 Image</button></div>,
 }));
 vi.mock("./knowledge-hub", () => ({
   KnowledgeHub: (props: { section?: string }) => <div data-testid="knowledge-destination" data-section={props.section}>文件归档模块</div>,
@@ -32,7 +32,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("unified Chat-AI navigation", () => {
   it("shows recent/project navigation only on Chat-AI and keeps reminders above the profile", () => {
     render(<SalesHub />);
-    const panel = screen.getByRole("region", { name: "最近与项目" });
+    const panel = screen.getByRole("region", { name: "项目与对话记录" });
     expect(panel).toBeVisible();
     expect(screen.queryByText("管理与增长")).not.toBeInTheDocument();
     const reminder = screen.getByRole("button", { name: "跟进提醒" });
@@ -54,6 +54,25 @@ describe("unified Chat-AI navigation", () => {
     expect(screen.getByTestId("wechat-destination")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "回到 Work" }));
     expect(screen.getByTestId("unified-chat")).toHaveTextContent("work");
+  });
+  it("opens Image from Wechat and returns to an ordinary Chat composer", () => {
+    render(<SalesHub />);
+    expect(screen.getByTestId("unified-chat")).toHaveAttribute("data-image-mode", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Wechat Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "回到 Image" }));
+    expect(screen.getByTestId("unified-chat")).toHaveAttribute("data-image-mode", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Wechat Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "回到 Chat" }));
+    expect(screen.getByTestId("unified-chat")).toHaveAttribute("data-image-mode", "false");
+  });
+  it("does not pass Work controls to Image after switching from Work", () => {
+    render(<SalesHub />);
+    fireEvent.click(screen.getByRole("button", { name: "Wechat Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "回到 Work" }));
+    expect(screen.getByTestId("unified-chat")).toHaveTextContent("work");
+    act(() => window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category: "image" } })));
+    expect(screen.getByTestId("unified-chat")).toHaveTextContent("chat");
+    expect(screen.getByTestId("unified-chat")).toHaveAttribute("data-image-mode", "true");
   });
   it("starts a clean Chat conversation from the sidebar and removes the customer page", () => {
     render(<SalesHub />);

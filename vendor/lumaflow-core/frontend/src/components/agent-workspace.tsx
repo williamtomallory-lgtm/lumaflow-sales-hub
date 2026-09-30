@@ -1,0 +1,667 @@
+"use client";
+
+import { useChat } from "@ai-sdk/react";
+import { WechatConnection } from "./wechat-connection";
+import { DefaultChatTransport, isToolUIPart } from "ai";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock3,
+  Copy,
+  FileText,
+  MessageCircle,
+  Paperclip,
+  RefreshCw,
+  ArrowUp,
+  SquarePen,
+  Plus,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  UserRound,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { QUICK_QUESTIONS } from "@/config/ui-static";
+import { DEFAULT_AGENT_ROLE_ID, getAgentRoleOption, isAgentRoleId, type AgentRoleId } from "@/config/agent-roles";
+import { useModelCatalog } from "@/hooks/use-model-catalog";
+import { useModelHealth } from "@/hooks/use-model-health";
+import type { SalesAgentUIMessage } from "@/lib/ai/sales-agent";
+import type { Product } from "@/lib/catalog";
+import type { CrmAsset, Customer } from "@/lib/crm";
+import { projectAgentSearch } from "@/lib/client/agent-search-result";
+import styles from "./agent-workspace.module.css";
+import { ModelRuntimeControls, InferenceReceiptView } from "./model-runtime-controls";
+import { parseInferenceReceipt, persistInferenceMode, savedInferenceMode, type InferenceMode, type InferenceReceipt } from "@/config/inference-ui";
+import { getInferenceProfileInputBudget } from "@/lib/ai/inference-policy";
+import type { CowAgentProfile, CowAgentRoster } from "@/lib/contracts/cowagent-agent";
+import { extractCompleteHtml } from "@/lib/ai/code-artifact";
+
+export type AgentReplyConfirmation = {
+  customer: Customer;
+  message: string;
+  assetIds: string[];
+};
+
+/** Props intentionally mirror the previous SalesAssistantView entry point. */
+export type AgentWorkspaceProps = {
+  customers: Customer[];
+  products: Product[];
+  assets: CrmAsset[];
+  initialCustomerId?: string;
+  initialMessage?: string;
+  initialExperience?: "chat" | "work";
+  preferredRoleId?: AgentRoleId;
+  selectAllKnowledge?: boolean;
+  onOpenKnowledge?: () => void;
+  onAddToKit?: (id: string) => void;
+  onConfirmReply?: (confirmation: AgentReplyConfirmation) => void;
+  onOpenCustomer?: (customerId: string) => void;
+  onOpenProduct?: (product: Product) => void;
+  onToast?: (message: string) => void;
+};
+
+export type KnowledgeDocument = {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  status: string;
+  updatedAt: string;
+  size?: string;
+  format?: string;
+  selectable: boolean;
+  unavailableReason?: string;
+};
+
+export type KnowledgeCoverage = {
+  id: string;
+  name: string;
+  includedCharacters: number;
+  totalCharacters: number;
+  truncated: boolean;
+  hasText: boolean;
+};
+
+const agentPreferenceKey = "lumaflow.agent.id";
+
+function cx(...names: Array<string | false | undefined>) {
+  return names.filter(Boolean).join(" ");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function textValue(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
+function numberValue(record: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  }
+  return 0;
+}
+
+/** The knowledge API contract returns safe public entries in `data`. */
+export function parseKnowledgeDocuments(payload: unknown): KnowledgeDocument[] {
+  const root = asRecord(payload);
+  const items = Array.isArray(root?.data) ? root.data : [];
+  return items.flatMap((value) => {
+    const record = asRecord(value);
+    if (!record) return [];
+    const id = textValue(record, "id", "documentId", "fileId");
+    const title = textValue(record, "title", "name", "fileName", "originalName");
+    if (!id || !title) return [];
+    const format = textValue(record, "format", "extension", "mimeType", "type");
+    const statusCode = textValue(record, "status", "classificationStatus");
+    const status = statusCode === "classified" ? "已分类" : statusCode === "pending" ? "待分类" : statusCode === "archived" ? "已归档" : statusCode || (record.archived === true ? "已归档" : "已发布");
+    const explicitSelectable = record.selectable;
+    const contentAvailable = record.contentAvailable;
+    const hasText = record.hasText !== false && record.parseStatus !== "archive_only" && record.parseStatus !== "parse_failed";
+    // File extension is not an authority: parsed PDF/Office text is usable;
+    // archive-only or failed extraction is shown but cannot be selected.
+    const selectable = explicitSelectable === false || contentAvailable === false || !hasText
+      ? false
+      : explicitSelectable !== true || contentAvailable === true;
+    return [{
+      id,
+      title,
+      category: textValue(record, "category", "kind", "type") || "知识文档",
+      summary: textValue(record, "summary", "description", "excerpt", "textPreview"),
+      status,
+      updatedAt: textValue(record, "updatedAt", "modifiedAt", "createdAt") || "时间未提供",
+      size: textValue(record, "size", "sizeLabel", "fileSize") || undefined,
+      format: format || undefined,
+      selectable,
+      unavailableReason: selectable ? undefined : "仅支持已归档的可读文本内容",
+    }];
+  });
+}
+
+export function parseKnowledgeCoverageHeader(value: string | null): KnowledgeCoverage[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(value));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      const record = asRecord(entry);
+      if (!record) return [];
+      const id = textValue(record, "id");
+      if (!id) return [];
+      return [{
+        id,
+        name: textValue(record, "name", "title") || id,
+        includedCharacters: numberValue(record, "includedCharacters"),
+        totalCharacters: numberValue(record, "totalCharacters"),
+        truncated: record.truncated === true,
+        hasText: record.hasText !== false,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function savedAgentId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(agentPreferenceKey)?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function presentationRole(agent?: CowAgentProfile): AgentRoleId {
+  if (!agent) return DEFAULT_AGENT_ROLE_ID;
+  const configuredRole = agent.roleIds?.find(isAgentRoleId);
+  if (configuredRole) return configuredRole;
+  if (isAgentRoleId(agent.id)) return agent.id;
+  return DEFAULT_AGENT_ROLE_ID;
+}
+
+function customerLabel(customer: Customer) {
+  return `${customer.company} · ${customer.name}`;
+}
+
+export function AgentWorkspace({
+  customers,
+  products,
+  assets,
+  initialCustomerId,
+  initialMessage,
+  initialExperience = "chat",
+  preferredRoleId,
+  selectAllKnowledge = false,
+  onOpenKnowledge,
+  onAddToKit,
+  onConfirmReply,
+  onOpenCustomer,
+  onOpenProduct,
+  onToast,
+}: AgentWorkspaceProps) {
+  const [experience, setExperience] = useState(initialExperience);
+  const [workAgentId, setWorkAgentId] = useState(savedAgentId);
+  const [collaboratorAgentIds, setCollaboratorAgentIds] = useState<string[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionRange, setMentionRange] = useState<{ start: number; end: number } | null>(null);
+  const [agentRoster, setAgentRoster] = useState<CowAgentRoster>({ agents: [], defaultAgentId: "", revision: "" });
+  const [agentLoading, setAgentLoading] = useState(true);
+  const [agentError, setAgentError] = useState("");
+  const [contextOpen, setContextOpen] = useState(false);
+  const [input, setInput] = useState(initialMessage ?? "");
+  // Do not silently attach an arbitrary customer to a free-form chat.
+  // A customer context is sent only when the caller or user explicitly picks it.
+  const initialCustomer = initialCustomerId ? customers.find((customer) => customer.id === initialCustomerId) : undefined;
+  const [customerId, setCustomerId] = useState(initialCustomer?.id ?? "");
+  const [question, setQuestion] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  const [cancelled, setCancelled] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [mode, setMode] = useState<InferenceMode>(savedInferenceMode);
+  const [receipt, setReceipt] = useState<InferenceReceipt | null>(null);
+  const [exhausted, setExhausted] = useState(false);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+  const [knowledgeCoverage, setKnowledgeCoverage] = useState<KnowledgeCoverage[]>([]);
+  const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([]);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(true);
+  const [knowledgeError, setKnowledgeError] = useState("");
+  const [wechatDialogOpen, setWechatDialogOpen] = useState(false);
+  const [wechatSnapshotId, setWechatSnapshotId] = useState<string | null>(null);
+  const submitting = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const importDialog = useRef<HTMLDialogElement>(null);
+  const catalog = useModelCatalog();
+  const { health, checking, refresh: refreshHealth } = useModelHealth(catalog.modelProfileId);
+  const enabledAgents = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled && agent.type === "local"), [agentRoster.agents]);
+  const selectedWorkAgent = enabledAgents.find((agent) => agent.id === workAgentId);
+  const assignedKnowledgeIds = new Set(selectedWorkAgent?.knowledgeBaseIds ?? []);
+  const availableKnowledgeDocuments = experience === "work" ? knowledgeDocuments.filter((document) => assignedKnowledgeIds.has(document.id)) : knowledgeDocuments;
+  const effectiveSelectedDocumentIds = experience === "work" ? selectedDocumentIds.filter((id) => assignedKnowledgeIds.has(id)) : selectedDocumentIds;
+  const collaborators = enabledAgents.filter((agent) => collaboratorAgentIds.includes(agent.id) && agent.id !== selectedWorkAgent?.id);
+  const mentionCandidates = enabledAgents.filter((agent) => agent.id !== selectedWorkAgent?.id && !collaboratorAgentIds.includes(agent.id) && (mentionQuery === null || `${agent.name} ${agent.id}`.toLowerCase().includes(mentionQuery.toLowerCase()))).slice(0, 8);
+  const rolePresetId = experience === "chat" ? DEFAULT_AGENT_ROLE_ID : preferredRoleId ?? presentationRole(selectedWorkAgent);
+  const baseRole = getAgentRoleOption(rolePresetId);
+  const role = experience === "work" && selectedWorkAgent ? { ...baseRole, name: selectedWorkAgent.name, description: selectedWorkAgent.description || baseRole.description } : baseRole;
+  const transport = useMemo(() => new DefaultChatTransport<SalesAgentUIMessage>({
+    api: "/api/v1/assistant/chat",
+    prepareSendMessagesRequest: ({ messages, body, ...rest }) => ({
+      body: {
+        ...body,
+        id: rest.id,
+        // The server accepts one fresh user turn. Never replay browser-owned
+        // assistant/tool parts as trusted model history.
+        messages: messages.filter((message) => message.role === "user").slice(-1),
+      },
+    }),
+    fetch: async (url, init) => {
+      const timeout = AbortSignal.timeout(610_000);
+      const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+      let response: Response;
+      try {
+        response = await fetch(url, { ...init, signal });
+      } catch (error) {
+        if (error instanceof TypeError) throw new Error("与本机服务的连接中断，可能正在重启。请刷新模型连接后重试；这不代表模型能力不支持。");
+        throw error;
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (typeof payload?.error?.message === "string") throw new Error(payload.error.message);
+        const explanation = response.status === 429
+          ? "请求过于频繁，请稍后重试。"
+          : response.status === 422
+            ? "问题格式不正确，请缩短内容后重试。"
+            : "模型请求失败，请刷新连接后重试。";
+        throw new Error(`${explanation}（HTTP ${response.status}）`);
+      }
+      setKnowledgeCoverage(parseKnowledgeCoverageHeader(response.headers.get("X-Knowledge-Coverage")));
+      setReceipt(parseInferenceReceipt(response.headers));
+      return response;
+    },
+  }), []);
+  const { messages, sendMessage, status, error, stop, setMessages, clearError } = useChat<SalesAgentUIMessage>({ transport, throttle: 40, onFinish: ({ finishReason }) => setExhausted(finishReason === "length") });
+  const busy = status === "submitted" || status === "streaming";
+  const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable && (experience === "chat" || selectedWorkAgent));
+  const result = useMemo(() => projectAgentSearch(messages), [messages]);
+  const htmlArtifact = !busy && !error && !exhausted ? extractCompleteHtml(result.text) : null;
+  const toolParts = useMemo(() => messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => message.parts)
+    .filter(isToolUIPart), [messages]);
+  const computerRuns = toolParts.flatMap((part) => part.type === "tool-localComputer" && part.state === "output-available" && part.output && typeof part.output === "object"
+    ? [{ id: part.toolCallId, receipt: part.output as Record<string, unknown> }] : []);
+  const selectedCustomer = customers.find((customer) => customer.id === customerId);
+  const selectedDocuments = availableKnowledgeDocuments.filter((document) => effectiveSelectedDocumentIds.includes(document.id));
+  const selectedModelName = health?.model ?? catalog.selectedModel?.model ?? "等待读取模型";
+  const inputBudget = catalog.selectedModel?.id === "configured" ? 4000 : getInferenceProfileInputBudget(mode);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/v1/cowagent/agents", { cache: "no-store", headers: { Accept: "application/json" }, signal: controller.signal }).then(async (response) => {
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error?.message || "无法读取 CowAgent Agent 名单");
+      const next = payload.data as CowAgentRoster;
+      if (controller.signal.aborted) return;
+      setAgentRoster(next); setAgentError("");
+      const candidates = next.agents.filter((agent) => agent.enabled && agent.type === "local");
+      const preferred = preferredRoleId ? candidates.find((agent) => agent.id === preferredRoleId || agent.roleIds?.includes(preferredRoleId)) : undefined;
+      setWorkAgentId((current) => preferred?.id || (candidates.some((agent) => agent.id === current) ? current : candidates.find((agent) => agent.id === next.defaultAgentId)?.id || candidates[0]?.id || ""));
+    }).catch((issue) => {
+      if (!controller.signal.aborted) { setAgentRoster({ agents: [], defaultAgentId: "", revision: "" }); setAgentError(issue instanceof Error ? issue.message : "CowAgent 后端未连接"); }
+    }).finally(() => { if (!controller.signal.aborted) setAgentLoading(false); });
+    return () => controller.abort();
+  }, [preferredRoleId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadKnowledge() {
+      setKnowledgeLoading(true);
+      setKnowledgeError("");
+      try {
+        const response = await fetch("/api/v1/knowledge", { cache: "no-store", headers: { Accept: "application/json" }, signal: controller.signal });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(`知识库接口返回 ${response.status}`);
+        const documents = parseKnowledgeDocuments(payload);
+        for (let offset = 100; documents.length >= offset && offset < 500; offset += 100) {
+          const page = await fetch(`/api/v1/knowledge?limit=100&offset=${offset}`, { cache: "no-store", headers: { Accept: "application/json" }, signal: controller.signal });
+          if (!page.ok) throw new Error(`知识库后续页面返回 ${page.status}`);
+          documents.push(...parseKnowledgeDocuments(await page.json()));
+        }
+        const uniqueDocuments = [...new Map(documents.map((document) => [document.id, document])).values()];
+        setKnowledgeDocuments(uniqueDocuments);
+        if (selectAllKnowledge) setSelectedDocumentIds(uniqueDocuments.filter((document) => document.selectable).slice(0, 50).map((document) => document.id));
+      } catch (loadError) {
+        if (!controller.signal.aborted) {
+          setKnowledgeDocuments([]);
+          setKnowledgeError(loadError instanceof Error ? loadError.message : "暂时无法读取知识库文件。");
+        }
+      } finally {
+        if (!controller.signal.aborted) setKnowledgeLoading(false);
+      }
+    }
+    void loadKnowledge();
+    return () => controller.abort();
+  }, [selectAllKnowledge]);
+
+  useEffect(() => {
+    if (!busy) return;
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
+
+  useEffect(() => () => { void stop(); }, [stop]);
+
+  useEffect(() => {
+    if (wechatDialogOpen && importDialog.current && !importDialog.current.open) importDialog.current.showModal();
+    if (!wechatDialogOpen && importDialog.current?.open) importDialog.current.close();
+  }, [wechatDialogOpen]);
+
+  function resetOutput() {
+    setMessages([]); clearError(); setQuestion(""); setCancelled(false);
+    setConfirmed(false); setReceipt(null); setExhausted(false); setKnowledgeCoverage([]);
+  }
+
+  function changeExperience(next: "chat" | "work") {
+    if (busy || submitting.current || next === experience) return;
+    setExperience(next); resetOutput();
+    if (next === "work") setSelectedDocumentIds((current) => current.filter((id) => assignedKnowledgeIds.has(id)));
+  }
+
+  function newQuestion() {
+    if (busy || submitting.current) return;
+    resetOutput(); setInput(""); setCustomerId(""); setSelectedDocumentIds([]);
+    setWechatSnapshotId(null);
+    setCollaboratorAgentIds([]); setMentionQuery(null); setMentionRange(null);
+    setContextOpen(false); inputRef.current?.focus();
+  }
+
+  function changeAgent(value: string) {
+    if (busy || !enabledAgents.some((agent) => agent.id === value)) return;
+    const nextAgent = enabledAgents.find((agent) => agent.id === value);
+    setWorkAgentId(value);
+    setSelectedDocumentIds((current) => current.filter((id) => nextAgent?.knowledgeBaseIds?.includes(id)));
+    setCollaboratorAgentIds((current) => current.filter((id) => id !== value));
+    setReceipt(null);
+    setExhausted(false);
+    setMessages([]);
+    clearError();
+    setQuestion("");
+    setCancelled(false);
+    setConfirmed(false);
+    setKnowledgeCoverage([]);
+    try { localStorage.setItem(agentPreferenceKey, value); } catch { /* persistence is optional */ }
+  }
+
+  function changeWorkInput(value: string, cursor: number) {
+    setInput(value);
+    if (experience !== "work") return;
+    const match = /@([^\s@]*)$/.exec(value.slice(0, cursor));
+    setMentionQuery(match ? match[1] : null);
+    setMentionRange(match ? { start: cursor - match[0].length, end: cursor } : null);
+  }
+
+  function addCollaborator(agentId: string) {
+    if (busy || collaboratorAgentIds.includes(agentId) || agentId === selectedWorkAgent?.id || collaboratorAgentIds.length >= 3) return;
+    setCollaboratorAgentIds((current) => [...current, agentId]);
+    if (mentionRange) setInput((current) => `${current.slice(0, mentionRange.start)}${current.slice(mentionRange.end)}`);
+    setMentionQuery(null); setMentionRange(null);
+    inputRef.current?.focus();
+  }
+
+  function changeModel(value: string) {
+    if (busy || submitting.current || value === catalog.modelProfileId) return;
+    if (wechatSnapshotId && value === "configured") { onToast?.("微信快照仅允许使用本机 8B / 14B；开始新问题后可切换其他服务。"); return; }
+    catalog.selectModel(value);
+    setMode("instant");
+    persistInferenceMode("instant");
+    setReceipt(null);
+    setExhausted(false);
+    setMessages([]);
+    clearError();
+    setQuestion("");
+    setCancelled(false);
+    setConfirmed(false);
+    setKnowledgeCoverage([]);
+  }
+
+  function changeMode(next: InferenceMode) {
+    if (busy || submitting.current) return;
+    setMode(next); persistInferenceMode(next);
+    setMessages([]); clearError(); setQuestion(""); setCancelled(false); setConfirmed(false);
+    setReceipt(null); setExhausted(false); setKnowledgeCoverage([]);
+  }
+
+  function toggleDocument(document: KnowledgeDocument) {
+    if (!document.selectable || busy) return;
+    setSelectedDocumentIds((current) => {
+      if (experience === "work") current = current.filter((id) => assignedKnowledgeIds.has(id));
+      if (current.includes(document.id)) return current.filter((id) => id !== document.id);
+      if (current.length >= 50) {
+        onToast?.("单次复盘最多选择 50 份知识库文件");
+        return current;
+      }
+      return [...current, document.id];
+    });
+  }
+
+  async function submit(value = input) {
+    const cleanValue = value.trim();
+    if (submitting.current || busy || !ready || !cleanValue) return;
+    if (cleanValue.length > inputBudget) {
+      onToast?.(`本机模型单次接受 ${inputBudget.toLocaleString()} 字符，请分步交代或将材料上传到知识库。`);
+      return;
+    }
+    submitting.current = true;
+    setInput(value);
+    setQuestion(cleanValue);
+    setCancelled(false);
+    setConfirmed(false);
+    setElapsed(0);
+    setReceipt(null);
+    setExhausted(false);
+    setKnowledgeCoverage([]);
+    clearError();
+    setMessages([]);
+    try {
+      await sendMessage({ text: cleanValue }, {
+        body: {
+          ...(experience === "work" && selectedWorkAgent ? { agentId: selectedWorkAgent.id, collaboratorAgentIds: collaborators.map((agent) => agent.id) } : { agentRoleId: DEFAULT_AGENT_ROLE_ID }),
+          knowledgeDocumentIds: effectiveSelectedDocumentIds,
+          modelProfileId: catalog.modelProfileId,
+          mode,
+          experience,
+          ...(wechatSnapshotId ? { wechatSnapshotId } : {}),
+          ...(customerId ? { customerId } : {}),
+        },
+      });
+    } finally {
+      submitting.current = false;
+    }
+  }
+
+  async function copyOutput() {
+    if (!result.text) return;
+    try {
+      await navigator.clipboard.writeText(result.text);
+      onToast?.("草稿已复制；请人工核对后自行发送");
+    } catch {
+      onToast?.("复制失败，请手动选择输出内容");
+    }
+  }
+
+  function downloadHtml() {
+    if (!htmlArtifact) return;
+    const url = URL.createObjectURL(new Blob([htmlArtifact], { type: "text/html;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "lumaflow-generated.html";
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
+  function confirmOutput() {
+    if (!result.text) return;
+    setConfirmed(true);
+    if (onConfirmReply && selectedCustomer && (rolePresetId === "sales-consultant" || rolePresetId === "wechat-service")) {
+      onConfirmReply({ customer: selectedCustomer, message: result.text, assetIds: [] });
+    }
+    onToast?.("已标记为人工核对；不会自动发送");
+  }
+
+  async function importTextFiles(files: FileList | null) {
+    if (!files?.length) return;
+    const selected = Array.from(files);
+    if (selected.length > 5) {
+      onToast?.("一次最多导入 5 个文本文件；请分批选择，未导入本次文件");
+      return;
+    }
+    const chunks: string[] = [];
+    let skipped = 0;
+    let decodeFailures = 0;
+    for (const file of selected) {
+      if (file.size > 1_000_000 || !/\.(txt|md|csv|json)$/i.test(file.name)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        // File.text() replaces malformed UTF-8 bytes. A chat export that
+        // cannot be decoded must be rejected rather than silently changed.
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(await file.arrayBuffer()));
+        if (text.includes("\0")) throw new Error("NUL byte");
+        chunks.push(`【${file.name}】\n${text}`);
+      } catch {
+        decodeFailures += 1;
+      }
+    }
+    const merged = `${input.trim()}${input.trim() && chunks.length ? "\n\n" : ""}${chunks.join("\n\n")}`;
+    if (merged.length > inputBudget) {
+      onToast?.(`导入内容超过单次输入 ${inputBudget.toLocaleString()} 字，本次未导入；请将完整记录上传到知识库或分段导入`);
+      return;
+    }
+    if (chunks.length) setInput(merged);
+    const notices = [
+      skipped ? `${skipped} 个文件不是可读文本或超过 1 MB，已跳过；图片/PDF请先放入知识库` : "",
+      decodeFailures ? `${decodeFailures} 个文本文件 UTF-8 解码失败或含非法 NUL 字节，已跳过` : "",
+    ].filter(Boolean);
+    if (notices.length) onToast?.(`${notices.join("；")}${chunks.length ? "；其余文本已导入，请发送前检查" : ""}`);
+    else if (chunks.length) onToast?.("已导入导出聊天文本，请发送前检查内容");
+    setWechatDialogOpen(false);
+  }
+
+  const statusText = checking
+    ? "检测模型连接中"
+    : health?.reachable
+      ? health.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接"
+      : "模型未连接";
+
+  const inputLabel = experience === "chat" ? "输入产品问题" : role.inputLabel;
+
+  return (
+    <div className={cx(styles.root, Boolean(question) && styles.hasConversation)} data-testid="chat-ai-workspace">
+      <header className={styles.header}>
+        <h1>Chat-AI</h1>
+        <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
+          <button type="button" aria-pressed={experience === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
+          <button type="button" aria-pressed={experience === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
+        </div>
+        <button type="button" className={styles.iconButton} aria-label="新问题" title="清空本轮输入与资料" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button>
+      </header>
+
+      <div className={styles.stage}>
+        {!question && <div className={styles.welcome}>
+          <span className={styles.welcomeMark}><Sparkles size={23} /></span>
+          <h2>{experience === "chat" ? "你好，今天想解决什么？" : "选一位 Agent，一起把工作做好。"}</h2>
+          <p>{experience === "chat" ? "问问题，写内容，或生成一份完整代码。" : "让本地 Agent 执行命令、整理文件、生成并保存成果。"}</p>
+        </div>}
+
+        {question && <section className={styles.conversation} aria-label="本轮问答" data-testid="agent-output">
+          <div className={styles.questionBubble}><span>你</span><p>{question}</p></div>
+          <article className={styles.response}>
+            <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong>{experience === "chat" ? "LumaFlow" : role.name}</strong><span className={styles.outputStatus}>{busy ? <><Clock3 size={12} /> {elapsed} 秒</> : error ? "未完成 · 出现错误" : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "仍有内容待完成" : result.text ? confirmed ? "已人工核对" : "已完成" : ""}</span></div>
+            {busy && <p className={styles.generating} role="status">{toolParts.length ? `已观察到 ${toolParts.length} 次真实工具调用，正在整理…` : "正在等待本地模型，首次加载可能需要一些时间…"}</p>}
+            {result.text && <div className={styles.answer} data-testid="agent-answer">{result.text}</div>}
+            {!busy && !error && !result.text && <p className={styles.muted}>{cancelled ? "本次生成已停止。" : "模型没有返回文字输出；不会使用本地规则冒充回答。"}</p>}
+            {exhausted && <p className={styles.errorBox} role="alert">模型没有完成剩余内容，已有输出已保留。请将任务拆分后处理。</p>}
+            {error && <div className={styles.errorBox} role="alert"><span>模型没有完成本轮任务：{error.message === "An error occurred." ? "本地推理服务出错或超时" : error.message}</span><button type="button" onClick={() => void submit(question)} disabled={!ready || busy} aria-label="重试本轮问题">重试</button></div>}
+            {result.products.length > 0 && <div className={styles.productResults}>{result.products.map((record) => { const product = products.find((item) => item.id === record.id); return <div key={record.id}><button type="button" disabled={!product} onClick={() => product && onOpenProduct?.({ ...product, ...record })}><span><strong>{record.name}</strong><small>{record.sku} · {record.power}</small></span><ArrowRight size={15} /></button>{product && onAddToKit && <button type="button" className={styles.kitButton} onClick={() => onAddToKit(product.id)}><Plus size={14} /> 加入资料包</button>}</div>; })}</div>}
+            {computerRuns.map(({ id, receipt: operation }) => <details key={id} className={styles.computerReceipt} open><summary>本机执行 · {String(operation.action || "操作")} · {operation.timedOut ? "超时" : typeof operation.exitCode === "number" ? `退出码 ${operation.exitCode}` : operation.saved ? "文件已保存" : "已返回"}</summary>{operation.path ? <p>{String(operation.path)}</p> : null}{operation.stdout || operation.stderr ? <pre>{String(operation.stdout || "")}{String(operation.stderr || "")}</pre> : null}</details>)}
+            {(receipt || result.evidence.length > 0 || toolParts.length > 0 || knowledgeCoverage.length > 0) && <details className={styles.sources}>
+              <summary>查看依据与本轮模型 <ChevronIcon /></summary>
+              <InferenceReceiptView receipt={receipt} />
+              {result.sources.length > 0 && <p className={styles.muted}>本轮数据源：{result.sources.join("、")}</p>}
+              {result.evidence.length > 0 && <div className={styles.evidence} data-testid="search-evidence">{result.evidence.map((entry, index) => <div key={`${entry.title}-${index}`}><FileText size={14} /><span><strong>{entry.title}</strong><small>{entry.detail}</small></span></div>)}</div>}
+              {toolParts.length > 0 && <div className={styles.toolTrace} aria-label="本轮工具调用">{toolParts.map((part) => <span key={part.toolCallId}>{part.type.replace(/^tool-/, "")} · {part.state === "output-available" ? "已返回" : part.state === "output-error" ? "失败" : "执行中"}</span>)}</div>}
+              {knowledgeCoverage.length > 0 && <div className={styles.coverage} data-testid="knowledge-coverage"><strong>本轮知识上下文覆盖</strong>{knowledgeCoverage.map((entry) => <div key={entry.id}><span>{entry.name}</span><small>{entry.hasText ? `已纳入 ${entry.includedCharacters.toLocaleString()} / ${entry.totalCharacters.toLocaleString()} 字` : "没有可读正文"}{entry.truncated ? " · 已截断" : ""}</small></div>)}</div>}
+            </details>}
+            {result.text && <div className={styles.outputActions}>{htmlArtifact && <button type="button" onClick={downloadHtml}><FileText size={14} /> 下载 HTML</button>}<button type="button" disabled={busy} onClick={() => void copyOutput()}><Copy size={14} /> 复制</button><button type="button" disabled={busy || confirmed || cancelled || exhausted || Boolean(error)} onClick={confirmOutput}><CheckCircle2 size={14} /> {confirmed ? "已人工核对" : "标记人工核对"}</button></div>}
+          </article>
+        </section>}
+
+        <div className={styles.composerArea}>
+          <div className={styles.composer}>
+            {experience === "work" && <WechatConnection roleId={selectedWorkAgent?.id || rolePresetId} disabled={busy} onImport={(snapshotId, text) => {
+              if (text.length > inputBudget) { onToast?.(`选中记录超过当前 ${inputBudget} 字符预算，请减少选中条数。`); return false; }
+              if (catalog.modelProfileId === "configured") { onToast?.("请先选择本机 8B 或 14B；实时微信记录不发送到自定义服务。"); return false; }
+              resetOutput(); setInput(text); setWechatSnapshotId(snapshotId); return true;
+            }} />}
+            {wechatSnapshotId && <p className={styles.muted}>已附加微信只读快照 · 仅本机模型 · 请检查后发送（新问题可清除）</p>}
+            {experience === "work" && <div className={styles.roleRow}>
+              <label><Sparkles size={14} /><select aria-label="选择本地 Agent" value={selectedWorkAgent?.id || ""} disabled={busy || agentLoading || !enabledAgents.length} onChange={(event) => changeAgent(event.target.value)}>{!enabledAgents.length && <option value="">{agentLoading ? "正在读取 CowAgent…" : "没有可用本地 Agent"}</option>}{enabledAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · 本地</option>)}</select></label>
+              <button type="button" disabled={busy || collaboratorAgentIds.length >= 3} onClick={() => { setMentionQuery(""); setMentionRange(null); inputRef.current?.focus(); }}>@ 添加协作 Agent</button>
+              <button type="button" disabled={busy} onClick={() => setWechatDialogOpen(true)}><Upload size={14} /> 导入微信记录</button>
+            </div>}
+            {experience === "work" && collaborators.length > 0 && <div className={styles.agentChips} aria-label="参与协作的 Agent">{collaborators.map((agent) => <button type="button" key={agent.id} disabled={busy} onClick={() => setCollaboratorAgentIds((current) => current.filter((id) => id !== agent.id))}>@{agent.name}<X size={12} /></button>)}</div>}
+            {experience === "work" && mentionQuery !== null && <div className={styles.agentMentionMenu} role="listbox" aria-label="选择协作 Agent">{mentionCandidates.length ? mentionCandidates.map((agent) => <button type="button" role="option" aria-selected="false" key={agent.id} onMouseDown={(event) => event.preventDefault()} onClick={() => addCollaborator(agent.id)}><strong>{agent.name}</strong><span>{agent.description || agent.id}</span></button>) : <span className={styles.agentMentionEmpty}>{collaboratorAgentIds.length >= 3 ? "最多添加 3 个协作 Agent" : "没有匹配的本地 Agent"}</span>}</div>}
+            {experience === "work" && agentError && <p className={styles.errorBox} role="alert">{agentError}。请在“智能体”页面确认 CowAgent 后端。</p>}
+            {selectedDocuments.length > 0 && <div className={styles.selectedFiles}>{selectedDocuments.map((document) => <button type="button" key={document.id} disabled={busy} onClick={() => toggleDocument(document)} aria-label={`移除 ${document.title}`}><Paperclip size={12} /><span>{document.title}</span><X size={12} /></button>)}</div>}
+            {selectedCustomer && <div className={styles.selectedCustomer}><UserRound size={13} />{customerLabel(selectedCustomer)}<button type="button" aria-label="取消客户上下文" disabled={busy} onClick={() => setCustomerId("")}><X size={13} /></button></div>}
+            <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={4_000} disabled={busy} aria-label={inputLabel} placeholder={experience === "chat" ? "提问、写作、生成代码…" : "描述任务；输入 @ 添加多个本地 Agent 协作…"} onChange={(event) => changeWorkInput(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (mentionQuery !== null && event.key === "Escape") { event.preventDefault(); setMentionQuery(null); setMentionRange(null); return; } if (mentionQuery !== null && event.key === "Enter" && mentionCandidates.length) { event.preventDefault(); addCollaborator(mentionCandidates[0].id); return; } if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+            <div className={styles.composerTools}>
+              <button type="button" className={styles.iconButton} aria-label="添加资料与客户上下文" aria-expanded={contextOpen} disabled={busy} title="选择知识库文件或客户" onClick={() => setContextOpen((open) => !open)}><Plus size={21} /></button>
+              <div className={styles.modelTools}><ModelRuntimeControls compact models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} /></div>
+              {busy ? <button type="button" className={styles.sendButton} aria-label="停止生成" onClick={() => { setCancelled(true); void stop(); }}><X size={18} /></button> : <button type="button" className={styles.sendButton} aria-label="发送问题" title={`交给 ${role.name}`} disabled={!ready || !input.trim() || input.trim().length > inputBudget} onClick={() => void submit()}><ArrowUp size={20} /></button>}
+            </div>
+          </div>
+          <div className={styles.composerMeta}><span className={styles.connection} title={selectedModelName}><i className={health?.reachable ? styles.online : ""} />{statusText}<button type="button" aria-label="刷新模型连接" disabled={busy} onClick={() => { catalog.refresh(); refreshHealth(); }}><RefreshCw size={12} /></button></span><span>{input.length > 0 ? `${input.length.toLocaleString()} / ${inputBudget.toLocaleString()} 字 · ` : ""}Enter 发送 · Shift + Enter 换行</span></div>
+          {input.length > inputBudget && <p className={styles.errorBox} role="alert">内容超过单次输入 {inputBudget.toLocaleString()} 字符，请分步交代或将材料上传到知识库；不会静默截断你的输入。</p>}
+          {catalog.error && <p className={styles.errorBox} role="alert">{catalog.error}</p>}
+          {!checking && !catalog.loading && !health?.reachable && <p className={styles.errorBox} role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "所选模型尚未连接，请先配置对应的本地服务。"}</p>}
+
+          {contextOpen && <section className={styles.contextPanel} data-testid="knowledge-picker" aria-label="参考资料与客户">
+            <div className={styles.panelHeading}><h3>本轮参考资料</h3><span>{effectiveSelectedDocumentIds.length} / {Math.min(50, availableKnowledgeDocuments.filter((document) => document.selectable).length)}</span>{onOpenKnowledge && <button type="button" onClick={onOpenKnowledge}><Upload size={14} /> 去知识库上传</button>}</div>
+            <p className={styles.muted}>仅选择你希望本轮读取的文件；长文件按预算节选，覆盖范围随答案返回。产品资料共 {assets.length} 份。</p>
+            {knowledgeLoading && <p className={styles.muted}>正在读取知识库文件…</p>}
+            {!knowledgeLoading && knowledgeError && <p className={styles.errorBox} role="alert">{knowledgeError}。仍可粘贴记录。</p>}
+            {!knowledgeLoading && !knowledgeError && availableKnowledgeDocuments.length === 0 && <p className={styles.muted}>{experience === "work" ? "当前 Agent 尚未分配知识库文件。" : "暂无文件，请先到知识库上传。"}</p>}
+            <div className={styles.documentList}>{availableKnowledgeDocuments.map((document) => <label key={document.id} className={cx(styles.documentRow, effectiveSelectedDocumentIds.includes(document.id) && styles.documentSelected, !document.selectable && styles.documentDisabled)} title={document.unavailableReason}>
+                <input type="checkbox" aria-label={`选择 ${document.title}`} checked={effectiveSelectedDocumentIds.includes(document.id)} disabled={!document.selectable || busy || (!effectiveSelectedDocumentIds.includes(document.id) && effectiveSelectedDocumentIds.length >= 50)} onChange={() => toggleDocument(document)} />
+              <span><strong>{document.title}</strong><small>{document.category} · {document.status}{!document.selectable ? ` · ${document.unavailableReason}` : ""}</small></span>
+            </label>)}</div>
+            {customers.length > 0 && <label className={styles.customerSelect}><UserRound size={14} /><select aria-label="选择客户" value={customerId} disabled={busy} onChange={(event) => setCustomerId(event.target.value)}><option value="">不绑定客户上下文</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}</select>{selectedCustomer && onOpenCustomer && <button type="button" onClick={() => onOpenCustomer(selectedCustomer.id)}>查看档案</button>}</label>}
+          </section>}
+
+          {!question && <div className={styles.suggestions} aria-label="提问示例">{(experience === "chat" ? ["创建一个离线 HTML 动画，带暂停按钮", ...QUICK_QUESTIONS.slice(0, 2)] : ["执行命令查看当前日期与电脑剩余内存", "创建一个离线 HTML 动画并保存到工作目录", "列出工作目录文件并整理摘要"]).map((item) => <button key={item} type="button" disabled={busy} onClick={() => { setInput(item); inputRef.current?.focus(); }}><MessageCircle size={14} /><span>{item}</span><ArrowRight size={13} /></button>)}</div>}
+          <p className={styles.disclaimer}><ShieldCheck size={12} />{experience === "work" ? role.outputHint : "内容由本地模型生成，请核对重要信息。"} 每次独立提问，不自动引用上一轮。{health?.connectionKind === "protocol-mock" ? "当前为协议模拟连接。" : ""}</p>
+        </div>
+      </div>
+
+      <dialog ref={importDialog} className={styles.dialog} aria-label="导入微信记录" onCancel={() => setWechatDialogOpen(false)} onClose={() => setWechatDialogOpen(false)}>
+        <header><h2>导入微信记录</h2><button type="button" aria-label="关闭微信导入说明" onClick={() => setWechatDialogOpen(false)}><X size={18} /></button></header>
+        <p>这是微信导出文件入口，与桌面只读连接分开。请粘贴聊天记录，或选择可读文本文件导入。</p><p>图片、PDF 和其他附件请先在知识库归档，再选择作为上下文。本入口不会生成二维码、索取密码或自动发送消息。</p>
+        <label className={styles.fileImport}><Upload size={16} /><span>选择导出的文本记录（TXT / Markdown / CSV / JSON）</span><input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,text/plain,text/markdown" onChange={(event) => void importTextFiles(event.target.files)} /></label>
+        <button type="button" onClick={() => setWechatDialogOpen(false)}>返回 Chat-AI</button>
+      </dialog>
+    </div>
+  );
+}
+
+function ChevronIcon() { return <span aria-hidden="true">⌄</span>; }

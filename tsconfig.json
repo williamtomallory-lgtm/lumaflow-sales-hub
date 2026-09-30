@@ -39,6 +39,7 @@
     "node_modules",
     ".local-data",
     ".local-runtime",
-    "release-assets"
+    "release-assets",
+    "vendor"
   ]
 }

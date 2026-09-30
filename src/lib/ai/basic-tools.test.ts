@@ -26,6 +26,20 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("CowAgent basic tools", () => {
+  it("calculates table statistics without treating empty cells or labels as numbers", async () => {
+    const result = await run(basicTools.analyzeTable, { rows: [{ item: "A", amount: 10 }, { item: "B", amount: "20" }, { item: "C", amount: "" }, { item: "D", amount: "12件" }] }) as { rowCount: number; columns: unknown[] };
+    expect(result.rowCount).toBe(4);
+    expect(result.columns).toContainEqual(expect.objectContaining({ name: "amount", numericCount: 2, missing: 1, nonNumericCount: 1, sum: 30, mean: 15, median: 15 }));
+    expect(executeCowAgentComputer).not.toHaveBeenCalled();
+  });
+  it("creates PDF and PPT without granting command execution", async () => {
+    const tools = cowAgentBasicTools("local", { ...full, tools: false });
+    for (const format of ["pdf", "pptx"]) {
+      await run(tools.createOfficeFile, { format, content: "# 报告\n正文", path: `report.${format}` });
+      expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "create_document", format }));
+    }
+    await expect(run(tools.createOfficeFile, { format: "pdf", content: "正文", path: "../report.pdf" })).rejects.toThrow("相对路径");
+  });
   it("keeps public search and local history in the Chat-safe tool set", async () => {
     await expect(run(basicTools.webSearch, { query: "LumaFlow" })).resolves.toMatchObject({ source: "Exa web search" });
     await expect(run(basicTools.searchChatHistory, { query: "读取", limit: 10 })).resolves.toMatchObject({ source: "本机对话记录", results: [{ matches: expect.arrayContaining([expect.objectContaining({ excerpt: "读取报告" })]) }] });
@@ -75,7 +89,7 @@ describe("CowAgent basic tools", () => {
     await run(tools.runPythonAnalysis, { script: "print(2 + 2)", timeoutSeconds: 10 });
     expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "read_file", path: "notes.txt" }));
     expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "write_file", path: "report.md" }));
-    expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "command", command: expect.stringContaining("lumaflow-python-") }));
+    expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "python", script: "print(2 + 2)" }));
   });
 
   it("rejects Work file writes and Python when the selected Agent is read-only", async () => {
@@ -85,12 +99,11 @@ describe("CowAgent basic tools", () => {
     expect(executeCowAgentComputer).not.toHaveBeenCalled();
   });
 
-  it("builds a Word file and saves it with a CowAgent command", async () => {
+  it("creates a Word file through the document executor", async () => {
     const tools = cowAgentBasicTools("local", full);
-    const result = await run(tools.createOfficeFile, { format: "docx", content: "# 报告\n\n正文", path: "report.docx" }) as { source: string; filename: string; bytes: number };
+    const result = await run(tools.createOfficeFile, { format: "docx", content: "# 报告\n\n正文", path: "report.docx" }) as { source: string; filename: string };
     expect(result.source).toBe("CowAgent");
     expect(result.filename).toMatch(/\.docx$/);
-    expect(result.bytes).toBeGreaterThan(0);
-    expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "command" }));
+    expect(executeCowAgentComputer).toHaveBeenCalledWith("local", expect.objectContaining({ action: "create_document", format: "docx", path: "report.docx" }));
   });
 });

@@ -9,7 +9,18 @@ $tokenPath = Join-Path $runtime 'proxy-token.txt'
 $proxyUrl = 'http://127.0.0.1:8082/v1/models'
 $modelId = 'ternary-bonsai-2-27b'
 
-& (Join-Path $PSScriptRoot 'start-bonsai.ps1')
+$selectionFile = Join-Path $projectRoot '.local-runtime\selected-local-model.json'
+if (Test-Path -LiteralPath $selectionFile) {
+    $selection = Get-Content -LiteralPath $selectionFile -Raw | ConvertFrom-Json
+    if ($selection.profile -in @('image', 'naive-n05-flash-int4-experimental')) {
+        Write-Host 'Bonsai automatic start deferred: another local model was selected.'
+        return
+    }
+}
+# Re-check under the same mutex as UI selection to prevent a scheduled task
+# from loading Bonsai immediately after the user switches to another model.
+& (Join-Path $PSScriptRoot 'manage-local-model.ps1') -Profile configured -Startup
+if ((Get-Content -LiteralPath $selectionFile -Raw | ConvertFrom-Json).profile -ne 'configured') { return }
 if (-not (Test-Path -LiteralPath $tokenPath)) {
     throw 'The Bonsai proxy token is missing. Run setup-bonsai-proxy.ps1 first.'
 }

@@ -9,6 +9,26 @@ import { chatSessionMetadataPatchSchema, chatSessionSchema, type LocalChatMetada
 const directory = path.join(process.cwd(), ".local-data", "chat", "sessions");
 function sessionPath(id: string) { return path.join(directory, `${z.string().uuid().parse(id)}.json`); }
 
+// Image-operation turns have two stable signals that survive a browser
+// reload: image attachments and the local asset URL written into the answer.
+// The text hints cover records saved by earlier builds before the asset URL
+// was included in the answer. This is intentionally deterministic so history
+// categorisation never calls an AI model or reads image pixels.
+const imageAssetPattern = /\/api\/v1\/assistant\/image-operations\/assets\/[0-9a-f]{32}\.png/i;
+const imageTextPattern = /(?:qwen[- ]?image(?:[- ]?2\.1)?|图片文件\s*[:：]|图片模型|图片操作|生图功能|生成一张图片|编辑图片|修改图片|识别图片|查看我附加的图片)/i;
+const imageFilePattern = /\.(?:png|jpe?g|webp|gif|bmp|avif)$/i;
+
+function sessionHasImage(session: LocalChatSession): boolean {
+  return session.turns.some((turn) => {
+    const attachment = turn.attachments.some((name) => imageFilePattern.test(name) || name.trim() === "图片");
+    return attachment || imageAssetPattern.test(turn.assistant) || imageTextPattern.test(turn.user) || imageTextPattern.test(turn.assistant);
+  });
+}
+
+function sessionSearchText(session: LocalChatSession): string {
+  return [session.title, ...session.turns.flatMap((turn) => [turn.user, turn.assistant, ...(turn.versions || []).flatMap((version) => [version.user, version.assistant])])].join("\n");
+}
+
 export async function readChatSession(id: string): Promise<LocalChatSession | null> {
   try { return chatSessionSchema.parse(JSON.parse(await readFile(sessionPath(id), "utf8"))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
@@ -19,11 +39,18 @@ export async function listChatSessions(query = ""): Promise<LocalChatSummary[]> 
   const names = (await readdir(directory)).filter((name) => /^[0-9a-f-]{36}\.json$/i.test(name));
   const sessions = await Promise.all(names.map(async (name) => readChatSession(name.slice(0, -5)).catch(() => null)));
   const needle = query.trim().toLocaleLowerCase();
-    return sessions.flatMap((session) => session && (!needle || [session.title, ...session.turns.flatMap((turn) => [turn.user, turn.assistant])].some((text) => text.toLocaleLowerCase().includes(needle))) ? [{
+    return sessions.flatMap((session) => {
+    if (!session) return [];
+    const searchableText = sessionSearchText(session);
+    if (needle && !searchableText.toLocaleLowerCase().includes(needle)) return [];
+    return [{
     id: session.id, experience: session.experience, title: session.title, agentId: session.agentId, projectId: session.projectId,
     createdAt: session.createdAt, updatedAt: session.updatedAt, pinned: session.pinned, archived: session.archived,
     turnCount: session.turns.length,
-  }] : []).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt));
+    hasImage: sessionHasImage(session),
+    searchableText,
+    }];
+  }).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export async function saveChatSession(value: unknown): Promise<LocalChatSession> {

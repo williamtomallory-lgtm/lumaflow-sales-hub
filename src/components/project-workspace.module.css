@@ -1,4 +1,4 @@
-.sidebar { padding:8px 6px; color:#365344; min-height:160px; }
+.sidebar { display:flex; flex:1; min-height:160px; flex-direction:column; overflow:hidden; padding:8px 6px; color:#365344; }
 .sidebar header { display:flex; align-items:center; justify-content:space-between; font-size:12px; margin-bottom:5px; }
 .sidebar button { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:inherit; border-radius:8px; padding:8px; cursor:pointer; font:inherit; font-size:12px; max-width:100%; }
 .sidebar>button { width:100%; text-align:left; }.sidebar button span { white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }.sidebar button:hover,.sidebar .selected { background:#eaf1eb; }
@@ -32,10 +32,27 @@
 .modeTabs { display:flex; justify-content:center; gap:4px; margin:0 auto 22px; border-radius:24px; background:#edf1ed; width:max-content; padding:5px; }
 .modeTabs button { border:0; background:transparent; min-width:100px; border-radius:22px; }
 .modeTabs button[aria-pressed=true] { background:#fff; box-shadow:0 1px 4px #24473718; }
-.sidebarTabs { display:flex; gap:8px; border-bottom:1px solid #dfe7e0; margin-bottom:12px; }
-.sidebar .sidebarTabs button { flex:1; justify-content:center; border-radius:0; font-size:14px; padding:12px 4px; border-bottom:3px solid transparent; }
-.sidebar .sidebarTabs button[aria-selected=true] { color:#244f39; border-bottom-color:#648775; font-weight:600; }
-.sidebar [hidden] { display:none; }.sidebarHint { color:#819288; font-size:12px; }
+.projectRegion { flex:0 0 150px; min-width:0; min-height:90px; max-height:70vh; display:flex; flex-direction:column; overflow:hidden; }
+.projectSection { flex:1 1 auto; min-height:0; max-height:none; overflow-y:scroll; scrollbar-gutter:stable; scrollbar-color:#9cac9f #edf3ee; padding-bottom:4px; border-bottom:1px solid #dfe7e0; }
+.projectSection::-webkit-scrollbar { width:10px; }
+.projectSection::-webkit-scrollbar-track { background:#edf3ee; border-radius:8px; }
+.projectSection::-webkit-scrollbar-thumb { background:#9cac9f; border:2px solid #edf3ee; border-radius:8px; }
+.projectSection header { position:sticky; top:0; z-index:1; padding:4px 3px 7px; background:#fff; }
+.projectSection header button,.historyPanel header button { padding:5px; }
+.historySection { display:flex; flex:1 1 220px; min-height:160px; flex-direction:column; overflow:hidden; padding-top:0; }
+.historyTabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:2px; flex:0 0 auto; border-bottom:1px solid #dfe7e0; }
+.sidebar .historyTabs button { min-width:0; justify-content:center; border-radius:0; padding:8px 2px; color:#718176; font-size:10px; white-space:nowrap; border-bottom:3px solid transparent; }
+.sidebar .historyTabs button[aria-selected=true] { color:#244f39; border-bottom-color:#648775; font-weight:700; background:#f3f8f3; }
+.historyPanel { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.historyPanel header { flex:0 0 auto; padding:6px 3px 4px; }
+.historyContent { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.historyContent > section { flex:1 1 auto; min-height:0; }
+.historyContent > div:not([hidden]) { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.portalHistory { display:none !important; }
+.historyMore { width:100%; flex:0 0 auto; margin-top:4px; padding:6px; border:1px solid #dce7de; border-radius:7px; background:#fff; color:#5f7967; font:inherit; font-size:10px; cursor:pointer; }
+.historyMore:disabled { opacity:.5; cursor:default; }
+.sidebar [hidden] { display:none; }
+.sidebarHint { color:#819288; font-size:12px; }
 .projectGroup { margin-bottom:6px; }.projectRow { display:flex; align-items:center; min-width:0; }
 .projectRow button:first-child { padding:6px 2px; }.projectRow button:nth-child(2) { flex:1; min-width:0; text-align:left; }
 .projectRow .previewButton { padding:6px; opacity:.35; }.projectRow:hover .previewButton,.previewButton:focus { opacity:1; }

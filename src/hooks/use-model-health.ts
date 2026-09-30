@@ -9,6 +9,7 @@ export function useModelHealth(modelProfileId: AssistantModelProfileId) {
     profileId: AssistantModelProfileId;
     revision: number;
     response?: AssistantHealthResponse;
+    error?: string;
   }>();
 
   useEffect(() => {
@@ -24,8 +25,8 @@ export function useModelHealth(modelProfileId: AssistantModelProfileId) {
         if (!response.ok) throw new Error(`Model health returned ${response.status}`);
         const parsed = assistantHealthResponseSchema.parse(payload);
         if (!controller.signal.aborted) setResult({ profileId: modelProfileId, revision, response: parsed });
-      } catch {
-        if (!controller.signal.aborted) setResult({ profileId: modelProfileId, revision });
+      } catch (error) {
+        if (!controller.signal.aborted) setResult({ profileId: modelProfileId, revision, error: error instanceof Error ? error.message : "模型检查失败，请重试。" });
       }
     }
     void loadHealth();
@@ -34,5 +35,5 @@ export function useModelHealth(modelProfileId: AssistantModelProfileId) {
 
   const current = result?.profileId === modelProfileId && result.revision === revision;
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  return { health: current ? result.response?.data : undefined, checking: !current, refresh };
+  return { health: current ? result.response?.data : undefined, checking: !current, error: current ? result.error : undefined, refresh };
 }

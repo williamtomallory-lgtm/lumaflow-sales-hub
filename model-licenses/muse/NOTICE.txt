@@ -1,0 +1,5 @@
+Source: https://huggingface.co/meta-models/Muse-Glimmer-30B
+Source revision: main
+Original copyrights and license apply to model weights.
+
+Community Q1_0 conversion by NANI-Nithin, repository revision 41bbbd5e5a815ad2274f9a123b80777eb462c8d2. This is not a 4GB artifact and has not passed LumaFlow runtime or Agent quality validation.

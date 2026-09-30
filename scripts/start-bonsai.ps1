@@ -1,6 +1,11 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([switch]$NoWait)
+param(
+    [switch]$NoWait,
+    [switch]$Restart,
+    [ValidateSet('optimized', 'baseline')]
+    [string]$PerformanceProfile = 'optimized'
+)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -11,6 +16,29 @@ $mmproj = Join-Path $projectRoot '.local-data\models\Ternary-Bonsai-2-27B-mmproj
 $chatTemplate = Join-Path $PSScriptRoot 'bonsai-codex-chat-template.jinja'
 $url = 'http://127.0.0.1:8081'
 $alias = 'ternary-bonsai-2-27b'
+
+# Measured on RTX 5060 Laptop 8 GB / 16 GB system RAM. Baseline retains
+# the original arguments for a reproducible comparison or a one-command rollback.
+$optimized = $PerformanceProfile -eq 'optimized'
+$BatchSize = if ($optimized) { 1024 } else { 256 }
+$MicroBatchSize = if ($optimized) { 512 } else { 128 }
+$arguments = @(
+    '--model', ('"' + $model + '"'), '--alias', $alias,
+    '--mmproj', ('"' + $mmproj + '"'), '--no-mmproj-offload',
+    '--chat-template-file', ('"' + $chatTemplate + '"'),
+    '--host', '127.0.0.1', '--port', '8081', '--cors-origins', 'localhost',
+    '-ngl', '99', '-c', '32768', '-np', '1', '-b', "$BatchSize", '-ub', "$MicroBatchSize",
+    '--cache-type-k', 'q4_0', '--cache-type-v', 'q4_0',
+    '-fa', 'on', '--jinja', '--reasoning', 'off',
+    '--temp', '0.7', '--top-p', '0.8', '--top-k', '20'
+)
+if ($optimized) {
+    $arguments += @('--threads', '8', '--threads-batch', '8', '--cache-ram', '1024')
+    # Context-copy drafting uses the existing target model; no second weights.
+    # This reuses llama.cpp's implementation, inspired by TensorFold's context
+    # drafts. It does not implement TensorFold's row-exact CUDA kernels.
+    $arguments += @('--spec-type', 'ngram-simple', '--spec-ngram-simple-size-n', '12', '--spec-ngram-simple-size-m', '16')
+}
 
 function Test-BonsaiReady {
     try {
@@ -35,41 +63,41 @@ if (Test-BonsaiReady) {
     if ($listener) {
         $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction Stop
         if ($owner.ExecutablePath -ne $binary) { throw 'Port 8081 is occupied by another application.' }
-        if ($owner.CommandLine -like "*--mmproj*$([IO.Path]::GetFileName($mmproj))*" -and
-            $owner.CommandLine -like '*-c 32768*' -and
-            $owner.CommandLine -like '*--cache-type-k q4_0*' -and
-            $owner.CommandLine -like "*--chat-template-file*$([IO.Path]::GetFileName($chatTemplate))*") {
-            Write-Host "Bonsai text + vision ready: $url (Codex-compatible service)"
+        if ($owner.CommandLine.Trim().EndsWith(($arguments -join ' '), [StringComparison]::Ordinal)) {
+            Write-Host "Bonsai text + vision ready: $url (existing $PerformanceProfile service)"
             return
         }
-        if ($owner.CommandLine -notlike "*$([IO.Path]::GetFileName($model))*") {
+        if (-not $owner.CommandLine.Contains(('"' + $model + '"'))) {
             throw 'Port 8081 is serving another llama model; it was not stopped.'
         }
-        Write-Host 'Restarting Bonsai so it loads the vision projector...'
+        if (-not $Restart) {
+            throw 'Bonsai is running with different settings. Retry with -Restart when no clients are submitting requests.'
+        }
+        $slots = @(Invoke-RestMethod "$url/slots" -TimeoutSec 3)
+        if ($slots | Where-Object { $_.is_processing }) {
+            throw 'Bonsai is processing a request. Retry the launcher after it finishes; no request was interrupted.'
+        }
+        Write-Host 'Restarting the idle Bonsai service to apply the requested runtime settings...'
         Stop-Process -Id $listener.OwningProcess -Force
         for ($attempt = 0; $attempt -lt 20; $attempt++) {
             if (-not (Get-NetTCPConnection -LocalPort 8081 -State Listen -ErrorAction SilentlyContinue)) { break }
             Start-Sleep -Milliseconds 250
+        }
+        if (Get-NetTCPConnection -LocalPort 8081 -State Listen -ErrorAction SilentlyContinue) {
+            throw 'Port 8081 was not released after stopping Bonsai; no success was reported.'
         }
     }
 }
 
 $listener = Get-NetTCPConnection -LocalPort 8081 -State Listen -ErrorAction SilentlyContinue
 if ($listener) {
-    $owner = Get-Process -Id $listener[0].OwningProcess -ErrorAction Stop
-    if ($owner.Path -ne $binary) { throw 'Port 8081 is occupied by another application.' }
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener[0].OwningProcess)" -ErrorAction Stop
+    if ($owner.ExecutablePath -ne $binary) { throw 'Port 8081 is occupied by another application.' }
+    if (-not $owner.CommandLine.Trim().EndsWith(($arguments -join ' '), [StringComparison]::Ordinal)) {
+        throw 'A Bonsai process with different settings is loading; wait for it before switching profiles.'
+    }
     Write-Host 'Waiting for the existing Bonsai process to finish loading...'
 } else {
-    $arguments = @(
-        '--model', ('"' + $model + '"'), '--alias', $alias,
-        '--mmproj', ('"' + $mmproj + '"'), '--no-mmproj-offload',
-        '--chat-template-file', ('"' + $chatTemplate + '"'),
-        '--host', '127.0.0.1', '--port', '8081', '--cors-origins', 'localhost',
-        '-ngl', '99', '-c', '32768', '-np', '1', '-b', '256', '-ub', '128',
-        '--cache-type-k', 'q4_0', '--cache-type-v', 'q4_0',
-        '-fa', 'on', '--jinja', '--reasoning', 'off',
-        '--temp', '0.7', '--top-p', '0.8', '--top-k', '20'
-    )
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $process = Start-Process -FilePath $binary -ArgumentList $arguments -WorkingDirectory (Split-Path $binary) `
         -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtime "server-$stamp.out.log") `
@@ -79,7 +107,7 @@ if ($listener) {
 if ($NoWait) { return }
 for ($attempt = 0; $attempt -lt 120; $attempt++) {
     if (Test-BonsaiReady) {
-        Write-Host "Bonsai text + vision ready: $url/v1; model=$alias; context=32768; KV=Q4"
+        Write-Host "Bonsai text + vision ready: $url/v1; model=$alias; context=32768; KV=Q4; profile=$PerformanceProfile"
         return
     }
     if ($process -and $process.HasExited) { throw "Bonsai exited. Check logs in $runtime" }

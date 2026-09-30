@@ -1,4 +1,5 @@
 import { completeAnswerResponse } from "@/lib/ai/complete-answer-stream";
+import { leaseLocalModel, releaseRuntimeWhenResponseEnds } from "@/lib/ai/local-model-runtime";
 import { authorizeWechatModel } from "@/lib/server/wechat-desktop";
 import { assistantRequestSchema } from "@/lib/contracts/api";
 import { assertModelConfigured, configuredSupportedModes, getAssistantTimeoutMs, getModelConfig, getModelHealth } from "@/lib/ai/model-config";
@@ -25,11 +26,13 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   const id = requestId(request);
   const startedAt = Date.now();
+  let releaseRuntime: () => void = () => undefined;
   try {
     enforceRateLimit(request, 20);
     authorizeAssistantRequest(request);
     await authorizeKnowledgeSession(request);
     const body = await readValidatedJson(request, assistantRequestSchema, 4 * 1024 * 1024);
+    releaseRuntime = await leaseLocalModel(body.modelProfileId ?? "configured");
     const textPart = body.messages[0].parts.find((part) => part.type === "text");
     if (!textPart) throw new ApiHttpError(422, "TEXT_PROMPT_REQUIRED", "Please include a text prompt with your message.");
     const userText = textPart.text;
@@ -112,8 +115,7 @@ export async function POST(request: Request) {
     }
     const baseProfile = await loadSalesProfile();
     const backendAgent = body.agentId ? await getCowAgentProfile(body.agentId) : undefined;
-    if (body.experience === "work" && !backendAgent) throw new ApiHttpError(422, "WORK_AGENT_REQUIRED", "请先在 Work 中选择可用 Agent。");
-    if (body.experience === "work" && backendAgent?.type !== "local") throw new ApiHttpError(403, "LOCAL_AGENT_REQUIRED", "微信 Agent 不支持本机文件操作，请选择本地 Agent。");
+    if (body.experience === "work" && backendAgent && backendAgent.type !== "local") throw new ApiHttpError(403, "LOCAL_AGENT_REQUIRED", "微信 Agent 不支持本机文件操作，请选择本地 Agent。");
     const roster = body.collaboratorAgentIds.length ? await getCowAgentRoster() : null;
     const collaborators = body.collaboratorAgentIds.map((agentId) => {
       const agent = roster?.agents.find((candidate) => candidate.id === agentId);
@@ -164,7 +166,7 @@ export async function POST(request: Request) {
       industry: customerRecord.industry,
       stage: customerRecord.stage,
     } : undefined;
-    return await completeAnswerResponse({
+    const response = await completeAnswerResponse({
       uiMessages,
       ...(body.experience === "work" && backendAgent ? { leadProgress: { agentId: backendAgent.id, name: backendAgent.name, ...(backendAgent.avatar === "image" ? { avatarUrl: `/api/v1/cowagent/agents/${encodeURIComponent(backendAgent.id)}/avatar?v=${encodeURIComponent(backendAgent.avatarRev || "0")}` } : {}) } } : {}),
       ...(collaborators.length ? { prepare: (onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators, lead: backendAgent, model: modelConfig, userText, ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), signal, collaborationMode: body.collaborationMode ?? inferCollaborationMode(userText), planOnly: body.workflowMode === "plan", onProgress }) } : {}),
@@ -196,7 +198,9 @@ export async function POST(request: Request) {
         "X-Agent-Skills": profile.skills.map((skill) => `${skill.id}@${skill.version}`).join(","),
       },
     });
+    return releaseRuntimeWhenResponseEnds(response, releaseRuntime);
   } catch (error) {
+    releaseRuntime();
     return apiError(error, id);
   }
 }

@@ -34,3 +34,10 @@ pnpm-debug.log*
 # Portable local model runtime, weights and logs (never publish these to Git).
 /.local-runtime/
 /.local-data/
+
+# Python build caches and portable installation environments
+__pycache__/
+*.py[cod]
+.venv/
+vendor/lumaflow-core/backend/config.json
+vendor/lumaflow-core/backend/plugins/config.json

@@ -42,3 +42,61 @@ it("opens the project context menu and requires confirmation before removal", as
   fireEvent.click(screen.getByRole("button", { name: "确认移除" }));
   await waitFor(() => expect(onRemoved).toHaveBeenCalledWith(project.id)); expect(deletes).toHaveLength(1);
 });
+
+it("keeps image conversations in their own sidebar category", async () => {
+  const textChat = { id: "22222222-2222-4222-8222-222222222222", experience: "chat", title: "普通对话", turnCount: 1, hasImage: false };
+  const imageChat = { id: "33333333-3333-4333-8333-333333333333", experience: "chat", title: "图片生成", turnCount: 1, hasImage: true };
+  vi.stubGlobal("fetch", vi.fn(async (url) => {
+    if (String(url).includes("assistant/history")) return Response.json({ data: [imageChat, textChat] });
+    return Response.json({ data: [] });
+  }));
+  const onOpenHistory = vi.fn();
+  render(<ProjectSidebar onSelect={vi.fn()} onOpenHistory={onOpenHistory} recentAvailable={false} recentContent={<div data-testid="history-host" />} />);
+  expect(screen.getByTestId("history-host")).toHaveAttribute("data-history-category", "chat");
+  await waitFor(() => expect(screen.getByRole("tabpanel", { name: "Chat 对话" })).toHaveTextContent("普通对话"));
+  expect(screen.getByRole("tabpanel", { name: "Chat 对话" })).not.toHaveTextContent("图片生成");
+  fireEvent.click(screen.getByRole("tab", { name: "Image" }));
+  expect(screen.getByTestId("history-host")).toHaveAttribute("data-history-category", "image");
+  expect(screen.getByRole("tabpanel", { name: "Image 对话" })).toHaveTextContent("图片生成");
+  expect(screen.getByRole("tabpanel", { name: "Image 对话" })).not.toHaveTextContent("普通对话");
+  fireEvent.click(screen.getByRole("button", { name: "图片生成 · 1 轮" }));
+  expect(onOpenHistory).toHaveBeenCalledWith("image", imageChat.id, null);
+});
+
+it("offers a new-session action for the selected history category", () => {
+  const onNewHistory = vi.fn();
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [] })));
+  render(<ProjectSidebar onSelect={vi.fn()} onNewHistory={onNewHistory} recentContent={<div />} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Work" }));
+  fireEvent.click(screen.getByRole("button", { name: "新建Work对话" }));
+  expect(onNewHistory).toHaveBeenCalledWith("work");
+});
+
+it("shows the two scrollable areas without extra horizontal resize handles", () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [] })));
+  render(<ProjectSidebar onSelect={vi.fn()} recentContent={<div />} />);
+  expect(screen.getByLabelText("项目")).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "对话记录列表" })).toBeInTheDocument();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Image" }));
+  expect(screen.getByRole("tabpanel", { name: "Image 对话" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "对话记录列表" })).toBeInTheDocument();
+});
+
+it("keeps WeChat history searchable and selectable when another workspace page is open", async () => {
+  const onOpenHistory = vi.fn();
+  const time = "2026-09-26T10:00:00.000Z";
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.includes("action=conversations")) return Response.json({ data: { items: [{ id: "wechat-a", title: "采购资料", createdAt: time, updatedAt: time, preview: "采购摘要" }, { id: "wechat-b", title: "售后记录", createdAt: time, updatedAt: time, preview: "售后摘要" }], nextCursor: null } });
+    if (url.includes("action=messages")) { const conversationId = new URL(url, "http://localhost").searchParams.get("conversationId") || ""; const first = conversationId === "wechat-a"; return Response.json({ data: { items: [{ id: `message-${first ? "a" : "b"}`, conversationId, role: "assistant", text: first ? "正文里才有的订单关键字" : "其他正文", createdAt: time, source: "work", status: "completed" }], nextCursor: null, pendingActions: [] } }); }
+    return Response.json({ data: [] });
+  }));
+  render(<ProjectSidebar onSelect={vi.fn()} onOpenHistory={onOpenHistory} recentContent={<div />} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Wechat Agent" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "采购资料" })).toBeInTheDocument());
+  fireEvent.change(screen.getByLabelText("搜索对话"), { target: { value: "订单关键字" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "采购资料" })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "售后记录" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "采购资料" }));
+  expect(onOpenHistory).toHaveBeenCalledWith("wechat", "wechat-a");
+});

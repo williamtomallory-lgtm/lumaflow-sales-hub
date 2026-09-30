@@ -13,11 +13,14 @@ export type ConversationHistoryItem = {
   turnCount?: number;
   pinned?: boolean;
   archived?: boolean;
+  /** Full local transcript text used by the client-side history search. */
+  searchableText?: string;
 };
 
 export type ConversationHistoryListProps = {
   items: ConversationHistoryItem[];
   hideToolbar?: boolean;
+  onSearchChange?: (query: string) => void;
   selectedId?: string | null;
   onSelect: (id: string) => void;
   onRename?: (id: string, title: string) => void;
@@ -34,7 +37,7 @@ export type ConversationHistoryListProps = {
  * only presentation state; all mutations are callbacks so the host can keep
  * the canonical session in its local API store.
  */
-export function ConversationHistoryList({ items, selectedId, onSelect, onRename, onPin, onMoveToProject, onDelete, onShare, hideToolbar = false }: ConversationHistoryListProps) {
+export function ConversationHistoryList({ items, selectedId, onSelect, onRename, onPin, onMoveToProject, onDelete, onShare, onSearchChange, hideToolbar = false }: ConversationHistoryListProps) {
 
   const [query, setQuery] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -48,7 +51,7 @@ export function ConversationHistoryList({ items, selectedId, onSelect, onRename,
     const needle = query.trim().toLocaleLowerCase();
     return items
 
-      .filter((item) => !needle || item.title.toLocaleLowerCase().includes(needle))
+      .filter((item) => !needle || item.title.toLocaleLowerCase().includes(needle) || item.searchableText?.toLocaleLowerCase().includes(needle))
       .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
   }, [items, query]);
 
@@ -112,8 +115,8 @@ export function ConversationHistoryList({ items, selectedId, onSelect, onRename,
     {!hideToolbar && <div className={styles.toolbar}>
       <label className={styles.search}>
         <Search size={15} aria-hidden="true" />
-        <input aria-label="搜索对话" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话" />
-        {query && <button type="button" aria-label="清除搜索" onClick={() => setQuery("")}><X size={13} /></button>}
+        <input aria-label="搜索对话" value={query} onChange={(event) => { setQuery(event.target.value); onSearchChange?.(event.target.value); }} placeholder="搜索对话" />
+        {query && <button type="button" aria-label="清除搜索" onClick={() => { setQuery(""); onSearchChange?.(""); }}><X size={13} /></button>}
       </label>
 
     </div>}

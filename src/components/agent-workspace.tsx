@@ -1,8 +1,8 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- Image operation artifacts may be local runtime URLs with runtime dimensions. */
 
 import { useChat } from "@ai-sdk/react";
 import Image from "next/image";
-import { WechatConnection } from "./wechat-connection";
 import { DefaultChatTransport, isToolUIPart, type FileUIPart } from "ai";
 import {
   ArrowRight,
@@ -15,6 +15,7 @@ import {
   Eye,
   FolderOpen,
   History,
+  ImagePlus,
   Trash2,
   Target,
   Lightbulb,
@@ -55,12 +56,15 @@ import { CodeAnswer } from "./code-answer";
 import { GeneratedFilePanel, type GeneratedFileKind } from "./generated-file-panel";
 import { WorkSummaryPanel, type WorkSummaryItem } from "./work-summary-panel";
 import { WorkSideChat } from "./work-side-chat";
+import { ImageStyleGallery } from "./image-style-gallery";
 import { copyLocalChatText, listLocalChats, loadLocalChat, removeLocalChat, saveLocalChat, updateLocalChatMetadata } from "@/lib/client/chat-history";
 import type { LocalChatSession, LocalChatSummary, LocalChatTurn, LocalChatTurnVersion } from "@/lib/contracts/chat-history";
 import type { CowAgentProfile, CowAgentRoster } from "@/lib/contracts/cowagent-agent";
 import { ConversationHistoryList } from "./conversation-history-list";
 import { ProjectPicker, projectRequest, projectsUpdated } from "./project-workspace";
 import type { Project } from "@/lib/contracts/project";
+import { composerDraftKey, readComposerDraft, writeComposerDraft, type ComposerDraft } from "@/lib/client/composer-draft";
+import { resolveImageOperationIntent, type ImageOperation, type ImageOperationIntent } from "@/lib/client/image-operation-intent";
 
 const subscribeHost = () => () => {};
 const isPublicHost = () => typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname);
@@ -73,6 +77,8 @@ export type AgentWorkspaceProps = {
   initialCustomerId?: string;
   initialMessage?: string;
   initialExperience?: "chat" | "work";
+  /** Start this workspace in the dedicated Image composer/gallery view. */
+  initialImageMode?: boolean;
   preferredRoleId?: AgentRoleId;
   selectAllKnowledge?: boolean;
   onOpenKnowledge?: () => void;
@@ -115,6 +121,10 @@ type WorkflowMode = "normal" | "goal" | "plan";
 type WorkTeam = { agentId?: string; collaboratorAgentIds?: string[]; collaborationMode?: CollaborationMode };
 const collaborationLabels: Record<CollaborationMode, string> = { parallel: "同时工作", sequential: "分步工作", debate: "讨论辩论" };
 type PromptAgentReference = { id: string; name: string; avatarUrl?: string; kind: "main" | "collaborator" };
+type SidebarHistoryCategory = "chat" | "work" | "image" | "wechat";
+const sidebarHistoryLabels: Record<SidebarHistoryCategory, string> = { chat: "Chat", work: "Work", image: "Image", wechat: "Wechat Agent" };
+type ImageGalleryTab = "hot" | "templates";
+type ImageModelStatus = "idle" | "processing" | "available" | "unavailable";
 type WorkContinuation = {
   turnId: string;
   task: string;
@@ -135,8 +145,104 @@ type QueuedWorkMessage = {
   wechatSnapshotId: string | null;
   modelProfileId: string;
   mode: InferenceMode;
+  imageOperationMode?: boolean;
   continuation?: WorkContinuation;
 };
+
+type ImageOperationOutput = {
+  url: string;
+  filename: string;
+  width: number;
+  height: number;
+};
+
+type ImageOperationResult = {
+  turnId: string;
+  model: string;
+  operation: ImageOperation;
+  text: string;
+  images: ImageOperationOutput[];
+};
+
+type ImagePreviewSource = {
+  turnId: string;
+  title: string;
+  images: ImageOperationOutput[];
+};
+
+const imageOperationArtifactUrlPattern = /^\/api\/v1\/assistant\/image-operations\/assets\/[0-9a-f]{32}\.png$/i;
+
+function isImageOperationArtifactUrl(url: string): boolean {
+  return imageOperationArtifactUrlPattern.test(url.trim());
+}
+
+function imageArtifactFilename(answer: string, index: number, fallbackUrl: string): string {
+  const lineStart = Math.max(answer.lastIndexOf("\n", index), answer.lastIndexOf("\r", index)) + 1;
+  const line = answer.slice(lineStart, index);
+  const markerIndex = Math.max(line.lastIndexOf("图片文件："), line.lastIndexOf("图片文件:"));
+  const labelSource = markerIndex >= 0 ? line.slice(markerIndex + 5) : line;
+  const markdownLabel = /\[([^\]]+)\]\(\s*$/.exec(labelSource)?.[1];
+  const label = (markdownLabel ?? labelSource.replace(/^\s*[-*•]\s*/, "").replace(/\s*[:：]\s*$/, "")).trim();
+  return label.slice(0, 160) || fallbackUrl.split("/").at(-1) || "生成图片";
+}
+
+function extractImageOperationArtifacts(answer: string): ImageOperationOutput[] {
+  const matches = [...answer.matchAll(/\/api\/v1\/assistant\/image-operations\/assets\/[0-9a-f]{32}\.png/gi)];
+  const seen = new Set<string>();
+  return matches.flatMap((match): ImageOperationOutput[] => {
+    const url = match[0];
+    if (seen.has(url) || !isImageOperationArtifactUrl(url)) return [];
+    seen.add(url);
+    return [{ url, filename: imageArtifactFilename(answer, match.index ?? 0, url), width: 512, height: 512 }];
+  });
+}
+
+function safeImageOperationImages(images: ImageOperationOutput[]): ImageOperationOutput[] {
+  const seen = new Set<string>();
+  return images.flatMap((image): ImageOperationOutput[] => {
+    if (!isImageOperationArtifactUrl(image.url) || seen.has(image.url)) return [];
+    seen.add(image.url);
+    return [{ ...image, url: image.url.trim() }];
+  });
+}
+
+function imageOperationAnswerForDisplay(answer: string): string {
+  return extractImageOperationArtifacts(answer).reduce((current, image) => {
+    const label = image.filename.replace(/[\[\]]/g, "");
+    const segments = current.split(image.url);
+    return segments.reduce((result, segment, index) => {
+      if (index === segments.length - 1) return result + segment;
+      return result + segment + (segment.endsWith("](") ? image.url : `[${label}](${image.url})`);
+    }, "");
+  }, answer);
+}
+
+function imageOperationAnswerText(text: string, images: ImageOperationOutput[]) {
+  const links = safeImageOperationImages(images).map((image) => `- ${image.filename || "生成图片"}: ${image.url}`).join("\n");
+  return [text.trim(), links ? `图片文件：\n${links}` : ""].filter(Boolean).join("\n\n");
+}
+
+function parseImageOperationPayload(payload: unknown, fallbackOperation: ImageOperation): Omit<ImageOperationResult, "turnId"> {
+  const data = payload && typeof payload === "object" && "data" in payload ? payload.data : null;
+  if (!data || typeof data !== "object") throw new Error("图片模型没有返回有效结果。");
+  const record = data as Record<string, unknown>;
+  const rawImages = Array.isArray(record.images) ? record.images : [];
+  const images = safeImageOperationImages(rawImages.flatMap((image): ImageOperationOutput[] => {
+    if (!image || typeof image !== "object") return [];
+    const item = image as Record<string, unknown>;
+    if (typeof item.url !== "string" || !item.url.trim()) return [];
+    return [{
+      url: item.url,
+      filename: typeof item.filename === "string" && item.filename.trim() ? item.filename.slice(0, 160) : "生成图片",
+      width: typeof item.width === "number" && item.width > 0 ? item.width : 1,
+      height: typeof item.height === "number" && item.height > 0 ? item.height : 1,
+    }];
+  }));
+  const operation = record.operation === "generate" || record.operation === "edit" || record.operation === "analyze" ? record.operation : fallbackOperation;
+  const text = typeof record.text === "string" ? record.text : "";
+  if (!text.trim() && !images.length) throw new Error("图片模型没有返回文字或图片结果。");
+  return { model: typeof record.model === "string" ? record.model : "本机图片模型", operation, text, images };
+}
 
 function workTeamReferences(team: WorkTeam, roster: CowAgentProfile[], activity: AgentProgress[] = []): PromptAgentReference[] {
   const ids = [...new Set([team.agentId, ...(team.collaboratorAgentIds ?? [])].filter((id): id is string => Boolean(id)))];
@@ -435,6 +541,7 @@ export function AgentWorkspace({
   initialCustomerId,
   initialMessage,
   initialExperience = "chat",
+  initialImageMode = false,
   preferredRoleId,
   selectAllKnowledge = false,
   onOpenKnowledge,
@@ -448,7 +555,9 @@ export function AgentWorkspace({
   initialChatId,
   onOpenProject,
 }: AgentWorkspaceProps) {
-  const [experience, setExperience] = useState(initialExperience);
+  // Image is a Chat composer variant. Keep the underlying Work draft in its
+  // own category, but render the image route with the ordinary Chat controls.
+  const [experience, setExperience] = useState<"chat" | "work">(initialImageMode ? "chat" : initialExperience);
   const [moveChatId, setMoveChatId] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const initialChatLoaded = useRef(false);
@@ -467,21 +576,33 @@ export function AgentWorkspace({
   const [agentError, setAgentError] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [addMenuPosition, setAddMenuPosition] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number }>();
+  const [availableSkills, setAvailableSkills] = useState<{ id: string; name: string; description: string }[]>([]);
+  const [selectedCapabilityIds, setSelectedCapabilityIds] = useState<string[]>([]);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("normal");
   const [goal, setGoal] = useState("");
   const [input, setInput] = useState(initialMessage ?? "");
   const [imageAttachments, setImageAttachments] = useState<FileUIPart[]>([]);
   const [questionImages, setQuestionImages] = useState<FileUIPart[]>([]);
+  const [imageOperationMode, setImageOperationMode] = useState(() => initialImageMode === true);
+  const [imagePagePresentation, setImagePagePresentation] = useState(() => initialImageMode === true);
+  const [imageGalleryTab, setImageGalleryTab] = useState<ImageGalleryTab>("hot");
+  const [imageModelStatus, setImageModelStatus] = useState<ImageModelStatus>("idle");
+  const [imageOperationBusy, setImageOperationBusy] = useState(false);
+  const [imageOperationError, setImageOperationError] = useState("");
+  const [imageOperationResult, setImageOperationResult] = useState<ImageOperationResult | null>(null);
   // Do not silently attach an arbitrary demo customer to a free-form chat.
   // A customer context is sent only when the caller or user explicitly picks it.
   const initialCustomer = initialCustomerId ? customers.find((customer) => customer.id === initialCustomerId) : undefined;
   const [customerId, setCustomerId] = useState(initialCustomer?.id ?? "");
   const [question, setQuestion] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyHeight, setHistoryHeight] = useState(10000);
+  const [historyCategory, setHistoryCategory] = useState<SidebarHistoryCategory>(initialImageMode ? "image" : initialExperience === "work" ? "work" : "chat");
+  const [historyHeights, setHistoryHeights] = useState<Record<SidebarHistoryCategory, number>>({ chat: 10000, work: 10000, image: 10000, wechat: 10000 });
   const [editingTurnId, setEditingTurnId] = useState<string | null>(null);
   const [editedPrompt, setEditedPrompt] = useState("");
   const [previewSource, setPreviewSource] = useState<{ turnId: string; title: string; kind: GeneratedFileKind; autoDownloadPdf?: boolean; requestId?: string } | null>(null);
+  const [imagePreviewSource, setImagePreviewSource] = useState<ImagePreviewSource | null>(null);
   const [sessionSummaries, setSessionSummaries] = useState<LocalChatSummary[]>([]);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [activeSession, setActiveSession] = useState<LocalChatSession | null>(null);
@@ -505,6 +626,8 @@ export function AgentWorkspace({
   const [queuedEditText, setQueuedEditText] = useState("");
   const [sideChatQueueId, setSideChatQueueId] = useState<string | null>(null);
   const [guideNotice, setGuideNotice] = useState("");
+  const [modelSwitching, setModelSwitching] = useState(false);
+  const [imageRestoreRetryTick, setImageRestoreRetryTick] = useState(0);
   const [queueDrainTick, setQueueDrainTick] = useState(0);
   const submitting = useRef(false);
   const activeSessionRef = useRef<LocalChatSession | null>(null);
@@ -512,9 +635,18 @@ export function AgentWorkspace({
   const guideCurrentRef = useRef(false);
   const guideQueuedIdRef = useRef<string | null>(null);
   const queueDrainRef = useRef(false);
+  const imageOperationAbortRef = useRef<AbortController | null>(null);
+  const imageOperationJobIdRef = useRef<string | null>(null);
+  const pendingImageModelRestoreRef = useRef<string | null>(null);
+  const imageRestoreRetryRef = useRef<{ profileId: string; attempts: number; inFlight: boolean; timer: ReturnType<typeof setTimeout> | null } | null>(null);
+  const imageModeRestoreModelRef = useRef<string | null>(null);
+  const imageSessionIdRef = useRef<string | null>(null);
+  const imageOperationModeRef = useRef(initialImageMode === true);
+  const experienceBeforeImageRef = useRef<"chat" | "work">(initialImageMode ? "chat" : initialExperience);
   const conversationRef = useRef<HTMLElement>(null);
   const followOutputRef = useRef(true);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const addMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -523,6 +655,152 @@ export function AgentWorkspace({
   const mentionMenuRef = useRef<HTMLDivElement>(null);
   const contextPanelRef = useRef<HTMLElement>(null);
   const queueMoreRef = useRef<HTMLDivElement>(null);
+  const composerDraftHydratedRef = useRef(false);
+  const composerDraftHydrationTokenRef = useRef(0);
+  const composerKey = composerDraftKey(experience, projectId, activeSession?.id);
+  const categoryComposerKey = composerDraftKey(experience, projectId, null);
+  // Image drafts belong to the Chat composer regardless of which view opened
+  // them. This prevents a Work Agent selection from leaking into Image and
+  // keeps the Work category draft available for restoration.
+  const imageComposerKey = `${composerDraftKey("chat", projectId, null)}:image`;
+  const draftStorageKey = imageOperationMode ? imageComposerKey : composerKey;
+
+  function composerDraftSnapshot(imageMode = imageOperationMode): ComposerDraft {
+    return { text: input, images: imageAttachments, imageOperationMode: imageMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
+  }
+
+  function applyComposerDraft(draft: ComposerDraft | null) {
+    if (!draft) return;
+    setInput(draft.text);
+    setImageAttachments(draft.images);
+    setSelectedDocumentIds(draft.documentIds);
+    setCustomerId(draft.customerId);
+    if (draft.agentId !== undefined) setWorkAgentId(draft.agentId);
+    setCollaboratorAgentIds(draft.collaboratorIds);
+    setCollaborationMode(draft.collaborationMode ?? "parallel");
+    setWorkflowMode(draft.workflowMode ?? "normal");
+    setGoal(draft.goal ?? "");
+    setSelectedCapabilityIds(draft.capabilityIds);
+  }
+
+  function preserveTextDraftBeforeImage() {
+    const draft = composerDraftSnapshot(false);
+    writeComposerDraft(composerKey, draft);
+    // Keep a category-level copy because entering Image can start from a
+    // saved text turn and leaving it may intentionally clear that active view.
+    writeComposerDraft(categoryComposerKey, draft);
+    const savedImageDraft = readComposerDraft(imageComposerKey);
+    const imageDraft = draft.text.trim() || draft.images.length ? { ...draft, imageOperationMode: true } : savedImageDraft ?? { ...draft, imageOperationMode: true };
+    writeComposerDraft(imageComposerKey, imageDraft);
+    return imageDraft;
+  }
+
+  function restoreTextDraftAfterImage(targetExperience: "chat" | "work" = experienceBeforeImageRef.current) {
+    writeComposerDraft(imageComposerKey, composerDraftSnapshot(true));
+    const draft = readComposerDraft(composerDraftKey(targetExperience, projectId, null));
+    applyComposerDraft(draft);
+    experienceBeforeImageRef.current = targetExperience;
+    setExperience(targetExperience);
+  }
+
+  function enterImageOperationMode(pagePresentation = false) {
+    if (busy || submitting.current || modelSwitching || imageOperationMode) return;
+    clearPendingImageModelRestore();
+    experienceBeforeImageRef.current = experience;
+    const imageDraft = preserveTextDraftBeforeImage();
+    applyComposerDraft(imageDraft);
+    imageModeRestoreModelRef.current = catalog.loading ? null : catalog.modelProfileId;
+    imageSessionIdRef.current = null;
+    imageOperationModeRef.current = true;
+    setExperience("chat");
+    setImageModelStatus("idle");
+    setImageOperationError("");
+    setImagePagePresentation(pagePresentation || initialImageMode);
+    setImageGalleryTab("hot");
+    setImageOperationMode(true);
+    announceHistoryCategory("image");
+  }
+
+  function announceHistoryCategory(category: SidebarHistoryCategory) {
+    setHistoryCategory(category);
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("lumaflow-history-category-changed", { detail: { category } }));
+  }
+
+  useEffect(() => {
+    const token = composerDraftHydrationTokenRef.current + 1;
+    composerDraftHydrationTokenRef.current = token;
+    composerDraftHydratedRef.current = false;
+    const saved = readComposerDraft(draftStorageKey);
+    queueMicrotask(() => {
+      if (composerDraftHydrationTokenRef.current !== token) return;
+      setInput(saved?.text ?? (imageOperationMode ? "" : (activeSession ? "" : (initialMessage ?? ""))));
+      setImageAttachments(saved?.images ?? []);
+      setSelectedDocumentIds(saved?.documentIds ?? []);
+      setCustomerId(saved?.customerId ?? initialCustomer?.id ?? "");
+      if (saved?.agentId !== undefined) setWorkAgentId(saved.agentId);
+      setCollaboratorAgentIds(saved?.collaboratorIds ?? []);
+      setCollaborationMode(saved?.collaborationMode ?? "parallel");
+      setWorkflowMode(saved?.workflowMode ?? "normal");
+      setGoal(saved?.goal ?? "");
+      setSelectedCapabilityIds(saved?.capabilityIds ?? []);
+      composerDraftHydratedRef.current = true;
+    });
+  // The key is the complete identity of a draft; initial values only seed a new composer.
+  // A token prevents a queued hydration from an older tab/session identity from
+  // overwriting the user's first keystroke after a fast view switch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    imageOperationModeRef.current = imageOperationMode;
+  }, [imageOperationMode]);
+
+  useEffect(() => {
+    const host = historyPortalTarget;
+    if (!host) return;
+    const syncCategory = () => {
+      const category = host.dataset.historyCategory;
+      if (category === "chat" || category === "work" || category === "image" || category === "wechat") setHistoryCategory(category);
+    };
+    syncCategory();
+    const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(syncCategory);
+    observer?.observe(host, { attributes: true, attributeFilter: ["data-history-category"] });
+    const onCategoryChange = (event: Event) => {
+      const category = (event as CustomEvent<{ category?: string }>).detail?.category;
+      if (category === "chat" || category === "work" || category === "image" || category === "wechat") setHistoryCategory(category);
+    };
+    window.addEventListener("lumaflow-history-category-changed", onCategoryChange);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("lumaflow-history-category-changed", onCategoryChange);
+    };
+  }, [historyPortalTarget]);
+
+  useEffect(() => {
+    if (!composerDraftHydratedRef.current) return;
+    const draft: ComposerDraft = { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
+    writeComposerDraft(draftStorageKey, draft);
+  }, [composerKey, draftStorageKey, input, imageAttachments, imageOperationMode, selectedDocumentIds, customerId, workAgentId, collaboratorAgentIds, collaborationMode, selectedCapabilityIds, workflowMode, goal, experience, projectId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/v1/assistant/skills", { signal: controller.signal, cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((payload) => {
+      const skills = Array.isArray(payload?.data?.skills) ? payload.data.skills : [];
+      setAvailableSkills(skills.filter((skill: unknown): skill is { id: string; name: string; description: string } => Boolean(skill && typeof skill === "object" && "id" in skill && typeof skill.id === "string" && "name" in skill && typeof skill.name === "string" && "description" in skill && typeof skill.description === "string")));
+    }).catch(() => {});
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const preserve = () => {
+      const draft: ComposerDraft = { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
+      writeComposerDraft(composerKey, draft);
+      if (imageOperationMode) writeComposerDraft(imageComposerKey, draft);
+      else writeComposerDraft(composerDraftKey(experience, projectId, null), draft);
+    };
+    window.addEventListener("lumaflow-new-chat", preserve);
+    return () => window.removeEventListener("lumaflow-new-chat", preserve);
+  }, [composerKey, imageComposerKey, input, imageAttachments, imageOperationMode, selectedDocumentIds, customerId, workAgentId, collaboratorAgentIds, collaborationMode, selectedCapabilityIds, workflowMode, goal, experience, projectId]);
 
   useEffect(() => {
     if (!contextOpen) return;
@@ -547,12 +825,38 @@ export function AgentWorkspace({
   const historyDragRef = useRef<{ y: number; height: number } | null>(null);
   const catalog = useModelCatalog();
   const { health, checking, refresh: refreshHealth } = useModelHealth(catalog.modelProfileId);
+
+  function clearPendingImageModelRestore() {
+    pendingImageModelRestoreRef.current = null;
+    const retry = imageRestoreRetryRef.current;
+    if (retry?.timer) clearTimeout(retry.timer);
+    imageRestoreRetryRef.current = null;
+  }
+
+  function queueImageModelRestore(profileId: string | null) {
+    if (!profileId) return;
+    const current = imageRestoreRetryRef.current;
+    if (current?.profileId !== profileId) {
+      if (current?.timer) clearTimeout(current.timer);
+      imageRestoreRetryRef.current = { profileId, attempts: 0, inFlight: false, timer: null };
+    }
+    pendingImageModelRestoreRef.current = profileId;
+    // The catalog/health refresh after a failed activation can also wake this
+    // effect. The pending id remains until activation really succeeds.
+    setImageRestoreRetryTick((tick) => tick + 1);
+  }
+
+  useEffect(() => {
+    if (imageOperationMode && !catalog.loading && imageModeRestoreModelRef.current === null && catalog.modelProfileId) {
+      imageModeRestoreModelRef.current = catalog.modelProfileId;
+    }
+  }, [catalog.loading, catalog.modelProfileId, imageOperationMode]);
   const enabledAgents = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled && agent.type === "local" && agent.id !== "default"), [agentRoster.agents]);
   const availableCollaborators = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled && agent.id !== "default"), [agentRoster.agents]);
   const selectedWorkAgent = enabledAgents.find((agent) => agent.id === workAgentId);
   const assignedKnowledgeIds = new Set(selectedWorkAgent?.knowledgeBaseIds ?? []);
-  const availableKnowledgeDocuments = experience === "work" ? knowledgeDocuments.filter((document) => assignedKnowledgeIds.has(document.id)) : knowledgeDocuments;
-  const effectiveSelectedDocumentIds = experience === "work" ? selectedDocumentIds.filter((id) => assignedKnowledgeIds.has(id)) : selectedDocumentIds;
+  const availableKnowledgeDocuments = experience === "work" && selectedWorkAgent ? knowledgeDocuments.filter((document) => assignedKnowledgeIds.has(document.id)) : knowledgeDocuments;
+  const effectiveSelectedDocumentIds = experience === "work" && selectedWorkAgent ? selectedDocumentIds.filter((id) => assignedKnowledgeIds.has(id)) : selectedDocumentIds;
   const collaborators: CowAgentProfile[] = [
     ...availableCollaborators.filter((agent) => collaboratorAgentIds.includes(agent.id) && agent.id !== selectedWorkAgent?.id),
     ...collaboratorAgentIds.filter((id) => id !== workAgentId && !availableCollaborators.some((agent) => agent.id === id)).map((id) => ({ id, name: `${id}（已不可用）`, enabled: false, type: "local" as const, workspace: "", knowledgeMode: "shared" as const })),
@@ -656,8 +960,24 @@ export function AgentWorkspace({
     }
     setQueueDrainTick((current) => current + 1);
   } });
-  const busy = status === "submitted" || status === "streaming";
-  const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable && (experience === "chat" || selectedWorkAgent));
+  const chatBusy = status === "submitted" || status === "streaming";
+  const imageOperationsAvailable = !publicWork;
+  const composerImageIntent = resolveImageOperationIntent({ prompt: input, images: imageAttachments, enabled: imageOperationMode });
+  const canSubmitImageOperation = imageOperationsAvailable && Boolean(composerImageIntent);
+  const busy = chatBusy || imageOperationBusy;
+  const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable);
+  const readyForRequest = !modelSwitching && (canSubmitImageOperation || ready);
+  useEffect(() => {
+    const startImageConversation = () => {
+      enterImageOperationMode();
+    };
+    window.addEventListener("lumaflow-new-image-conversation", startImageConversation);
+    window.addEventListener("lumaflow-open-image-workspace", startImageConversation);
+    return () => {
+      window.removeEventListener("lumaflow-new-image-conversation", startImageConversation);
+      window.removeEventListener("lumaflow-open-image-workspace", startImageConversation);
+    };
+  }, [busy, modelSwitching, imageOperationMode]);
   const result = useMemo(() => projectAgentSearch(messages), [messages]);
   const agentActivity = useMemo(() => readAgentProgress(messages.filter((message) => message.role === "assistant").flatMap((message) => message.parts)), [messages]);
   const toolParts = useMemo(() => messages
@@ -665,7 +985,7 @@ export function AgentWorkspace({
     .flatMap((message) => message.parts)
     .filter(isToolUIPart), [messages]);
   const toolActivitySteps = useMemo(() => toolParts.map((part, index) => describeToolPart(part, index)), [toolParts]);
-  const toolActivitySummary = useMemo(() => toolActivitySteps.length ? summarizeToolActivity(toolActivitySteps, busy) : waitingActivityLabel(elapsed), [busy, elapsed, toolActivitySteps]);
+  const toolActivitySummary = toolActivitySteps.length ? summarizeToolActivity(toolActivitySteps, busy) : waitingActivityLabel(elapsed);
   const selectedCustomer = customers.find((customer) => customer.id === customerId);
   const selectedDocuments = availableKnowledgeDocuments.filter((document) => effectiveSelectedDocumentIds.includes(document.id));
   const selectedModelName = health?.model ?? catalog.selectedModel?.model ?? "等待读取模型";
@@ -679,6 +999,7 @@ export function AgentWorkspace({
   const showWorkSummary = experience === "work" && (busy || showLiveTurn || pastTurns.length > 0);
   const displayQuestion = !busy && liveBranch ? liveBranch.version.user : question;
   const displayAnswer = !busy && liveBranch ? savedVersionAnswer(liveBranch.version) : result.text;
+  const displayAnswerForRender = imageOperationAnswerForDisplay(displayAnswer);
   const liveWorkReferences = experience === "work" ? !busy && liveVersion
     ? workTeamReferences(versionWorkTeam(liveVersion), agentRoster.agents, liveVersion.agentActivity)
     : submittedWorkReferences : [];
@@ -692,6 +1013,17 @@ export function AgentWorkspace({
 
   function branchView(turn: LocalChatTurn) {
     return visibleBranches.find((entry) => entry.turn.id === turn.id) ?? resolveChatBranches([turn], branchSelections)[0];
+  }
+
+  function openAnswerPreview({ turnId, title, answer, kind, images }: { turnId: string; title: string; answer: string; kind: GeneratedFileKind; images?: ImageOperationOutput[] }) {
+    const safeImages = images === undefined ? extractImageOperationArtifacts(answer) : safeImageOperationImages(images);
+    if (safeImages.length > 0) {
+      setPreviewSource(null);
+      setImagePreviewSource({ turnId, title, images: safeImages });
+      return;
+    }
+    setImagePreviewSource(null);
+    setPreviewSource({ turnId, title, kind });
   }
 
   function versionWorkTeam(version: LocalChatTurnVersion, session = activeSession): WorkTeam {
@@ -726,6 +1058,7 @@ export function AgentWorkspace({
     if (versions.length < 2) return null;
     const selectVersion = (versionId: string) => {
       setPreviewSource(null);
+      setImagePreviewSource(null);
       setEditingTurnId(null);
       setBranchSelections((current) => ({ ...current, [turn.id]: versionId }));
       const selected = versions.find((version) => version.id === versionId);
@@ -840,10 +1173,22 @@ export function AgentWorkspace({
     return () => clearInterval(timer);
   }, [busy]);
 
-  useEffect(() => () => { void stop(); }, [stop]);
+  useEffect(() => () => { void stop(); imageOperationAbortRef.current?.abort(); }, [stop]);
 
   useEffect(() => {
     if (!addMenuOpen) return;
+    const positionMenu = () => {
+      const composer = addMenuButtonRef.current?.closest(`.${styles.composer}`);
+      if (!composer) return;
+      const rect = composer.getBoundingClientRect();
+      const above = Boolean(showLiveTurn || pastTurns.length);
+      setAddMenuPosition({ left: rect.left, width: rect.width,
+        ...(above ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
+        maxHeight: Math.max(80, Math.min(480, above ? rect.top - 18 : window.innerHeight - rect.bottom - 18)) });
+    };
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    window.addEventListener("scroll", positionMenu, true);
     const closeOnOutside = (event: Event) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -857,11 +1202,13 @@ export function AgentWorkspace({
     document.addEventListener("mousedown", closeOnOutside);
     document.addEventListener("keydown", closeOnEscape);
     return () => {
+      window.removeEventListener("resize", positionMenu);
+      window.removeEventListener("scroll", positionMenu, true);
       document.removeEventListener("pointerdown", closeOnOutside);
       document.removeEventListener("mousedown", closeOnOutside);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [addMenuOpen]);
+  }, [addMenuOpen, showLiveTurn, pastTurns.length]);
 
   useEffect(() => {
     if (!agentPickerOpen && mentionQuery === null) return;
@@ -894,7 +1241,9 @@ export function AgentWorkspace({
   function resetOutput() {
     setMessages([]); clearError(); setQuestion(""); setQuestionImages([]); setCancelled(false);
     setReceipt(null); setExhausted(false); setKnowledgeCoverage([]);
+    setImageModelStatus("idle"); setImageOperationError(""); setImageOperationResult(null);
     setPreviewSource(null);
+    setImagePreviewSource(null);
     setSubmittedWorkReferences([]);
     setSubmittedCollaborationMode(undefined);
   }
@@ -912,6 +1261,7 @@ export function AgentWorkspace({
     if (busy) return;
     if (queuedMessages.length) { onToast?.("还有排队消息，请先执行或删除后再打开其他对话。"); return; }
     try {
+      writeComposerDraft(composerKey, { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal });
       const session = await loadLocalChat(id);
       if (!session) { onToast?.("这条本地对话已不存在。"); return; }
       activeSessionRef.current = session;
@@ -983,10 +1333,14 @@ export function AgentWorkspace({
   }
 
   function changeExperience(next: "chat" | "work") {
-    if (busy || submitting.current || next === experience) return;
+    if (busy || submitting.current || modelSwitching || (next === experience && !imageOperationMode)) return;
     if (queuedMessages.length) { onToast?.("还有排队消息，请先执行、编辑或删除后再切换模式。"); return; }
+    const leavingImage = imageOperationMode;
+    if (leavingImage) toggleImageOperationMode(false, next);
     setAgentPickerOpen(false); setMentionQuery(null); setMentionRange(null);
-    setExperience(next); resetOutput(); clearActiveSession();
+    if (!leavingImage && next !== experience) setExperience(next);
+    resetOutput(); clearActiveSession();
+    announceHistoryCategory(next);
     if (next === "work") setSelectedDocumentIds((current) => current.filter((id) => assignedKnowledgeIds.has(id)));
     // Customer and pending image attachments remain visible in the composer.
   }
@@ -994,9 +1348,10 @@ export function AgentWorkspace({
   function newQuestion() {
     if (busy || submitting.current) return;
     if (queuedMessages.length) { onToast?.("还有排队消息，请先执行、编辑或删除后再开始新问题。"); return; }
-    resetOutput(); clearActiveSession(); setInput(""); setImageAttachments([]); setQuestionImages([]); setCustomerId(""); setSelectedDocumentIds([]);
+    writeComposerDraft(imageOperationMode ? imageComposerKey : composerKey, composerDraftSnapshot(imageOperationMode));
+    resetOutput(); clearActiveSession(); setQuestionImages([]);
     setWechatSnapshotId(null);
-    setCollaboratorAgentIds([]); setMentionQuery(null); setMentionRange(null);
+    setMentionQuery(null); setMentionRange(null);
     setCollaborationMode("parallel"); setCollaborationModeExplicit(false);
     setContextOpen(false); setAddMenuOpen(false); setAgentPickerOpen(false); inputRef.current?.focus();
     setEditingTurnId(null); setEditedPrompt("");
@@ -1019,13 +1374,13 @@ export function AgentWorkspace({
   }
 
   function changeAgent(value: string) {
-    if (busy || !enabledAgents.some((agent) => agent.id === value)) return;
+    if (busy || (value && !enabledAgents.some((agent) => agent.id === value))) return;
     setAgentPickerOpen(false);
     const nextAgent = enabledAgents.find((agent) => agent.id === value);
     setWorkAgentId(value);
-    setSelectedDocumentIds((current) => current.filter((id) => nextAgent?.knowledgeBaseIds?.includes(id)));
+    setSelectedDocumentIds((current) => nextAgent ? current.filter((id) => nextAgent.knowledgeBaseIds?.includes(id)) : []);
     setCollaboratorAgentIds((current) => current.filter((id) => id !== value));
-    try { localStorage.setItem(agentPreferenceKey, value); } catch { /* persistence is optional */ }
+    try { if (value) localStorage.setItem(agentPreferenceKey, value); else localStorage.removeItem(agentPreferenceKey); } catch { /* persistence is optional */ }
     if (editingTurnId) return;
     setReceipt(null);
     setExhausted(false);
@@ -1045,6 +1400,20 @@ export function AgentWorkspace({
     setMentionRange(match ? { start: cursor - match[0].length, end: cursor } : null);
   }
 
+  function selectImageStylePrompt(prompt: string) {
+    if (busy || modelSwitching || !imageOperationMode) return;
+    setInput(prompt);
+    setImageOperationError("");
+    setImageOperationResult(null);
+    setCancelled(false);
+    inputRef.current?.focus();
+  }
+
+  function openImageUpload() {
+    if (busy || modelSwitching || !imageOperationMode) return;
+    imageInputRef.current?.click();
+  }
+
   function addCollaborator(agentId: string) {
     if (busy || collaboratorAgentIds.includes(agentId) || agentId === selectedWorkAgent?.id || collaboratorAgentIds.length >= 3) return;
     setCollaboratorAgentIds((current) => [...current, agentId]);
@@ -1053,20 +1422,157 @@ export function AgentWorkspace({
     inputRef.current?.focus();
   }
 
-  function changeModel(value: string) {
-    if (busy || submitting.current || value === catalog.modelProfileId) return;
-    if (wechatSnapshotId && value === "configured") { onToast?.("微信快照仅允许使用本机 8B / 14B；开始新问题后可切换其他服务。"); return; }
-    catalog.selectModel(value);
-    setMode("light");
-    persistInferenceMode("light");
-    setReceipt(null);
-    setExhausted(false);
-    setMessages([]);
+  function toggleImageOperationMode(enabled: boolean, returnTo?: "chat" | "work", pagePresentation = false) {
+    if (busy || submitting.current || modelSwitching || enabled === imageOperationMode) return;
+    if (enabled) {
+      enterImageOperationMode(pagePresentation);
+      resetOutput();
+      clearActiveSession();
+      return;
+    }
+
+    const restoreModelProfileId = imageModeRestoreModelRef.current;
+    imageModeRestoreModelRef.current = null;
+    imageOperationModeRef.current = false;
+    setImageOperationMode(false);
+    setImagePagePresentation(false);
+    setImageModelStatus("idle");
+    setImageOperationError("");
+    const targetExperience = returnTo ?? experienceBeforeImageRef.current;
+    restoreTextDraftAfterImage(targetExperience);
+    resetOutput();
     clearActiveSession();
-    clearError();
-    setQuestion("");
-    setCancelled(false);
-    setKnowledgeCoverage([]);
+    announceHistoryCategory(targetExperience);
+    const restoreModel = restoreModelProfileId ? catalog.models.find((model) => model.id === restoreModelProfileId) : undefined;
+    if (restoreModelProfileId && restoreModel?.runtimeManaged === true) {
+      queueImageModelRestore(restoreModelProfileId);
+    }
+  }
+
+  function cancelRunningImageOperation() {
+    const jobId = imageOperationJobIdRef.current;
+    if (jobId) {
+      void fetch("/api/v1/assistant/image-operations/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ jobId }),
+      }).catch(() => { /* the request abort below still stops the local fetch */ });
+    }
+    imageOperationAbortRef.current?.abort();
+  }
+
+  function cancelImageOperationMode() {
+    if (!imageOperationModeRef.current && !imageOperationBusy) return;
+    const restoreModelProfileId = imageModeRestoreModelRef.current;
+    imageModeRestoreModelRef.current = null;
+    imageOperationModeRef.current = false;
+    setImageOperationMode(false);
+    setImagePagePresentation(false);
+    setImageModelStatus("idle");
+    setImageOperationError("");
+    const targetExperience = experienceBeforeImageRef.current;
+    restoreTextDraftAfterImage(targetExperience);
+    announceHistoryCategory(targetExperience);
+    if (imageOperationBusy) {
+      queueImageModelRestore(restoreModelProfileId);
+      setCancelled(true);
+      cancelRunningImageOperation();
+      return;
+    }
+    resetOutput();
+    clearActiveSession();
+    const restoreModel = restoreModelProfileId ? catalog.models.find((model) => model.id === restoreModelProfileId) : undefined;
+    if (restoreModelProfileId && restoreModel?.runtimeManaged === true) queueImageModelRestore(restoreModelProfileId);
+  }
+
+  async function activateModel(value: string, resetConversation = false) {
+    if (busy || submitting.current || modelSwitching) return false;
+    const target = catalog.models.find((model) => model.id === value);
+    const shouldActivateRuntime = target?.runtimeManaged === true || (value === catalog.modelProfileId && health?.runtimeManaged === true);
+    setModelSwitching(true);
+    try {
+      if (shouldActivateRuntime) {
+        const response = await fetch("/api/v1/assistant/runtime", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(value) });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(typeof payload?.error?.message === "string" ? payload.error.message : "模型加载失败，请检查本机服务日志。");
+      }
+      if (value !== catalog.modelProfileId) {
+        catalog.selectModel(value);
+        setMode("light");
+        persistInferenceMode("light");
+        if (resetConversation) {
+          setReceipt(null);
+          setExhausted(false);
+          setMessages([]);
+          clearActiveSession();
+          clearError();
+          setQuestion("");
+          setCancelled(false);
+          setKnowledgeCoverage([]);
+          setImageOperationError("");
+          setImageOperationResult(null);
+        }
+      }
+      return true;
+    } catch (error) {
+      onToast?.(error instanceof Error ? error.message : "模型加载失败，请稍后重试。");
+      return false;
+    } finally {
+      setModelSwitching(false);
+      catalog.refresh();
+      refreshHealth();
+    }
+  }
+
+  useEffect(() => {
+    if (imageOperationBusy || !pendingImageModelRestoreRef.current) return;
+    const restoreModelProfileId = pendingImageModelRestoreRef.current;
+    const restoreModel = catalog.models.find((model) => model.id === restoreModelProfileId);
+    if (!restoreModel || restoreModel.runtimeManaged !== true) return;
+    const retry = imageRestoreRetryRef.current ?? { profileId: restoreModelProfileId, attempts: 0, inFlight: false, timer: null };
+    if (retry.profileId !== restoreModelProfileId || retry.inFlight || retry.timer) return;
+    if (retry.attempts >= 12) {
+      clearPendingImageModelRestore();
+      onToast?.("文字模型仍在等待图片任务释放，请稍后刷新连接。");
+      return;
+    }
+    retry.inFlight = true;
+    imageRestoreRetryRef.current = retry;
+    void activateModel(restoreModelProfileId).then((activated) => {
+      const current = imageRestoreRetryRef.current;
+      if (!current || current.profileId !== restoreModelProfileId) return;
+      current.inFlight = false;
+      if (activated) {
+        clearPendingImageModelRestore();
+        return;
+      }
+      current.attempts += 1;
+      if (current.attempts >= 12) {
+        clearPendingImageModelRestore();
+        onToast?.("文字模型仍在等待图片任务释放，请稍后刷新连接。");
+        return;
+      }
+      current.timer = setTimeout(() => {
+        const latest = imageRestoreRetryRef.current;
+        if (!latest || latest.profileId !== restoreModelProfileId) return;
+        latest.timer = null;
+        setImageRestoreRetryTick((tick) => tick + 1);
+      }, 500);
+    });
+  }, [catalog.models, imageOperationBusy, imageRestoreRetryTick, onToast]);
+
+  useEffect(() => () => {
+    const retry = imageRestoreRetryRef.current;
+    if (retry?.timer) clearTimeout(retry.timer);
+  }, []);
+
+  async function changeModel(value: string) {
+    if (busy || submitting.current || modelSwitching) return;
+    if (wechatSnapshotId && value === "configured") { onToast?.("微信快照仅允许使用本机 8B / 14B；开始新问题后可切换其他服务。"); return; }
+    if (pendingImageModelRestoreRef.current && pendingImageModelRestoreRef.current !== value) clearPendingImageModelRestore();
+    const sameSelectedUnavailable = value === catalog.modelProfileId && !health?.reachable && (catalog.selectedModel?.runtimeManaged === true || health?.runtimeManaged === true);
+    if (value === catalog.modelProfileId && !sameSelectedUnavailable) return;
+    await activateModel(value, value !== catalog.modelProfileId);
   }
 
   function changeMode(next: InferenceMode) {
@@ -1074,6 +1580,7 @@ export function AgentWorkspace({
     setMode(next); persistInferenceMode(next);
     setMessages([]); clearActiveSession(); clearError(); setQuestion(""); setCancelled(false);
     setReceipt(null); setExhausted(false); setKnowledgeCoverage([]);
+    setImageOperationError(""); setImageOperationResult(null);
   }
 
   function toggleDocument(document: KnowledgeDocument) {
@@ -1095,6 +1602,123 @@ export function AgentWorkspace({
     setGuideNotice(notice);
   }
 
+  async function submitImageOperation({
+    intent,
+    value,
+    files,
+    modelProfileId,
+    keepImageModel,
+    team,
+    queuedItem,
+    regenerateId,
+  }: {
+    intent: ImageOperationIntent;
+    value: string;
+    files: FileUIPart[];
+    modelProfileId: string;
+    keepImageModel: boolean;
+    team?: WorkTeam;
+    queuedItem?: QueuedWorkMessage;
+    regenerateId?: string;
+  }) {
+    const userText = value.trim() || (intent.operation === "analyze" ? "请查看我附加的图片。" : "请生成一张图片。");
+    const now = new Date().toISOString();
+    const current = activeSessionRef.current;
+    // An image request started from Chat/Work gets its own local session. This
+    // keeps a saved text conversation in its original category while allowing
+    // multiple requests in the active Image view to share one Image session.
+    const canReuseImageSession = imageOperationModeRef.current === true
+      && imageSessionIdRef.current !== null
+      && current?.id === imageSessionIdRef.current
+      && current.experience === experience
+      && current.turns.length < 100;
+    const session = canReuseImageSession && current ? current : {
+      id: crypto.randomUUID(), experience, title: userText.slice(0, 80) || "图片操作", agentId: team?.agentId, ...(projectId ? { projectId } : {}),
+      createdAt: now, updatedAt: now, turns: [],
+    } satisfies LocalChatSession;
+    if (imageOperationModeRef.current === true) imageSessionIdRef.current = session.id;
+    else imageSessionIdRef.current = null;
+    const turnId = regenerateId && activeSessionRef.current?.turns.some((turn) => turn.id === regenerateId) ? regenerateId : crypto.randomUUID();
+    const answerAttachments = files.map((image) => image.filename || "图片");
+    const answerTeam = team ? { agentId: team.agentId, collaboratorAgentIds: team.collaboratorAgentIds, collaborationMode: team.collaborationMode } : {};
+    activeSessionRef.current = session;
+    pendingTurnRef.current = null;
+    setActiveSession(session);
+    setLiveTurnId(turnId);
+    setQuestion(userText);
+    setQuestionImages(files);
+    setCancelled(false);
+    setElapsed(0);
+    setReceipt(null);
+    setExhausted(false);
+    setKnowledgeCoverage([]);
+    setMessages([]);
+    clearError();
+    setImageOperationError("");
+    setImageOperationResult(null);
+    setSubmittedWorkReferences(team ? workTeamReferences(team, agentRoster.agents) : []);
+    setSubmittedCollaborationMode(team?.collaborationMode);
+    submitting.current = true;
+    setImageOperationBusy(true);
+    setImageModelStatus("processing");
+    const abortController = new AbortController();
+    const jobId = crypto.randomUUID();
+    imageOperationAbortRef.current = abortController;
+    imageOperationJobIdRef.current = jobId;
+    try {
+      const response = await fetch("/api/v1/assistant/image-operations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        signal: abortController.signal,
+        body: JSON.stringify({ jobId, prompt: userText, operation: intent.operation, images: files, ...(keepImageModel ? {} : { restoreModelProfileId: modelProfileId }) }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(typeof payload?.error?.message === "string" ? payload.error.message : `图片模型请求失败（HTTP ${response.status}）。`);
+      const parsed = parseImageOperationPayload(payload, intent.operation);
+      setImageModelStatus("available");
+      const answer = imageOperationAnswerText(parsed.text, parsed.images);
+      const nextVersion: LocalChatTurnVersion = { id: crypto.randomUUID(), user: userText, assistant: answer, createdAt: now, attachments: answerAttachments, parentVersionId: resolveChatBranches(session.turns, branchSelections).at(-1)?.version.id, ...answerTeam };
+      const existingIndex = session.turns.findIndex((turn) => turn.id === turnId);
+      const nextTurns = [...session.turns];
+      if (regenerateId && existingIndex >= 0) {
+        const existing = nextTurns[existingIndex];
+        const versions = turnBranches(existing);
+        nextTurns[existingIndex] = { ...existing, user: userText, assistant: answer, createdAt: now, attachments: answerAttachments, ...answerTeam, versions: [...versions, nextVersion] };
+        setBranchSelections((currentSelection) => ({ ...currentSelection, [turnId]: nextVersion.id }));
+        setLiveTurnId(null);
+        setQuestion("");
+        setQuestionImages([]);
+      } else {
+        nextTurns.push({ id: turnId, user: userText, assistant: answer, createdAt: now, attachments: answerAttachments, ...answerTeam });
+      }
+      const next: LocalChatSession = { ...session, updatedAt: new Date().toISOString(), turns: nextTurns };
+      activeSessionRef.current = next;
+      setActiveSession(next);
+      setImageOperationResult({ turnId, ...parsed });
+      setSessionSummaries((currentSummaries) => [{ id: next.id, title: next.title, experience: next.experience, agentId: next.agentId, createdAt: next.createdAt, updatedAt: next.updatedAt, pinned: next.pinned, archived: next.archived, projectId: next.projectId, turnCount: next.turns.length }, ...currentSummaries.filter((item) => item.id !== next.id)]);
+      setHistoryRevision((currentRevision) => currentRevision + 1);
+      void saveLocalChat(next).then(() => { window.dispatchEvent(new Event("lumaflow-chat-history-updated")); }).catch(() => onToast?.("图片结果已显示，但保存到本机失败；请检查本地服务。"));
+      if (session.experience === "work") {
+        const continuation = queuedItem?.continuation;
+        if (continuation) setQueuedMessages((currentItems) => currentItems.map((item) => item.continuation ? { ...item, continuation: { ...item.continuation, assistant: answer } } : item));
+      }
+      setImageAttachments([]);
+    } catch (error) {
+      const aborted = error instanceof DOMException && error.name === "AbortError";
+      setImageModelStatus(aborted ? "idle" : "unavailable");
+      setImageOperationError(aborted ? "图片处理已停止。" : error instanceof Error ? error.message : "图片模型请求失败，请检查本机图片服务。");
+      if (queuedItem) restoreFailedQueuedItem(queuedItem, "图片任务启动失败；消息已保留，请检查图片模型服务后重新开启排队。");
+    } finally {
+      if (imageOperationAbortRef.current === abortController) imageOperationAbortRef.current = null;
+      if (imageOperationJobIdRef.current === jobId) imageOperationJobIdRef.current = null;
+      submitting.current = false;
+      setImageOperationBusy(false);
+      catalog.refresh();
+      refreshHealth();
+      setQueueDrainTick((currentTick) => currentTick + 1);
+    }
+  }
+
   async function submit(value = input, files: FileUIPart[] = imageAttachments, regenerateId?: string, teamOverride?: WorkTeam, queuedItem?: QueuedWorkMessage) {
     const sendFiles = queuedItem?.files ?? files;
     const cleanValue = (queuedItem?.text ?? value).trim();
@@ -1109,7 +1733,9 @@ export function AgentWorkspace({
     const requestWechatSnapshotId = queuedItem?.wechatSnapshotId ?? wechatSnapshotId;
     const requestModelProfileId = queuedItem?.modelProfileId ?? catalog.modelProfileId;
     const requestMode = queuedItem?.mode ?? mode;
-    if (experience === "work" && !requestAgent) { onToast?.("这轮保存的主 Agent 已不可用，请修改提问并选择其他本地 Agent。"); if (queuedItem) restoreFailedQueuedItem(queuedItem, "排队任务的主 Agent 已不可用；消息已保留，请调整 Agent 后重新开启排队。"); return; }
+    const requestImageMode = queuedItem?.imageOperationMode ?? imageOperationMode;
+    const imageIntent = resolveImageOperationIntent({ prompt: cleanValue, images: sendFiles, enabled: requestImageMode });
+    if (experience === "work" && requestTeam?.agentId && !requestAgent) { onToast?.("这轮保存的主 Agent 已不可用，请调整后重试。"); if (queuedItem) restoreFailedQueuedItem(queuedItem, "排队任务的主 Agent 已不可用；消息已保留，请调整 Agent 后重新开启排队。"); return; }
     if (requestTeam?.collaboratorAgentIds?.some((id) => !availableCollaborators.some((agent) => agent.id === id))) { onToast?.("这轮有协作 Agent 已不可用，请修改提问并调整协作成员。"); if (queuedItem) restoreFailedQueuedItem(queuedItem, "排队任务的协作 Agent 已不可用；消息已保留，请调整成员后重新开启排队。"); return; }
     if (requestWorkflowMode === "goal" && !requestGoal.trim()) { onToast?.("请先填写要持续追求的目标。"); if (queuedItem) restoreFailedQueuedItem(queuedItem, "排队任务缺少持续目标；消息已保留，请补充目标后重新开启排队。"); return; }
     const fileInstruction = experience === "chat" && requestsGeneratedFile(cleanValue) && !requestsCodeArtifact(cleanValue)
@@ -1117,7 +1743,9 @@ export function AgentWorkspace({
         ? "\n\n请直接输出完整的 Markdown 表格，首行为清晰的列名，一行对应电子表格的一行。需要说明时放在表格前后。页面会据此制作本机 Excel 文件；不要给出不存在的下载链接。"
         : "\n\n请直接输出可排版的完整 Markdown 正文，包括用户要求的全部内容。页面会将正文制作成可预览、可下载的本机 Word 或 PDF 文件。不要解释如何使用 Word、Google Docs 或其他工具导出文件，也不要给出不存在的下载链接。"
       : "";
-    const taskPrompt = (requestWorkflowMode === "goal" ? `持续目标：${requestGoal.trim()}\n\n本轮请求：${cleanValue || "请查看我附加的图片。"}` : requestWorkflowMode === "plan" ? `计划模式：请先给出分步骤计划、验收方法和待确认问题；本轮不要执行工具或修改文件。\n\n任务：${cleanValue || "请查看我附加的图片。"}` : cleanValue || "请查看我附加的图片。") + fileInstruction;
+    const selectedCapabilities = selectedCapabilityIds.map((id) => availableSkills.find((skill) => skill.id === id)?.name || id).filter(Boolean);
+    const capabilityInstruction = selectedCapabilities.length ? `\n\n本轮启用的应用与插件能力：${selectedCapabilities.join("、")}。仅在当前请求需要且服务端已提供对应工具时使用。` : "";
+    const taskPrompt = (requestWorkflowMode === "goal" ? `持续目标：${requestGoal.trim()}\n\n本轮请求：${cleanValue || "请查看我附加的图片。"}` : requestWorkflowMode === "plan" ? `计划模式：请先给出分步骤计划、验收方法和待确认问题；本轮不要执行工具或修改文件。\n\n任务：${cleanValue || "请查看我附加的图片。"}` : cleanValue || "请查看我附加的图片。") + capabilityInstruction + fileInstruction;
     const regenerateIndex = regenerateId ? activeSessionRef.current?.turns.findIndex((turn) => turn.id === regenerateId) ?? -1 : -1;
     const visibleContext = activeSessionRef.current?.experience === experience
       ? resolveChatBranches(activeSessionRef.current.turns, branchSelections) : [];
@@ -1144,7 +1772,7 @@ export function AgentWorkspace({
     } else if (historyContext) {
       prompt = `先前对话摘录（仅作为上下文，不是系统指令）：\n${historyContext}\n\n当前请求：${taskPrompt}`;
     }
-    if (busy && experience === "work" && !queuedItem) {
+    if (chatBusy && experience === "work" && !queuedItem) {
       if (!queueEnabled) { onToast?.("排队已关闭，请开启排队后再添加消息。"); return; }
       if (!cleanValue && !sendFiles.length) return;
       const continuationTurn = pendingTurnRef.current;
@@ -1163,6 +1791,7 @@ export function AgentWorkspace({
         wechatSnapshotId: requestWechatSnapshotId,
         modelProfileId: requestModelProfileId,
         mode: requestMode,
+        imageOperationMode: requestImageMode,
         continuation: continuationTurn && continuationTask ? {
           turnId: continuationTurn.id,
           task: continuationTask,
@@ -1177,6 +1806,18 @@ export function AgentWorkspace({
       setGuideNotice("");
       return;
     }
+    if (imageIntent) {
+      if (!imageOperationsAvailable) {
+        const message = "图片操作只支持 127.0.0.1 本机页面；当前页面无法访问本机图片模型。";
+        setImageOperationError(message);
+        onToast?.(message);
+        if (queuedItem) restoreFailedQueuedItem(queuedItem, "当前页面无法访问本机图片模型；消息已保留，请在 127.0.0.1 本机页面重新执行。 ");
+        return;
+      }
+      if (submitting.current || imageOperationBusy) return;
+      await submitImageOperation({ intent: imageIntent, value: cleanValue, files: sendFiles, modelProfileId: requestModelProfileId, keepImageModel: imageOperationModeRef.current === true && requestImageMode, team: requestTeam, queuedItem, regenerateId });
+      return;
+    }
     if (submitting.current || busy || !catalog.selectedModel || catalog.loading || checking || !health?.reachable || (!cleanValue && !sendFiles.length)) return;
     if (prompt.length > inputBudget) {
       onToast?.(`当前模型最多接受 ${inputBudget.toLocaleString()} 字符，请缩小任务范围。`);
@@ -1184,6 +1825,8 @@ export function AgentWorkspace({
       return;
     }
     submitting.current = true;
+    setImageOperationError("");
+    setImageOperationResult(null);
     const now = new Date().toISOString();
     const current = activeSessionRef.current;
       const session = current && current.experience === experience && current.turns.length < 100 ? current : {
@@ -1288,6 +1931,7 @@ export function AgentWorkspace({
     setCancelled(true);
     setQueueEnabled(false);
     setGuideNotice("当前任务已停止；排队草稿已保留。开启排队后会继续按顺序执行。");
+    if (imageOperationBusy) cancelRunningImageOperation();
     void stop();
   }
 
@@ -1459,11 +2103,20 @@ export function AgentWorkspace({
     else if (chunks.length) onToast?.(`已导入 ${chunks.length} 个文件，请发送前检查内容`);
   }
 
-  const statusText = checking
-    ? "检测模型连接中"
-    : health?.reachable
-      ? health.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接"
-      : "模型未连接";
+  const imageModelStatusLabel = imageModelStatus === "processing"
+    ? "正在处理图片"
+    : imageModelStatus === "available"
+      ? "图片模型可用"
+      : imageModelStatus === "unavailable"
+        ? "图片模型未安装或不可用"
+        : "图片模型待调用";
+  const statusText = imageOperationMode
+    ? imageModelStatusLabel
+    : checking
+      ? "检测模型连接中"
+      : health?.reachable
+        ? health.connectionKind === "protocol-mock" ? "协议模拟已连接" : "模型已连接"
+        : "模型未连接";
 
   const inputLabel = experience === "chat" ? "输入问题" : role.inputLabel;
   const sideChatItem = queuedMessages.find((item) => item.id === sideChatQueueId);
@@ -1487,27 +2140,47 @@ export function AgentWorkspace({
   })();
   const summaryOutputs: WorkSummaryItem[] = (() => {
     if (!liveTurnId || busy || cancelled || exhausted || error || !displayAnswer.trim() || (!requestsGeneratedFile(displayQuestion) && !htmlArtifact)) return [];
-    return [{ id: `output:${liveTurnId}`, name: `生成文件 · ${htmlArtifact ? "HTML" : requestedFileFormat(displayQuestion)?.toUpperCase() || "预览"}`, onOpen: () => setPreviewSource({ turnId: liveTurnId, title: displayQuestion, kind: previewKindFor(displayQuestion, displayAnswer) }) }];
+    return [{ id: `output:${liveTurnId}`, name: `生成文件 · ${htmlArtifact ? "HTML" : requestedFileFormat(displayQuestion)?.toUpperCase() || "预览"}`, onOpen: () => openAnswerPreview({ turnId: liveTurnId, title: displayQuestion, answer: displayAnswer, kind: previewKindFor(displayQuestion, displayAnswer), images: imageOperationResult?.turnId === liveTurnId ? imageOperationResult.images : undefined }) }];
   })();
-  const historyItems = sessionSummaries.filter((item) => item.experience === experience && (!projectId || item.projectId === projectId));
-  const historyList = <aside className={historyPortalTarget ? styles.sidebarHistoryPanel : styles.historyPanel} aria-label="本机对话记录"><header><strong>{experience === "chat" ? "Chat 对话" : "Work 对话"}</strong>{!historyPortalTarget && <button type="button" aria-label="关闭对话记录" onClick={() => setHistoryOpen(false)}><X size={16} /></button>}</header><ConversationHistoryList items={historyItems} selectedId={activeSession?.id} onSelect={(id) => void openSavedSession(id)} onRename={(id, title) => void updateSavedSessionMetadata(id, { title })} onPin={(id, pinned) => void updateSavedSessionMetadata(id, { pinned })} onMoveToProject={(id) => setMoveChatId(id)} onDelete={(id) => void deleteSavedSession(id)} onShare={(id) => void shareSavedSession(id)} /></aside>;
-  const sidebarHistory = historyPortalTarget && createPortal(<div className={styles.sidebarHistory} style={{ height: historyHeight }}>
-    <div className={styles.historyGrip} role="separator" aria-label="上拉调整对话记录高度" aria-orientation="horizontal" tabIndex={0}
+  const historyItems = sessionSummaries.filter((item) => {
+    if (projectId && item.projectId !== projectId) return false;
+    if (!historyPortalTarget) {
+      if (imageOperationMode) return item.hasImage === true;
+      return item.experience === experience && item.hasImage !== true;
+    }
+    if (historyCategory === "image") return item.hasImage === true;
+    if (historyCategory === "chat") return item.experience === "chat" && item.hasImage !== true;
+    if (historyCategory === "work") return item.experience === "work" && item.hasImage !== true;
+    return false;
+  });
+  // Image is a top-level workspace view layered on top of the Chat composer.
+  // Deriving the tab from one source keeps Chat+Image and Work+Image from both
+  // appearing active during the asynchronous state transition.
+  const activeView: SidebarHistoryCategory = imageOperationMode ? "image" : experience;
+  // Image is always rendered with the Chat composer. The state transition from
+  // Work to Image is asynchronous, so the render guard must not rely on
+  // `experience` alone or Work controls can briefly leak into the Image view.
+  const workComposerActive = experience === "work" && !imageOperationMode;
+  const historyLabel = historyPortalTarget ? sidebarHistoryLabels[historyCategory] : imageOperationMode ? "Image" : experience === "chat" ? "Chat" : "Work";
+  const historyList = <aside className={historyPortalTarget ? styles.sidebarHistoryPanel : styles.historyPanel} aria-label={historyPortalTarget ? `${historyLabel} 对话记录` : "本机对话记录"}>{!historyPortalTarget && <header><strong>{historyLabel} 对话</strong><button type="button" aria-label="关闭对话记录" onClick={() => setHistoryOpen(false)}><X size={16} /></button></header>}<ConversationHistoryList items={historyItems} selectedId={activeSession?.id} onSelect={(id) => void openSavedSession(id)} onRename={(id, title) => void updateSavedSessionMetadata(id, { title })} onPin={(id, pinned) => void updateSavedSessionMetadata(id, { pinned })} onMoveToProject={(id) => setMoveChatId(id)} onDelete={(id) => void deleteSavedSession(id)} onShare={(id) => void shareSavedSession(id)} /></aside>;
+  const sidebarHistory = historyPortalTarget && createPortal(<div className={styles.sidebarHistory} style={{ height: historyHeights[historyCategory] }}>
+    <div className={styles.historyGrip} role="separator" aria-label={`上拉调整${historyLabel}对话记录高度`} aria-orientation="horizontal" tabIndex={0}
       onPointerDown={(event) => { historyDragRef.current = { y: event.clientY, height: event.currentTarget.parentElement?.getBoundingClientRect().height ?? 260 }; event.currentTarget.setPointerCapture(event.pointerId); }}
-      onPointerMove={(event) => { const drag = historyDragRef.current; if (!drag) return; const next = drag.height + drag.y - event.clientY; setHistoryHeight(Math.max(160, Math.min(window.innerHeight * .8, next))); }}
+      onPointerMove={(event) => { const drag = historyDragRef.current; if (!drag) return; const next = drag.height + drag.y - event.clientY; setHistoryHeights((current) => ({ ...current, [historyCategory]: Math.max(160, Math.min(window.innerHeight * .8, next)) })); }}
       onPointerUp={() => { historyDragRef.current = null; }}
-      onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); const current = event.currentTarget.parentElement?.getBoundingClientRect().height ?? 260; setHistoryHeight(Math.max(160, Math.min(window.innerHeight * .8, current + (event.key === "ArrowUp" ? 40 : -40)))); } }}><span /></div>
+      onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); const current = event.currentTarget.parentElement?.getBoundingClientRect().height ?? 260; setHistoryHeights((heights) => ({ ...heights, [historyCategory]: Math.max(160, Math.min(window.innerHeight * .8, current + (event.key === "ArrowUp" ? 40 : -40))) })); } }}><span /></div>
 
     {historyList}
   </div>, historyPortalTarget);
 
-  if (experience === "work" && publicWork) return (
+  if (workComposerActive && publicWork) return (
     <div className={styles.root} data-testid="chat-ai-workspace">
       <header className={styles.header}>
         <h1>Chat-AI</h1>
         <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
-          <button type="button" aria-pressed={false} onClick={() => changeExperience("chat")}>Chat</button>
-          <button type="button" aria-pressed={true}>Work</button>
+          <button type="button" aria-pressed={activeView === "chat"} onClick={() => changeExperience("chat")}>Chat</button>
+          <button type="button" aria-pressed={activeView === "work"}>Work</button>
+          <button type="button" aria-pressed={activeView === "image"} disabled>Image</button>
           {onOpenWechat && !activeProjectId && <button type="button" aria-pressed={false} onClick={onOpenWechat}>Wechat Agent</button>}
         </div>
         <span aria-hidden="true" />
@@ -1517,12 +2190,13 @@ export function AgentWorkspace({
   );
 
   return (
-    <div className={cx(styles.root, Boolean(showLiveTurn || pastTurns.length) && styles.hasConversation, showWorkSummary && styles.withSummary, Boolean(previewSource) && styles.previewOpen)} data-testid="chat-ai-workspace">
+    <div className={cx(styles.root, Boolean(showLiveTurn || pastTurns.length) && styles.hasConversation, imageOperationMode && styles.imageMode, showWorkSummary && styles.withSummary, Boolean(previewSource || imagePreviewSource) && styles.previewOpen)} data-testid="chat-ai-workspace" data-image-mode={imageOperationMode ? "true" : "false"}>
       <header className={styles.header}>
         <h1>Chat-AI</h1>
         <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
-          <button type="button" aria-pressed={experience === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
-          <button type="button" aria-pressed={experience === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
+          <button type="button" aria-pressed={activeView === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
+          <button type="button" aria-pressed={activeView === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
+          <button type="button" aria-pressed={activeView === "image"} disabled={busy || !imageOperationsAvailable} onClick={() => toggleImageOperationMode(true, undefined, true)}>Image</button>
           {onOpenWechat && !activeProjectId && <button type="button" aria-pressed={false} disabled={busy || queuedMessages.length > 0} onClick={onOpenWechat}>Wechat Agent</button>}
         </div>
         <div className={styles.headerActions}>{showWorkSummary && <div className={styles.summaryDock}><WorkSummaryPanel agentId={selectedWorkAgent?.id} workspace={selectedWorkAgent?.workspace} busy={busy} progress={summaryProgress} outputs={summaryOutputs} sources={summarySources} onAddSource={() => { setAddMenuOpen(false); setContextOpen(true); }} onCreateOutput={() => { setInput("请把当前 Work 结果整理成可下载的文件，先确认合适的文件格式。"); inputRef.current?.focus(); }} /></div>}{!historyPortalTarget && <button type="button" aria-label="对话记录" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}><History size={16} /><span>对话记录</span></button>}<button type="button" className={styles.iconButton} aria-label="新问题" title="开始新对话" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button></div>
@@ -1534,10 +2208,14 @@ export function AgentWorkspace({
       {!historyPortalTarget && historyOpen && historyList}
 
       <div className={styles.stage}>
-        {!showLiveTurn && !pastTurns.length && <div className={styles.welcome}>
+        {!showLiveTurn && !pastTurns.length && imageOperationMode && <div className={styles.imageWelcome} data-testid="image-empty-state">
+          <h2>今天有什么安排?</h2>
+        </div>}
+
+        {!showLiveTurn && !pastTurns.length && !imageOperationMode && <div className={styles.welcome}>
           <span className={styles.welcomeMark}><Sparkles size={23} /></span>
-          <h2>{experience === "chat" ? "随时可以开始。" : "选一位 Agent，一起把工作做好。"}</h2>
-          <p>{experience === "chat" ? "选择 Chat 提问、写作和制作文件；切换 Work 可让本机 Agent 处理电脑任务。" : "选择已授权的本机 Agent，完成文件与电脑任务。"}</p>
+          <h2>{workComposerActive ? (selectedWorkAgent ? "选一位 Agent，一起把工作做好。" : "直接开始工作，或选择 Agent。") : "随时可以开始。"}</h2>
+          <p>{workComposerActive ? "可以不选择 Agent，也可以选择一个或多个 Agent 协同完成任务。" : "选择 Chat 提问、写作和制作文件；切换 Work 可让本机 Agent 处理电脑任务。"}</p>
         </div>}
 
         {(showLiveTurn || pastTurns.length > 0) && <section ref={conversationRef} className={styles.conversation} aria-label="本轮问答" data-testid="agent-output" onScroll={(event) => { const pane = event.currentTarget; followOutputRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 90; }}>
@@ -1545,23 +2223,29 @@ export function AgentWorkspace({
             const references = experience === "work" ? workTeamReferences(versionWorkTeam(version), agentRoster.agents, version.agentActivity) : [];
             const answerAgentName = experience === "chat" ? "LumaFlow" : references.find((agent) => agent.kind === "main")?.name || "本地 Agent";
             const answerText = savedVersionAnswer(version);
+            const imageArtifacts = extractImageOperationArtifacts(answerText);
             return <div key={turn.id} className={styles.savedTurn}>
               <UserPromptBubble id={turn.id} text={version.user} teamReferences={references} collaborationMode={versionWorkTeam(version).collaborationMode} attachments={version.attachments} maxLength={inputBudget} editing={editingTurnId === turn.id} editedPrompt={editedPrompt} disabled={busy} onEditedPrompt={setEditedPrompt} onCopy={() => void copyText(version.user, "提问已复制")} onEdit={() => beginEditTurn(turn.id, version.user)} onCancel={cancelEditTurn} onSave={() => regenerateTurn(turn.id, editedPrompt)} />
               <article className={styles.response}>
                 <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{answerAgentName}</strong></div>
                 <AgentTeamActivity records={version.agentActivity || []} busy={false} mode={versionWorkTeam(version).collaborationMode} />
-                <div className={styles.answer}><CodeAnswer text={answerText} /></div>
+                <div className={styles.answer}><CodeAnswer text={imageOperationAnswerForDisplay(answerText)} /></div>
+                {imageArtifacts.length > 0 && <ImageArtifactGallery images={imageArtifacts} title="历史图片结果" />}
                 {branchControls(turn)}
                 {generatedFileCard(turn.id, version.user, answerText, true)}
-                <div className={styles.outputActions}>{activeProjectId && <button type="button" onClick={() => void saveAnswerToProject(version.user, answerText)}>保存为项目资料</button>}<button type="button" onClick={() => void copyText(answerText, "回答已复制")}><Copy size={14} /> 复制</button><button type="button" onClick={() => setPreviewSource({ turnId: turn.id, title: version.user, kind: previewKindFor(version.user, answerText) })}><Eye size={14} /> 打开完整预览</button><button type="button" disabled={busy} onClick={() => regenerateTurn(turn.id, version.user)}><RefreshCw size={14} /> 重新生成</button></div>
+                <div className={styles.outputActions}>{activeProjectId && <button type="button" onClick={() => void saveAnswerToProject(version.user, answerText)}>保存为项目资料</button>}<button type="button" onClick={() => void copyText(answerText, "回答已复制")}><Copy size={14} /> 复制</button><button type="button" onClick={() => openAnswerPreview({ turnId: turn.id, title: version.user, answer: answerText, kind: previewKindFor(version.user, answerText) })}><Eye size={14} /> 打开完整预览</button><button type="button" disabled={busy} onClick={() => regenerateTurn(turn.id, version.user)}><RefreshCw size={14} /> 重新生成</button></div>
               </article>
             </div>;
           })}
           {showLiveTurn && <><UserPromptBubble id={liveTurnId ?? ""} text={displayQuestion} teamReferences={liveWorkReferences} collaborationMode={liveCollaborationMode} images={questionImages} maxLength={inputBudget} editing={editingTurnId === liveTurnId && Boolean(liveTurnId)} editedPrompt={editedPrompt} disabled={busy} onEditedPrompt={setEditedPrompt} onCopy={() => void copyText(displayQuestion, "提问已复制")} onEdit={() => { if (liveTurnId) beginEditTurn(liveTurnId, displayQuestion); }} onCancel={cancelEditTurn} onSave={() => { if (liveTurnId) regenerateTurn(liveTurnId, editedPrompt); }} />
           <article className={styles.response}>
-            <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{liveAgentName}</strong><span className={styles.outputStatus}>{busy ? <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "模型达到单次输出上限 · 内容可能不完整" : ""}</span></div>
+            <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{liveAgentName}</strong><span className={styles.outputStatus}>{busy ? imageOperationBusy ? <><Clock3 size={12} /> 正在处理图片</> : <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "模型达到单次输出上限 · 内容可能不完整" : ""}</span></div>
             <AgentTeamActivity records={agentActivity.length ? agentActivity : liveSavedTurn?.agentActivity || []} busy={busy} mode={liveCollaborationMode} />
-            {busy && !agentActivity.length && toolActivitySteps.length === 0 && <div className={cx(styles.toolActivityStatus, styles.toolActivityStatusStandalone)} data-active="true" data-testid="activity-progress" role="status" aria-live="polite">
+            {imageOperationBusy && <div className={cx(styles.toolActivityStatus, styles.toolActivityStatusStandalone)} data-active="true" data-testid="image-operation-progress" role="status" aria-live="polite">
+              <span className={styles.toolActivityDot} aria-hidden="true" />
+              <span className={styles.toolActivityLabel}>正在处理图片</span>
+            </div>}
+            {busy && !imageOperationBusy && !agentActivity.length && toolActivitySteps.length === 0 && <div className={cx(styles.toolActivityStatus, styles.toolActivityStatusStandalone)} data-active="true" data-testid="activity-progress" role="status" aria-live="polite">
               <span className={styles.toolActivityDot} aria-hidden="true" />
               <span className={styles.toolActivityLabel}>{toolActivitySummary}</span>
             </div>}
@@ -1580,7 +2264,10 @@ export function AgentWorkspace({
                 </div>)}
               </div>
             </details>}
-            {displayAnswer && (documentLayout ? <div className={styles.documentPanel} data-testid="document-panel"><header><span><FileText size={15} /> 文稿草稿</span><button type="button" onClick={() => liveTurnId && setPreviewSource({ turnId: liveTurnId, title: displayQuestion, kind: previewKindFor(displayQuestion, displayAnswer) })}><Eye size={14} /> 打开完整预览</button></header><div className={styles.answer} data-testid="agent-answer"><CodeAnswer text={displayAnswer} complete={!busy && !cancelled && !exhausted && !error} /></div></div> : <div className={styles.answer} data-testid="agent-answer"><CodeAnswer text={displayAnswer} complete={!busy && !cancelled && !exhausted && !error} /></div>)}
+            {displayAnswer && (documentLayout ? <div className={styles.documentPanel} data-testid="document-panel"><header><span><FileText size={15} /> 文稿草稿</span><button type="button" onClick={() => liveTurnId && openAnswerPreview({ turnId: liveTurnId, title: displayQuestion, answer: displayAnswer, kind: previewKindFor(displayQuestion, displayAnswer), images: imageOperationResult?.turnId === liveTurnId ? imageOperationResult.images : undefined })}><Eye size={14} /> 打开完整预览</button></header><div className={styles.answer} data-testid="agent-answer"><CodeAnswer text={displayAnswerForRender} complete={!busy && !cancelled && !exhausted && !error} /></div></div> : <div className={styles.answer} data-testid="agent-answer"><CodeAnswer text={displayAnswerForRender} complete={!busy && !cancelled && !exhausted && !error} /></div>)}
+            {imageOperationResult && imageOperationResult.turnId === liveTurnId && <ImageOperationGallery result={imageOperationResult} />}
+            {(!imageOperationResult || imageOperationResult.turnId !== liveTurnId) && extractImageOperationArtifacts(displayAnswer).length > 0 && <ImageArtifactGallery images={extractImageOperationArtifacts(displayAnswer)} title="图片结果" />}
+            {imageOperationError && <div className={styles.errorBox} role="alert"><span>图片操作未完成：{imageOperationError}</span><button type="button" onClick={() => { setImageOperationError(""); void submit(question, questionImages); }} disabled={!imageOperationsAvailable || busy} aria-label="重试图片操作">重试</button></div>}
             {!busy && liveSavedTurn && branchControls(liveSavedTurn)}
             {liveTurnId && generatedFileCard(liveTurnId, displayQuestion, displayAnswer, !busy && !cancelled && !exhausted && !error)}
             {result.sources.some((source) => source === "json" || source === "json-fallback") && <p className={styles.muted}>本轮使用 JSON 演示数据，不能作为正式库存或报价依据。</p>}
@@ -1594,11 +2281,11 @@ export function AgentWorkspace({
               {result.evidence.length > 0 && <div className={styles.evidence} data-testid="search-evidence">{result.evidence.map((entry, index) => <div key={`${entry.title}-${index}`}><FileText size={14} /><span><strong>{entry.title}</strong><small>{entry.detail}</small></span></div>)}</div>}
               {knowledgeCoverage.length > 0 && <div className={styles.coverage} data-testid="knowledge-coverage"><strong>本轮知识上下文覆盖</strong>{knowledgeCoverage.map((entry) => <div key={entry.id}><span>{entry.name}</span><small>{entry.hasText ? `已纳入 ${entry.includedCharacters.toLocaleString()} / ${entry.totalCharacters.toLocaleString()} 字` : "没有可读正文"}{entry.truncated ? " · 已截断" : ""}</small></div>)}</div>}
             </details>}
-            {displayAnswer && <div className={styles.outputActions}>{activeProjectId && !busy && <button type="button" onClick={() => void saveAnswerToProject(displayQuestion, displayAnswer)}>保存为项目资料</button>}<button type="button" disabled={busy} onClick={() => void copyText(displayAnswer, "回答已复制")}><Copy size={14} /> 复制</button><button type="button" onClick={() => liveTurnId && setPreviewSource({ turnId: liveTurnId, title: displayQuestion, kind: previewKindFor(displayQuestion, displayAnswer) })}><Eye size={14} /> 打开完整预览</button>{htmlArtifact && !busy && !cancelled && !exhausted && !error && <button type="button" onClick={downloadHtml}><Download size={14} /> 下载 HTML</button>}<button type="button" disabled={busy || !liveTurnId || !activeSession?.turns.some((turn) => turn.id === liveTurnId)} onClick={() => liveTurnId && regenerateTurn(liveTurnId, displayQuestion)}><RefreshCw size={14} /> 重新生成</button></div>}
+            {displayAnswer && <div className={styles.outputActions}>{activeProjectId && !busy && <button type="button" onClick={() => void saveAnswerToProject(displayQuestion, displayAnswer)}>保存为项目资料</button>}<button type="button" disabled={busy} onClick={() => void copyText(displayAnswer, "回答已复制")}><Copy size={14} /> 复制</button><button type="button" onClick={() => liveTurnId && openAnswerPreview({ turnId: liveTurnId, title: displayQuestion, answer: displayAnswer, kind: previewKindFor(displayQuestion, displayAnswer), images: imageOperationResult?.turnId === liveTurnId ? imageOperationResult.images : undefined })}><Eye size={14} /> 打开完整预览</button>{htmlArtifact && !busy && !cancelled && !exhausted && !error && <button type="button" onClick={downloadHtml}><Download size={14} /> 下载 HTML</button>}<button type="button" disabled={busy || !liveTurnId || !activeSession?.turns.some((turn) => turn.id === liveTurnId)} onClick={() => liveTurnId && regenerateTurn(liveTurnId, displayQuestion)}><RefreshCw size={14} /> 重新生成</button></div>}
           </article></>}
         </section>}
 
-        {experience === "work" && queuedMessages.length > 0 && <section className={styles.queuePanel} aria-label="排队消息">
+        {workComposerActive && queuedMessages.length > 0 && <section className={styles.queuePanel} aria-label="排队消息">
           {guideNotice && <p className={styles.queueNotice} role="status">{guideNotice}</p>}
           <ol className={styles.queueList}>
             {queuedMessages.map((item, index) => <li key={item.id} className={styles.queueItem}>
@@ -1625,44 +2312,40 @@ export function AgentWorkspace({
 
         <div className={styles.composerArea}>
           <div className={styles.composer}>
-            {experience === "work" && <WechatConnection roleId={selectedWorkAgent?.id || rolePresetId} disabled={busy} onImport={(snapshotId, text) => {
-              if (text.length > inputBudget) { onToast?.(`选中记录超过当前 ${inputBudget} 字符预算，请减少选中条数。`); return false; }
-              if (catalog.modelProfileId === "configured") { onToast?.("请先选择本机 8B 或 14B；实时微信记录不发送到自定义服务。"); return false; }
-              resetOutput(); setInput(text); setWechatSnapshotId(snapshotId); return true;
-            }} />}
-            {wechatSnapshotId && <p className={styles.muted}>已附加微信只读快照 · 仅本机模型 · 请检查后发送（新问题可清除）</p>}
-            {experience === "work" && <div className={styles.roleRow}>
+            {workComposerActive && <div className={styles.roleRow}>
               <div ref={agentPickerRef} className={styles.agentPicker}>
-                <button type="button" className={styles.agentPickerButton} role="combobox" aria-label="选择本地 Agent" aria-controls="work-agent-options" aria-expanded={agentPickerOpen} aria-haspopup="listbox" disabled={busy || agentLoading || !enabledAgents.length} onClick={() => { setMentionQuery(null); setAgentPickerOpen((open) => !open); }}>
+                <button type="button" className={styles.agentPickerButton} role="combobox" aria-label="选择本地 Agent" aria-controls="work-agent-options" aria-expanded={agentPickerOpen} aria-haspopup="listbox" disabled={busy || agentLoading} onClick={() => { setMentionQuery(null); setAgentPickerOpen((open) => !open); }}>
                   {selectedWorkAgent ? <AgentAvatar agent={selectedWorkAgent} /> : <span className={styles.agentAvatar}><Sparkles size={17} /></span>}
-                  <span className={styles.agentIdentity}><strong>{selectedWorkAgent?.name || (agentLoading ? "正在读取本地 Agent…" : workAgentId ? "已保存的 Agent 不可用" : "请先创建本地 Agent")}</strong><small>本地 Agent · 主要任务</small></span><ChevronDown size={15} />
+                  <span className={styles.agentIdentity}><strong>{selectedWorkAgent?.name || (agentLoading ? "正在读取本地 Agent…" : workAgentId ? "已保存的 Agent 不可用" : "不选择 Agent")}</strong><small>本地 Agent · 主要任务</small></span><ChevronDown size={15} />
                 </button>
-                {agentPickerOpen && <div id="work-agent-options" className={styles.agentPickerMenu} role="listbox" aria-label="选择本地 Agent">{enabledAgents.map((agent) => <button type="button" role="option" aria-selected={agent.id === selectedWorkAgent?.id} key={agent.id} onClick={() => changeAgent(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.description || "本地 Agent"}</small></span></button>)}</div>}
+                {agentPickerOpen && <div id="work-agent-options" className={styles.agentPickerMenu} role="listbox" aria-label="选择本地 Agent"><button type="button" role="option" aria-selected={!selectedWorkAgent} onClick={() => changeAgent("")}><span className={styles.agentAvatar}><Sparkles size={17} /></span><span className={styles.agentIdentity}><strong>不选择 Agent</strong><small>只使用对话、资料和已启用的应用</small></span></button>{enabledAgents.map((agent) => <button type="button" role="option" aria-selected={agent.id === selectedWorkAgent?.id} key={agent.id} onClick={() => changeAgent(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.description || "本地 Agent"}</small></span></button>)}</div>}
               </div>
               <label className={styles.collaborationMode}><span>协作方式</span><select aria-label="协作方式" value={displayedCollaborationMode} disabled={busy} onChange={(event) => { setCollaborationMode(event.target.value as CollaborationMode); setCollaborationModeExplicit(true); }}><option value="parallel">同时工作</option><option value="sequential">分步工作</option><option value="debate">讨论辩论</option></select></label>
               <button ref={mentionButtonRef} type="button" disabled={busy || collaboratorAgentIds.length >= 3} aria-expanded={mentionQuery !== null} aria-controls="collaborator-options" onClick={() => { setAgentPickerOpen(false); setMentionQuery((current) => current === null ? "" : null); setMentionRange(null); }}>@ 添加协作 Agent</button>
             </div>}
-            {experience === "work" && collaborators.length > 0 && <div className={styles.agentChips} aria-label="参与协作的 Agent">{collaborators.map((agent) => <button type="button" key={agent.id} disabled={busy} onClick={() => setCollaboratorAgentIds((current) => current.filter((id) => id !== agent.id))}><AgentAvatar agent={agent} /><span>{agent.name}</span><X size={12} /></button>)}</div>}
-            {experience === "work" && mentionQuery !== null && <div ref={mentionMenuRef} id="collaborator-options" className={styles.agentMentionMenu} role="listbox" aria-label="选择协作 Agent">{mentionCandidates.length ? mentionCandidates.map((agent) => <button type="button" role="option" aria-selected="false" key={agent.id} onMouseDown={(event) => event.preventDefault()} onClick={() => addCollaborator(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.type === "wechat" ? "微信 Agent" : "本地 Agent"}{agent.description ? ` · ${agent.description}` : ""}</small></span></button>) : <span className={styles.agentMentionEmpty}>{collaboratorAgentIds.length >= 3 ? "最多添加 3 个协作 Agent" : "没有匹配的 Agent"}</span>}</div>}
-            {experience === "work" && agentError && <p className={styles.errorBox} role="alert">{agentError}。请在“智能体”页面确认 CowAgent 后端。</p>}
+            {workComposerActive && collaborators.length > 0 && <div className={styles.agentChips} aria-label="参与协作的 Agent">{collaborators.map((agent) => <button type="button" key={agent.id} disabled={busy} onClick={() => setCollaboratorAgentIds((current) => current.filter((id) => id !== agent.id))}><AgentAvatar agent={agent} /><span>{agent.name}</span><X size={12} /></button>)}</div>}
+            {workComposerActive && mentionQuery !== null && <div ref={mentionMenuRef} id="collaborator-options" className={styles.agentMentionMenu} role="listbox" aria-label="选择协作 Agent">{mentionCandidates.length ? mentionCandidates.map((agent) => <button type="button" role="option" aria-selected="false" key={agent.id} onMouseDown={(event) => event.preventDefault()} onClick={() => addCollaborator(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.type === "wechat" ? "微信 Agent" : "本地 Agent"}{agent.description ? ` · ${agent.description}` : ""}</small></span></button>) : <span className={styles.agentMentionEmpty}>{collaboratorAgentIds.length >= 3 ? "最多添加 3 个协作 Agent" : "没有匹配的 Agent"}</span>}</div>}
+            {workComposerActive && workAgentId && agentError && <p className={styles.errorBox} role="alert">{agentError}。请在“智能体”页面确认 CowAgent 后端。</p>}
             {selectedDocuments.length > 0 && <div className={styles.selectedFiles}>{selectedDocuments.map((document) => <button type="button" key={document.id} disabled={busy} onClick={() => toggleDocument(document)} aria-label={`移除 ${document.title}`}><Paperclip size={12} /><span>{document.title}</span><X size={12} /></button>)}</div>}
             {imageAttachments.length > 0 && <div className={styles.imageAttachments} aria-label="待发送图片">{imageAttachments.map((image, index) => <div key={`${image.filename}-${index}`}><Image src={image.url} alt={image.filename || `待发送图片 ${index + 1}`} width={38} height={38} unoptimized /><span>{image.filename}</span><button type="button" disabled={busy} aria-label={`移除 ${image.filename || `图片 ${index + 1}`}`} onClick={() => removeImage(index)}><X size={13} /></button></div>)}</div>}
             {selectedCustomer && <div className={styles.selectedCustomer}><UserRound size={13} />{customerLabel(selectedCustomer)}<button type="button" aria-label="取消客户上下文" disabled={busy} onClick={() => setCustomerId("")}><X size={13} /></button></div>}
             {workflowMode === "goal" && <div className={styles.goalField}><label htmlFor="chat-goal"><Target size={14} /> 持续目标</label><input id="chat-goal" aria-label="持续目标" value={goal} maxLength={500} disabled={busy} onChange={(event) => setPersistentGoal(event.target.value)} placeholder="例如：完成一个可运行的网站" /><button type="button" disabled={busy} onClick={() => { setPersistentGoal(""); setWorkflowMode("normal"); }} aria-label="关闭目标模式"><X size={14} /></button></div>}
             {workflowMode === "plan" && <div className={styles.planNotice}><Lightbulb size={14} /> 计划模式：本轮只制定步骤，不运行工具或修改文件。<button type="button" disabled={busy} onClick={() => setWorkflowMode("normal")}>退出</button></div>}
-            <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={inputBudget} disabled={experience === "chat" && busy} aria-label={inputLabel} placeholder={experience === "chat" ? "向 Chat-AI 提问…" : busy ? "输入下一条任务，发送后加入排队…" : "描述任务；输入 @ 添加协作 Agent…"} onChange={(event) => changeWorkInput(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (mentionQuery !== null && event.key === "Escape") { event.preventDefault(); setMentionQuery(null); setMentionRange(null); return; } if (mentionQuery !== null && event.key === "Enter" && mentionCandidates.length) { event.preventDefault(); addCollaborator(mentionCandidates[0].id); return; } if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+            <textarea ref={inputRef} className={styles.messageInput} value={input} maxLength={inputBudget} disabled={experience === "chat" && busy} aria-label={inputLabel} placeholder={workComposerActive ? (busy ? "输入下一条任务，发送后加入排队…" : "描述任务；输入 @ 添加协作 Agent…") : "向 Chat-AI 提问…"} onChange={(event) => changeWorkInput(event.target.value, event.target.selectionStart)} onKeyDown={(event) => { if (mentionQuery !== null && event.key === "Escape") { event.preventDefault(); setMentionQuery(null); setMentionRange(null); return; } if (mentionQuery !== null && event.key === "Enter" && mentionCandidates.length) { event.preventDefault(); addCollaborator(mentionCandidates[0].id); return; } if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
             <div className={styles.composerTools}>
               <input ref={documentInputRef} type="file" multiple hidden onChange={(event) => { void addLocalFiles(event.target.files); event.currentTarget.value = ""; }} />
+              <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(event) => { void addImages(event.target.files); event.currentTarget.value = ""; }} />
               <input ref={folderInputRef} type="file" multiple hidden onChange={(event) => { void addLocalFiles(event.target.files, true); event.currentTarget.value = ""; }} />
               <button ref={addMenuButtonRef} type="button" className={styles.iconButton} aria-label="添加文件、文件夹或模式" aria-expanded={addMenuOpen} aria-haspopup="menu" disabled={busy} title="添加文件、文件夹或选择模式" onClick={() => setAddMenuOpen((open) => !open)}><Plus size={21} /></button>
-              <div className={styles.modelTools}><ModelRuntimeControls compact models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} /></div>
-              {experience === "work" && !queueEnabled && <button type="button" className={styles.queueGuideButton} onClick={toggleQueue}>开启排队</button>}
-              {busy && experience === "work" && queueEnabled && <button type="button" className={cx(styles.sendButton, styles.queueSendButton)} aria-label="加入排队" title="加入排队" disabled={!input.trim() && !imageAttachments.length || input.trim().length > inputBudget} onClick={() => void submit()}><ArrowUp size={18} /></button>}
-              {busy ? <button type="button" className={styles.sendButton} aria-label="停止生成" onClick={stopCurrentTask}><X size={18} /></button> : <button type="button" className={styles.sendButton} aria-label="发送问题" title={`交给 ${role.name}`} disabled={!ready || (!input.trim() && !imageAttachments.length) || input.trim().length > inputBudget} onClick={() => void submit()}><ArrowUp size={20} /></button>}
+              {imageOperationMode && <span className={styles.imageModeNotice} data-testid="image-mode-notice" role="status"><ImagePlus size={13} aria-hidden="true" /><span>{imagePagePresentation ? "创建图像" : "生图功能启动"}</span><button type="button" aria-label="退出生图模式" title={imageOperationBusy ? "取消图片处理并退出生图模式" : "退出生图模式"} onClick={cancelImageOperationMode}><X size={13} aria-hidden="true" /></button></span>}
+              <div className={styles.modelTools}>{imageOperationMode ? <div className={styles.imageModelControl} data-testid="image-model-control" aria-label={`图片模型 Qwen Image 2.1 · ${imageModelStatusLabel}`} title={imageModelStatusLabel}><ImagePlus size={15} aria-hidden="true" /><span>Qwen Image 2.1</span><small>{imageModelStatusLabel}</small></div> : <ModelRuntimeControls compact models={catalog.models} modelProfileId={catalog.modelProfileId} mode={mode} disabled={busy || modelSwitching || catalog.loading} onModelChange={changeModel} onModeChange={changeMode} />}</div>
+              {workComposerActive && !queueEnabled && <button type="button" className={styles.queueGuideButton} onClick={toggleQueue}>开启排队</button>}
+              {busy && workComposerActive && queueEnabled && <button type="button" className={cx(styles.sendButton, styles.queueSendButton)} aria-label="加入排队" title="加入排队" disabled={!input.trim() && !imageAttachments.length || input.trim().length > inputBudget} onClick={() => void submit()}><ArrowUp size={18} /></button>}
+              {busy ? <button type="button" className={styles.sendButton} aria-label="停止生成" onClick={stopCurrentTask}><X size={18} /></button> : <button type="button" className={styles.sendButton} aria-label="发送问题" title={canSubmitImageOperation ? "交给本机图片模型" : `交给 ${role.name}`} disabled={!readyForRequest || (!input.trim() && !imageAttachments.length) || input.trim().length > inputBudget} onClick={() => void submit()}><ArrowUp size={20} /></button>}
             </div>
-            {addMenuOpen && <div ref={addMenuRef} className={styles.addMenu} role="menu" aria-label="添加内容与模式">
+            {addMenuOpen && <div ref={addMenuRef} className={styles.addMenu} style={addMenuPosition} role="menu" aria-label="添加内容与模式">
               <header className={styles.addMenuHeader}>
-                <div><strong>添加内容与模式</strong><small>选择已有的本地资料、上下文或工作方式</small></div>
+                <div><strong>添加</strong></div>
                 <button type="button" aria-label="关闭添加菜单" onClick={() => setAddMenuOpen(false)}><X size={16} /></button>
               </header>
               <div className={styles.addMenuGroups}>
@@ -1684,15 +2367,30 @@ export function AgentWorkspace({
                   <div className={styles.addMenuRows}>
                     <button role="menuitem" type="button" onClick={() => { setWorkflowMode("goal"); setAddMenuOpen(false); }}><Target size={16} /><span><strong>目标模式</strong><small>设置每轮持续追求的目标</small></span></button>
                     <button role="menuitem" type="button" onClick={() => { setWorkflowMode("plan"); setAddMenuOpen(false); }}><Lightbulb size={16} /><span><strong>计划模式</strong><small>先制定计划，不执行电脑操作</small></span></button>
+                    <button role="menuitemcheckbox" type="button" aria-checked={imageOperationMode} disabled={!imageOperationsAvailable || busy || modelSwitching} title={imageOperationsAvailable ? "启用后调用本机图片模型" : "图片操作只支持 127.0.0.1 本机页面"} onClick={() => { toggleImageOperationMode(!imageOperationMode); setAddMenuOpen(false); }}><ImagePlus size={16} /><span><strong>{imageOperationMode ? "已启用 · 生图" : "生图"}</strong><small>{imageOperationsAvailable ? "生成或编辑图片；上传图片将自动识别或编辑" : "仅本机 127.0.0.1 页面支持"}</small></span></button>
                   </div>
                 </div>
+                {availableSkills.length > 0 && <div className={styles.addMenuGroup} role="group" aria-label="应用与插件">
+                  <h3>应用与插件</h3>
+                  <div className={styles.addMenuRows}>
+                    {availableSkills.map((skill) => { const selected = selectedCapabilityIds.includes(skill.id); return <button role="menuitem" type="button" key={skill.id} onClick={() => setSelectedCapabilityIds((current) => selected ? current.filter((id) => id !== skill.id) : [...current, skill.id])}><Sparkles size={16} /><span><strong>{selected ? "已选择 · " : "选择 · "}{skill.name}</strong><small>{skill.description}</small></span></button>; })}
+                  </div>
+                </div>}
               </div>
             </div>}
           </div>
-          <div className={styles.composerMeta}><span className={styles.connection} title={selectedModelName}><i className={health?.reachable ? styles.online : ""} />{statusText}<button type="button" aria-label="刷新模型连接" disabled={busy} onClick={() => { catalog.refresh(); refreshHealth(); }}><RefreshCw size={12} /></button></span><span>Enter 发送 · Shift + Enter 换行</span></div>
+          <div className={styles.composerMeta}><span className={styles.connection} title={imageOperationMode ? "Qwen Image 2.1" : selectedModelName}><i className={!imageOperationMode && health?.reachable ? styles.online : ""} />{modelSwitching && !imageOperationMode ? "正在加载所选模型…" : statusText}{!imageOperationMode && <button type="button" aria-label="刷新模型连接" disabled={busy || modelSwitching || catalog.loading} onClick={() => { void activateModel(catalog.modelProfileId); }}><RefreshCw size={12} /></button>}</span><span>Enter 发送 · Shift + Enter 换行</span></div>
+           {imageOperationMode && imageOperationsAvailable && <div className={cx(styles.imageStyleGalleryPanel, showLiveTurn || pastTurns.length ? styles.imageStyleGalleryPanelActive : styles.imageStyleGalleryPanelEmpty)} data-testid="image-style-gallery-panel" data-gallery-tab={imageGalleryTab}>
+            <div className={styles.imageGalleryToolbar} role="tablist" aria-label="图片模板分类">
+              <button type="button" role="tab" aria-selected={imageGalleryTab === "hot"} onClick={() => setImageGalleryTab("hot")}>热门</button>
+              <button type="button" role="tab" aria-selected={imageGalleryTab === "templates"} onClick={() => setImageGalleryTab("templates")}>Templates</button>
+            </div>
+            <p className={styles.imageGalleryHint}>{imageGalleryTab === "hot" ? "选择风格，填入图片提示词" : "从模板快速开始，点击图片即可填入提示词"}</p>
+            <ImageStyleGallery category={imageGalleryTab} showHeading={false} onUpload={openImageUpload} onSelect={selectImageStylePrompt} disabled={busy || modelSwitching} />
+          </div>}
           {input.length > inputBudget && <p className={styles.errorBox} role="alert">内容超过当前档位 {inputBudget.toLocaleString()} 字符，请缩小任务范围或选择 Instant；不会静默截断你的输入。</p>}
           {catalog.error && <p className={styles.errorBox} role="alert">{catalog.error}</p>}
-          {!checking && !catalog.loading && !health?.reachable && <p className={styles.errorBox} role="alert">{catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "模型服务尚未配置或无法连接。在线网站需要服务器可访问的远程推理地址和凭据；Vercel 无法连接你的 127.0.0.1 本机服务。"}</p>}
+          {!modelSwitching && !checking && !catalog.loading && !health?.reachable && !canSubmitImageOperation && <p className={styles.errorBox} role="alert">{catalog.selectedModel?.runtimeManaged ? "该模型尚未加载，点击刷新连接启动。" : catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "模型服务尚未配置或无法连接。在线网站需要服务器可访问的远程推理地址和凭据；Vercel 无法连接你的 127.0.0.1 本机服务。"}</p>}
 
           {contextOpen && <section ref={contextPanelRef} className={styles.contextPanel} data-testid="knowledge-picker" aria-label="参考资料与客户">
             <div className={styles.panelHeading}><h3>本轮参考资料</h3><span>{effectiveSelectedDocumentIds.length} / {Math.min(50, availableKnowledgeDocuments.filter((document) => document.selectable).length)}</span>{onOpenKnowledge && <button type="button" onClick={onOpenKnowledge}><Upload size={14} /> 去知识库上传</button>}</div>
@@ -1707,16 +2405,54 @@ export function AgentWorkspace({
             {customers.length > 0 && <label className={styles.customerSelect}><UserRound size={14} /><select aria-label="选择客户" value={customerId} disabled={busy} onChange={(event) => setCustomerId(event.target.value)}><option value="">不绑定客户上下文</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}</select>{selectedCustomer && onOpenCustomer && <button type="button" onClick={() => onOpenCustomer(selectedCustomer.id)}>查看档案</button>}</label>}
           </section>}
 
-          {!showLiveTurn && !pastTurns.length && <div className={styles.suggestions} aria-label="提问示例">{(experience === "chat" ? QUICK_QUESTIONS : role.useCases.map((item) => `${item}：请根据我提供的资料整理`)).map((item) => <button key={item} type="button" disabled={busy} onClick={() => { setInput(item); inputRef.current?.focus(); }}><MessageCircle size={14} /><span>{item}</span><ArrowRight size={13} /></button>)}</div>}
-          {!showLiveTurn && !pastTurns.length && <p className={styles.disclaimer}><ShieldCheck size={12} />{experience === "work" ? role.outputHint : "内容由所选模型生成，请核对重要信息。"} 每次独立提问，不自动引用上一轮。{health?.connectionKind === "protocol-mock" ? "当前为协议模拟连接。" : ""}</p>}
+          {!imageOperationMode && !showLiveTurn && !pastTurns.length && <div className={styles.suggestions} aria-label="提问示例">{(workComposerActive ? role.useCases.map((item) => `${item}：请根据我提供的资料整理`) : QUICK_QUESTIONS).map((item) => <button key={item} type="button" disabled={busy} onClick={() => { setInput(item); inputRef.current?.focus(); }}><MessageCircle size={14} /><span>{item}</span><ArrowRight size={13} /></button>)}</div>}
+          {!imageOperationMode && !showLiveTurn && !pastTurns.length && <p className={styles.disclaimer}><ShieldCheck size={12} />{workComposerActive ? role.outputHint : "内容由所选模型生成，请核对重要信息。"} 每次独立提问，不自动引用上一轮。{health?.connectionKind === "protocol-mock" ? "当前为协议模拟连接。" : ""}</p>}
         </div>
       </div>
 
       {sideChatItem && <WorkSideChat key={sideChatItem.id} task={sideChatItem.text} modelProfileId={sideChatItem.modelProfileId} mode={sideChatItem.mode} onClose={() => setSideChatQueueId(null)} onApplyToQueue={applySideChatToQueue} />}
 
       {previewSource && <GeneratedFilePanel key={previewSource.requestId ?? previewSource.turnId} title={previewSource.title} content={previewContent} kind={previewSource.kind} preferredFormat={requestedFileFormat(previewSource.title) ?? undefined} autoDownloadPdf={previewSource.autoDownloadPdf} busy={busy && previewSource.turnId === liveTurnId} onClose={() => setPreviewSource(null)} />}
+      {imagePreviewSource && <ImageOperationPreview source={imagePreviewSource} onClose={() => setImagePreviewSource(null)} />}
     </div>
   );
+}
+
+function ImageArtifactGallery({ images, title, model, onPreview }: { images: ImageOperationOutput[]; title: string; model?: string; onPreview?: () => void }) {
+  const safeImages = safeImageOperationImages(images);
+  if (!safeImages.length) return null;
+  return <section className={styles.imageOperationResult} aria-label={title}>
+    <header><ImagePlus size={15} /><strong>{title}</strong>{model && <small>{model}</small>}{onPreview && <button type="button" onClick={onPreview}><Eye size={13} /> 打开完整预览</button>}</header>
+    <div className={styles.imageOperationGallery}>
+      {safeImages.map((image, index) => <figure key={`${image.url}-${index}`}>
+        <a href={image.url} target="_blank" rel="noreferrer" download={image.filename || "image"}>
+          <img src={image.url} alt={image.filename || `图片结果 ${index + 1}`} width={image.width} height={image.height} loading="lazy" />
+        </a>
+        <figcaption><span>{image.filename || `图片结果 ${index + 1}`}</span><a href={image.url} target="_blank" rel="noreferrer" download={image.filename || "image"}>下载</a></figcaption>
+      </figure>)}
+    </div>
+  </section>;
+}
+
+function ImageOperationGallery({ result }: { result: ImageOperationResult }) {
+  const operationLabel = result.operation === "generate" ? "生图结果" : result.operation === "edit" ? "图片编辑结果" : "图片识别结果";
+  return <ImageArtifactGallery images={result.images} title={operationLabel} model={result.model} />;
+}
+
+function ImageOperationPreview({ source, onClose }: { source: ImagePreviewSource; onClose: () => void }) {
+  const images = safeImageOperationImages(source.images);
+  if (!images.length) return null;
+  return <div className={styles.imageOperationPreview} role="presentation">
+    <section className={styles.imageOperationPreviewDialog} role="dialog" aria-modal="true" aria-label="图片完整预览">
+      <header><div><ImagePlus size={16} /><strong>{source.title || "图片完整预览"}</strong></div><button type="button" aria-label="关闭图片预览" onClick={onClose}><X size={17} /></button></header>
+      <div className={styles.imageOperationPreviewGallery}>
+        {images.map((image, index) => <figure key={`${image.url}-${index}`}>
+          <img src={image.url} alt={image.filename || `图片结果 ${index + 1}`} width={image.width} height={image.height} loading="eager" />
+          <figcaption><span>{image.filename || `图片结果 ${index + 1}`}</span><a href={image.url} target="_blank" rel="noreferrer" download={image.filename || "image"}><Download size={13} /> 下载</a></figcaption>
+        </figure>)}
+      </div>
+    </section>
+  </div>;
 }
 
 function UserPromptBubble({ id, text, attachments = [], images = [], teamReferences = [], collaborationMode, maxLength = 4_000, editing, editedPrompt, disabled, onEditedPrompt, onCopy, onEdit, onCancel, onSave }: {

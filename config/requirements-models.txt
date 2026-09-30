@@ -1,0 +1,7 @@
+transformers==5.17.0
+accelerate==1.13.0
+safetensors==0.8.0
+numpy==2.2.6
+Pillow==12.0.0
+diffusers @ https://github.com/huggingface/diffusers/archive/5ff8e59ff9fe81c6e2df4fb4c6ea0d97a5df5ab2.zip
+sentencepiece==0.2.1
