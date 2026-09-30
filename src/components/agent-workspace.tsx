@@ -966,7 +966,7 @@ export function AgentWorkspace({
   const canSubmitImageOperation = imageOperationsAvailable && Boolean(composerImageIntent);
   const busy = chatBusy || imageOperationBusy;
   const ready = Boolean(catalog.selectedModel && !catalog.loading && !checking && health?.reachable);
-  const readyForRequest = !modelSwitching && (canSubmitImageOperation || ready);
+  const readyForRequest = !modelSwitching && (composerImageIntent ? canSubmitImageOperation : ready);
   useEffect(() => {
     const startImageConversation = () => {
       enterImageOperationMode();
@@ -1444,7 +1444,7 @@ export function AgentWorkspace({
     clearActiveSession();
     announceHistoryCategory(targetExperience);
     const restoreModel = restoreModelProfileId ? catalog.models.find((model) => model.id === restoreModelProfileId) : undefined;
-    if (restoreModelProfileId && restoreModel?.runtimeManaged === true) {
+    if (!publicWork && restoreModelProfileId && restoreModel?.runtimeManaged === true) {
       queueImageModelRestore(restoreModelProfileId);
     }
   }
@@ -2103,7 +2103,8 @@ export function AgentWorkspace({
     else if (chunks.length) onToast?.(`已导入 ${chunks.length} 个文件，请发送前检查内容`);
   }
 
-  const imageModelStatusLabel = imageModelStatus === "processing"
+  const imageModelStatusLabel = !imageOperationsAvailable ? "在本机运行生成"
+    : imageModelStatus === "processing"
     ? "正在处理图片"
     : imageModelStatus === "available"
       ? "图片模型可用"
@@ -2196,7 +2197,7 @@ export function AgentWorkspace({
         <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
           <button type="button" aria-pressed={activeView === "chat"} disabled={busy} onClick={() => changeExperience("chat")}>Chat</button>
           <button type="button" aria-pressed={activeView === "work"} disabled={busy} onClick={() => changeExperience("work")}>Work</button>
-          <button type="button" aria-pressed={activeView === "image"} disabled={busy || !imageOperationsAvailable} onClick={() => toggleImageOperationMode(true, undefined, true)}>Image</button>
+          <button type="button" aria-pressed={activeView === "image"} disabled={busy} onClick={() => toggleImageOperationMode(true, undefined, true)}>Image</button>
           {onOpenWechat && !activeProjectId && <button type="button" aria-pressed={false} disabled={busy || queuedMessages.length > 0} onClick={onOpenWechat}>Wechat Agent</button>}
         </div>
         <div className={styles.headerActions}>{showWorkSummary && <div className={styles.summaryDock}><WorkSummaryPanel agentId={selectedWorkAgent?.id} workspace={selectedWorkAgent?.workspace} busy={busy} progress={summaryProgress} outputs={summaryOutputs} sources={summarySources} onAddSource={() => { setAddMenuOpen(false); setContextOpen(true); }} onCreateOutput={() => { setInput("请把当前 Work 结果整理成可下载的文件，先确认合适的文件格式。"); inputRef.current?.focus(); }} /></div>}{!historyPortalTarget && <button type="button" aria-label="对话记录" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}><History size={16} /><span>对话记录</span></button>}<button type="button" className={styles.iconButton} aria-label="新问题" title="开始新对话" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button></div>
@@ -2367,7 +2368,7 @@ export function AgentWorkspace({
                   <div className={styles.addMenuRows}>
                     <button role="menuitem" type="button" onClick={() => { setWorkflowMode("goal"); setAddMenuOpen(false); }}><Target size={16} /><span><strong>目标模式</strong><small>设置每轮持续追求的目标</small></span></button>
                     <button role="menuitem" type="button" onClick={() => { setWorkflowMode("plan"); setAddMenuOpen(false); }}><Lightbulb size={16} /><span><strong>计划模式</strong><small>先制定计划，不执行电脑操作</small></span></button>
-                    <button role="menuitemcheckbox" type="button" aria-checked={imageOperationMode} disabled={!imageOperationsAvailable || busy || modelSwitching} title={imageOperationsAvailable ? "启用后调用本机图片模型" : "图片操作只支持 127.0.0.1 本机页面"} onClick={() => { toggleImageOperationMode(!imageOperationMode); setAddMenuOpen(false); }}><ImagePlus size={16} /><span><strong>{imageOperationMode ? "已启用 · 生图" : "生图"}</strong><small>{imageOperationsAvailable ? "生成或编辑图片；上传图片将自动识别或编辑" : "仅本机 127.0.0.1 页面支持"}</small></span></button>
+                    <button role="menuitemcheckbox" type="button" aria-checked={imageOperationMode} disabled={busy || modelSwitching} title={imageOperationsAvailable ? "启用后调用本机图片模型" : "浏览图片风格，生成需在本机运行"} onClick={() => { toggleImageOperationMode(!imageOperationMode); setAddMenuOpen(false); }}><ImagePlus size={16} /><span><strong>{imageOperationMode ? "已启用 · 生图" : "生图"}</strong><small>{imageOperationsAvailable ? "生成或编辑图片；上传图片将自动识别或编辑" : "浏览图片风格，生成需在本机运行"}</small></span></button>
                   </div>
                 </div>
                 {availableSkills.length > 0 && <div className={styles.addMenuGroup} role="group" aria-label="应用与插件">
@@ -2380,7 +2381,7 @@ export function AgentWorkspace({
             </div>}
           </div>
           <div className={styles.composerMeta}><span className={styles.connection} title={imageOperationMode ? "Qwen Image 2.1" : selectedModelName}><i className={!imageOperationMode && health?.reachable ? styles.online : ""} />{modelSwitching && !imageOperationMode ? "正在加载所选模型…" : statusText}{!imageOperationMode && <button type="button" aria-label="刷新模型连接" disabled={busy || modelSwitching || catalog.loading} onClick={() => { void activateModel(catalog.modelProfileId); }}><RefreshCw size={12} /></button>}</span><span>Enter 发送 · Shift + Enter 换行</span></div>
-           {imageOperationMode && imageOperationsAvailable && <div className={cx(styles.imageStyleGalleryPanel, showLiveTurn || pastTurns.length ? styles.imageStyleGalleryPanelActive : styles.imageStyleGalleryPanelEmpty)} data-testid="image-style-gallery-panel" data-gallery-tab={imageGalleryTab}>
+           {imageOperationMode && <div className={cx(styles.imageStyleGalleryPanel, showLiveTurn || pastTurns.length ? styles.imageStyleGalleryPanelActive : styles.imageStyleGalleryPanelEmpty)} data-testid="image-style-gallery-panel" data-gallery-tab={imageGalleryTab}>
             <div className={styles.imageGalleryToolbar} role="tablist" aria-label="图片模板分类">
               <button type="button" role="tab" aria-selected={imageGalleryTab === "hot"} onClick={() => setImageGalleryTab("hot")}>热门</button>
               <button type="button" role="tab" aria-selected={imageGalleryTab === "templates"} onClick={() => setImageGalleryTab("templates")}>Templates</button>
@@ -2390,7 +2391,7 @@ export function AgentWorkspace({
           </div>}
           {input.length > inputBudget && <p className={styles.errorBox} role="alert">内容超过当前档位 {inputBudget.toLocaleString()} 字符，请缩小任务范围或选择 Instant；不会静默截断你的输入。</p>}
           {catalog.error && <p className={styles.errorBox} role="alert">{catalog.error}</p>}
-          {!modelSwitching && !checking && !catalog.loading && !health?.reachable && !canSubmitImageOperation && <p className={styles.errorBox} role="alert">{catalog.selectedModel?.runtimeManaged ? "该模型尚未加载，点击刷新连接启动。" : catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "模型服务尚未配置或无法连接。在线网站需要服务器可访问的远程推理地址和凭据；Vercel 无法连接你的 127.0.0.1 本机服务。"}</p>}
+          {!imageOperationMode && !modelSwitching && !checking && !catalog.loading && !health?.reachable && !canSubmitImageOperation && <p className={styles.errorBox} role="alert">{catalog.selectedModel?.runtimeManaged ? "该模型尚未加载，点击刷新连接启动。" : catalog.modelProfileId === "local-qwen3-8b" ? "本地 Qwen3 8B 尚未连接，请双击 Start-LumaFlow.cmd 启动后刷新。" : catalog.modelProfileId === "local-qwen3-14b" ? "所选模型尚未连接。14B 安装命令：npm run local:setup -- --model=14b；也可以切回已安装的 8B。" : "模型服务尚未配置或无法连接。在线网站需要服务器可访问的远程推理地址和凭据；Vercel 无法连接你的 127.0.0.1 本机服务。"}</p>}
 
           {contextOpen && <section ref={contextPanelRef} className={styles.contextPanel} data-testid="knowledge-picker" aria-label="参考资料与客户">
             <div className={styles.panelHeading}><h3>本轮参考资料</h3><span>{effectiveSelectedDocumentIds.length} / {Math.min(50, availableKnowledgeDocuments.filter((document) => document.selectable).length)}</span>{onOpenKnowledge && <button type="button" onClick={onOpenKnowledge}><Upload size={14} /> 去知识库上传</button>}</div>

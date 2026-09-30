@@ -11,10 +11,10 @@ from agent.tools.tool_manager import ToolManager
 
 
 @pytest.mark.parametrize("as_dict", [True, False])
-def test_hot_reload_only_grants_windows_mcp_to_local_profiles(tmp_path, as_dict):
+def test_hot_reload_only_grants_shared_mcp_to_local_profiles(tmp_path, as_dict):
     manager = ToolManager()
     previous = manager._mcp_tool_instances
-    desktop = McpTool(Mock(), {"name": "Snapshot", "inputSchema": {"type": "object"}}, "windows-mcp", "windows_")
+    desktop = McpTool(Mock(), {"name": "Snapshot", "inputSchema": {"type": "object"}}, "local-tools", "local_")
     other = McpTool(Mock(), {"name": "Lookup", "inputSchema": {"type": "object"}}, "other", "other_")
     manager._mcp_tool_instances = {desktop.name: desktop, other.name: other}
     try:
@@ -24,6 +24,6 @@ def test_hot_reload_only_grants_windows_mcp_to_local_profiles(tmp_path, as_dict)
             manager.sync_mcp_into_agent(agent)
             names = set(agent.tools if as_dict else (tool.name for tool in agent.tools))
             assert (desktop.name in names) is expect_desktop
-            assert other.name in names
+            assert (other.name in names) is expect_desktop
     finally:
         manager._mcp_tool_instances = previous

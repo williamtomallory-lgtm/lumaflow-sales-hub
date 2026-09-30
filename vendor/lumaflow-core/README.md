@@ -1,5 +1,7 @@
 # LumaFlow
 
+> 这是随完整项目提供的 CowAgent 源码快照。当前前端、四模式界面、安装器和模型附件统一位于 [LumaFlow Sales Hub](https://github.com/williamtomallory-lgtm/lumaflow-sales-hub)；线上界面为 [lumaflow-sales-hub.vercel.app](https://lumaflow-sales-hub.vercel.app/)。请从完整项目根目录运行安装器，不要另行启动此处的旧 frontend。下面保留原工程的历史使用说明。
+
 LumaFlow 是一个本地优先的销售知识库与多 Agent 工作台。这个仓库把原先分开的两个工程放在同一处：
 
 - `frontend/`：Next.js 管理界面、知识库、智能搜索、销售助手与模型选择。

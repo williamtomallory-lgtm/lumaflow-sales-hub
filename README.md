@@ -1,6 +1,57 @@
 # LumaFlow Sales Hub
 
-面向照明销售团队的本地知识库与销售 Agent 工作台。支持本机 Qwen3 8B / 14B 推理，不需要付费模型 API；产品、库存、CRM 与报价当前仍包含演示数据，不等于已接通公司的生产系统。
+面向照明销售团队的本地 AI 工作台，统一提供 **Chat、Work、Image、Wechat Agent** 四个入口，以及项目、知识库与跟进协作。完整仓库包含前端、CowAgent 后端、模型构建与安装脚本；模型权重通过本仓库 Release 分发。业务数据中仍有演示内容，不等于接通公司的生产系统。
+
+**[打开线上网站](https://lumaflow-sales-hub.vercel.app/) · [下载完整源码](https://github.com/williamtomallory-lgtm/lumaflow-sales-hub/archive/refs/heads/main.zip) · [本地模型附件](https://github.com/williamtomallory-lgtm/lumaflow-sales-hub/releases/tag/local-bundle-20260929)**
+
+线上网站同步最新前端 UI；本机模型、CowAgent 和微信服务在使用者自己的电脑运行。更新线上 UI 不会安装模型、改变远端模型配置或替访客执行电脑任务。
+
+## 当前界面
+
+以下是当前代码实际渲染的空白工作区截图，未发送模型请求，未展示个人聊天或客户资料。
+
+### Chat
+
+![Chat 问答工作区](docs/images/chat-workspace.png)
+
+### Work
+
+Agent 选择、协作方式和添加协作 Agent 位于同一行；支持不选择 Agent、单 Agent 和多 Agent。
+
+![Work 工作区](docs/images/work-workspace.png)
+
+### Image
+
+使用 Chat 的基础交互和简洁条形输入框，下方显示热门 / Templates 图片风格。返回 Chat 时关闭生图模式；四个模式只高亮当前选项。
+
+![Image 图片工作区](docs/images/image-workspace.png)
+
+### Wechat Agent
+
+微信 Agent 拥有独立的连接、授权与消息记录；实际账号登录由使用者完成。
+
+![微信 Agent 工作区](docs/images/wechat-workspace.png)
+
+## 当前结构
+
+```mermaid
+flowchart LR
+    UI["LumaFlow 工作台"] --> Chat["Chat · 问答与文件"]
+    UI --> Work["Work · 零/一/多个 Agent"]
+    UI --> Image["Image · 图片提示与风格预览"]
+    UI --> Wechat["Wechat Agent · 独立会话"]
+    UI --> Projects["项目与本机对话记录"]
+    UI --> Knowledge["知识库与产品资料"]
+    Work --> Core["本机 CowAgent"]
+    Core --> Files["授权文件、文档生成与 Python 分析"]
+    Core --> Model["用户配置的模型端点"]
+    Chat --> Model
+    Image --> Worker["本机图像实验服务"]
+    Wechat --> Bot["WeixinClawBot · 微信授权与文件交付"]
+    Web["Vercel · 最新前端 UI"] --> UI
+```
+
+外部共享 MCP 工具只提供给本地 Agent，微信 Agent 使用独立的受限工具清单。模型实际可用性与实验失败状态见 [完整本地安装说明](docs/portable-local-bundle.md)。
 
 产品目标是可自行部署、可持续积累的本地销售 Agent。本轮知识归档、角色工作台与安全边界见 [`docs/knowledge-agent-workspace.md`](docs/knowledge-agent-workspace.md)。长期记忆、数据库和部署规划见 [`docs/local-agent-blueprint.md`](docs/local-agent-blueprint.md)。原文件和分类结果可以持久积累；自动客户记忆、工作簿到 CRM 的结构化导入、完整 CRM 写入仍待实现。
 
@@ -11,9 +62,9 @@
 - 产品中心：结构化管理产品、型号、SKU、参数、材质、尺寸、场景、供应商、成本、MOQ、库存、状态与关联产品，支持筛选和 PostgreSQL 新增 API
 - 资料中心：统一管理图片、尺寸图、参数表、PDF、证书、案例、视频与说明书，支持搜索、上传、下载和版本历史
 - 知识库：任意扩展名原文件本地保存，TXT/CSV/Markdown/JSON/PDF/DOCX/XLSX/PPTX 等可读正文自动分类；真实数量、分类分布、解析状态可视化；支持下载原件、分类重试和人工确认。图片、音视频及未知格式目前仅归档，不假装理解
-- Chat-AI：智能搜索与销售助手合并为一个简洁页面，默认打开 Chat；Work 内嵌四种 Agent 角色。输入框内切换模型 / Size 和推理强度，支持真实流式回答、产品工具、停止、重试、引用与文件覆盖范围
+- Chat-AI：Chat / Work / Image / Wechat Agent 统一导航；各类对话分开保存，支持标题与正文搜索、新建、置顶、重命名与项目管理。项目和对话列表独立滚动；Chat 默认关闭生图，Image 显示风格预览；三个输入框加号使用统一条形菜单
 - 销售资料包：组合图片、参数、PDF、证书、案例和推荐话术，支持复制、系统分享以及真实 ZIP 生成
-- 销售 Agent（Chat-AI → Work）：产品销售顾问、微信客服、销售复盘、朋友圈运营；可选最多五个知识库文件。微信消息使用导出的短文本记录或已上传文件；朋友圈发布需二次明确确认，并仅通过已登录的本机 Windows 微信桌面桥提交，不读取微信数据库
+- Work 与微信 Agent：Work 可不选 Agent 或使用多个 Agent 协作，支持任务、知识文件、文档生成和 Python 分析；微信 Agent 独立管理微信授权、对话与文件交付，不读取微信数据库
 - 客户与会话：客户档案、联系人、聊天记录、需求、历史报价和上下文记忆集中管理，并可跳转销售助手或 CPQ
 - 报价系统（CPQ）：价格库、数量阶梯、手动折扣、多币种、超限审批、版本保存、实时预览和 PDF 下载
 - 跟进系统：未回复/逾期/今日/即将到期筛选、任务创建与完成、下一步话术、客户档案联动；月/周/日协作日历把跟进与团队安排放在同一时间线
@@ -56,7 +107,7 @@ npm run dev
 打开 [http://localhost:3000](http://localhost:3000)。
 开发和生产启动命令默认只监听 `127.0.0.1`。多人/内网部署须先补登录、客户级权限和访问网关；当前同源检查不等同于身份认证。
 
-### Windows 笔记本：真实 8B 本地演示
+### 旧安装路径：Windows 8B 本地演示（非默认入口）
 
 已在 16GB 内存、RTX 5060 Laptop 8GB 显存上实测 Qwen3-8B Q4_K_M。它是独立的 8B 文字/工具模型，不是 Qwen3.8-27B，不需要付费模型 API。完整说明见 [`docs/local-8b-demo.md`](docs/local-8b-demo.md)。
 

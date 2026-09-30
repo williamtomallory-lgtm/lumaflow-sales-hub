@@ -7,7 +7,8 @@ import { ApiHttpError, apiError, apiJson, authorizeAssistantRequest, enforceRate
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 600;
+// Hosting metadata must fit Vercel Hobby. Local worker timeout stays independent.
+export const maxDuration = 300;
 
 const file = z.object({
   type: z.literal("file"),

@@ -26,7 +26,7 @@ class McpTool(BaseTool):
     def execute(self, params: dict) -> ToolResult:
         # Desktop Type/Clipboard inputs can contain private text. Keep the
         # tool name for diagnostics without copying those arguments to logs.
-        logged_params = "[redacted]" if self.server_name == "windows-mcp" else params
+        logged_params = "[redacted]"
         logger.info(f"[McpTool] server={self.server_name} tool={self.name} params={logged_params}")
         try:
             result = self.client.call_tool(self._remote_name, params)

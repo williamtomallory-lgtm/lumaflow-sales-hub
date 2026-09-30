@@ -647,10 +647,7 @@ class ToolManager:
             getattr(agent, "agent", None), "agent_profile", None
         )
         if profile is None or profile.type != "local" or profile.agent_type:
-            current = {
-                name: tool for name, tool in current.items()
-                if getattr(tool, "server_name", None) != "windows-mcp"
-            }
+            current = {}
         registry_names = set(current.keys())
 
         agent_tools = agent.tools

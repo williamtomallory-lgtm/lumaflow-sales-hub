@@ -647,10 +647,7 @@ class AgentInitializer:
         except Exception:
             desktop_allowed = False
         if not desktop_allowed:
-            mcp_tools_snapshot = [
-                (name, tool) for name, tool in mcp_tools_snapshot
-                if getattr(tool, "server_name", None) != "windows-mcp"
-            ]
+            mcp_tools_snapshot = []
         if mcp_tools_snapshot:
             for _, mcp_tool in mcp_tools_snapshot:
                 tools.append(mcp_tool)

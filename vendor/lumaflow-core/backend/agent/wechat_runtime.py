@@ -844,7 +844,7 @@ class WechatAgentRuntime:
         agent.system_prompt = prompt
         agent.extra_system_suffix = (
             "你是 CowAgent 的个人微信 Agent。只使用当前会话提供的 CowAgent 基础工具。"
-            "Windows-MCP、浏览器控制和未授权的外部 Agent 不可用。"
+            "桌面控制、浏览器控制和未授权的外部 Agent 不可用。"
             "普通对话直接简洁回答，回复由系统自动同步微信，无需调用发送工具或请求发送确认。"
             "文件和工作目录内命令遵守当前权限，已授权的创建和命令直接执行，不重复请求确认。"
             "用户要求 PDF、Word、Excel、PPT 时优先调用 create_document，传入真实正文和对应格式，成功后调用 send 发送生成文件。"
@@ -896,7 +896,7 @@ class WechatAgentRuntime:
                     tool = manager.create_tool(name)
                 except Exception:
                     tool = None
-            if tool is None or getattr(tool, "server_name", "") == "windows-mcp":
+            if tool is None or getattr(tool, "server_name", ""):
                 continue
             if name in {"read", "ls", "search_files", "web_fetch", "write", "edit", "bash", "send", "create_document", "python_analysis"}:
                 cwd = agent.effective_cwd()
@@ -1117,7 +1117,7 @@ class WechatAgentRuntime:
         manager = ToolManager()
         manager.load_tools()
         tool = manager.create_tool(tool_name)
-        if tool is None or getattr(tool, "server_name", "") == "windows-mcp":
+        if tool is None or getattr(tool, "server_name", ""):
             raise RuntimeError("CowAgent tool is unavailable")
         cwd = payload.get("cwd") or self._config().get("workspace") or self._resolve_profile().workspace
         if hasattr(tool, "set_cwd"):
