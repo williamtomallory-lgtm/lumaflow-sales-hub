@@ -79,7 +79,10 @@ def main():
     args = p.parse_args()
     token = credential()
     permissions = api(token, f'/repos/{REPOSITORY}').get('permissions', {})
-    if not permissions.get('push'):
+    # Installation tokens used by Actions may omit repository permissions here;
+    # the workflow grants contents:write and GitHub enforces it on mutations.
+    workflow_token = os.environ.get('GITHUB_ACTIONS') == 'true' and bool(os.environ.get('GH_TOKEN'))
+    if not permissions.get('push') and not workflow_token:
         raise RuntimeError('GitHub credential has no write permission')
     # The tag endpoint does not consistently return drafts; find drafts in the
     # authenticated list so resumptions never create a duplicate Release.
