@@ -77,8 +77,9 @@ def main():
         raise RuntimeError('GitHub credential has no write permission')
     # The tag endpoint does not consistently return drafts; find drafts in the
     # authenticated list so resumptions never create a duplicate Release.
-    release = next((r for r in api(token, f'/repos/{REPOSITORY}/releases?per_page=100')
-                    if r['tag_name'] == args.tag), None)
+    matches = [r for r in api(token, f'/repos/{REPOSITORY}/releases?per_page=100')
+               if r['tag_name'] == args.tag]
+    release = max(matches, key=lambda r: r['id']) if matches else None
     if release is None:
         release = api(token, f'/repos/{REPOSITORY}/releases', 'POST', {
             'tag_name': args.tag, 'target_commitish': args.target,
