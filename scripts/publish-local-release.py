@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import subprocess
 import time
 import urllib.error
@@ -19,6 +20,8 @@ REPOSITORY = 'williamtomallory-lgtm/lumaflow-sales-hub'
 
 
 def credential():
+    if os.environ.get('GH_TOKEN'):
+        return os.environ['GH_TOKEN']
     result = subprocess.run(['git', 'credential', 'fill'], input='protocol=https\nhost=github.com\n\n',
                             capture_output=True, text=True, check=True)
     values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
@@ -70,6 +73,9 @@ def main():
     p.add_argument('--tag', default='local-bundle-20260929')
     p.add_argument('--target', default='main')
     p.add_argument('--publish', action='store_true')
+    p.add_argument('--bundles', nargs='+', default=['all'])
+    p.add_argument('--only-assets', nargs='*')
+    p.add_argument('--skip-metadata', action='store_true')
     args = p.parse_args()
     token = credential()
     permissions = api(token, f'/repos/{REPOSITORY}').get('permissions', {})
@@ -87,12 +93,15 @@ def main():
             'body': (args.directory / 'release-notes.md').read_text(encoding='utf-8')})
     print(f"Release {release['id']} draft={release['draft']}", flush=True)
     manifest = json.loads((args.directory / 'local-model-bundle.json').read_text(encoding='utf-8'))
-    records = [part for bundle in manifest['bundles'] for part in bundle['parts']]
+    records = [part for bundle in manifest['bundles'] for part in bundle['parts']
+               if 'all' in args.bundles or bundle['id'] in args.bundles]
+    if args.only_assets:
+        records = [part for part in records if part['name'] in args.only_assets]
     from importlib.util import spec_from_file_location, module_from_spec
     spec = spec_from_file_location('packager', Path(__file__).with_name('package-local-models.py'))
     packager = module_from_spec(spec)
     spec.loader.exec_module(packager)
-    for name in ['local-model-bundle.json', 'release-notes.md']:
+    for name in ([] if args.skip_metadata else ['local-model-bundle.json', 'release-notes.md']):
         path = args.directory / name
         records.append({'name': name, 'bytes': path.stat().st_size, 'sha256': packager.sha256(path)})
     assets = {x['name']: x for x in api(token, f"/repos/{REPOSITORY}/releases/{release['id']}/assets?per_page=100")}

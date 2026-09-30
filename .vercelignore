@@ -6,3 +6,6 @@ artifacts/
 .local-data/
 .local-runtime/
 public/tianzhao-previews/
+vendor/
+model-licenses/
+config/local-model-bundle.json

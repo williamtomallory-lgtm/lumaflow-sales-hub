@@ -1,0 +1,26 @@
+name: Reproduce public model Release assets
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  public-models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch pinned public model files without inference
+        run: python scripts/fetch-public-bundle-inputs.py
+      - name: Reproduce identical split ZIP assets
+        run: python scripts/package-local-models.py --output /tmp/model-release --bundles bonsai muse bonsai-runtime --verify-manifest
+      - name: Upload remaining public files to the existing draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/publish-local-release.py --directory /tmp/model-release
+          --bundles bonsai muse bonsai-runtime --skip-metadata
+          --only-assets bonsai.zip.part004 bonsai.zip.part005 muse.zip.part001
+          muse.zip.part002 muse.zip.part003 muse.zip.part004 bonsai-runtime.zip.part001

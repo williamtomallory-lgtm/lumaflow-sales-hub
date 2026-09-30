@@ -74,7 +74,9 @@ def package(name, sources, output):
     with zipfile.ZipFile(writer, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
         for path, relative in sources:
             digest = hashlib.sha256()
-            with archive.open(relative, 'w', force_zip64=True) as target, path.open('rb') as source:
+            info = zipfile.ZipInfo(relative)
+            info.create_system = 0  # Match the original Windows archive on Linux runners.
+            with archive.open(info, 'w', force_zip64=True) as target, path.open('rb') as source:
                 for block in iter(lambda: source.read(8 * 1024 * 1024), b''):
                     target.write(block)
                     digest.update(block)
@@ -93,6 +95,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--tag', default='local-bundle-20260929')
+    parser.add_argument('--bundles', nargs='+', default=['all'])
+    parser.add_argument('--verify-manifest', action='store_true')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     models = ROOT / '.local-data/models'
@@ -107,6 +111,8 @@ def main():
     ]
     bundles = []
     for name, sources in plans:
+        if 'all' not in args.bundles and name not in args.bundles:
+            continue
         if not sources:
             raise RuntimeError(f'Missing files for {name}')
         for source, _ in sources:
@@ -120,6 +126,15 @@ def main():
     manifest = {'schemaVersion': 1, 'repository': 'williamtomallory-lgtm/lumaflow-sales-hub',
                 'tag': args.tag, 'partSizeLimit': PART_SIZE, 'bundles': bundles}
     destination = ROOT / 'config/local-model-bundle.json'
+    if args.verify_manifest:
+        expected = json.loads(destination.read_text(encoding='utf-8'))
+        for bundle in bundles:
+            pinned = next(b for b in expected['bundles'] if b['id'] == bundle['id'])
+            if bundle != pinned:
+                raise RuntimeError(f"Reproduced bundle differs from pinned manifest: {bundle['id']}")
+        (args.output / destination.name).write_bytes(destination.read_bytes())
+        print('Reproduced bundles match every pinned hash.', flush=True)
+        return
     destination.parent.mkdir(exist_ok=True)
     destination.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     (args.output / destination.name).write_bytes(destination.read_bytes())
