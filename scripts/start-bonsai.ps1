@@ -1,12 +1,10 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [switch]$NoWait,
     [switch]$Restart,
     [ValidateSet('optimized', 'baseline')]
-    [string]$PerformanceProfile = $(if ($env:LUMAFLOW_BONSAI_PERFORMANCE_PROFILE) { $env:LUMAFLOW_BONSAI_PERFORMANCE_PROFILE } else { 'optimized' }),
-    [ValidateRange(4096, 131072)]
-    [int]$ContextTokens = $(if ($env:LUMAFLOW_BONSAI_CONTEXT_TOKENS) { [int]$env:LUMAFLOW_BONSAI_CONTEXT_TOKENS } else { 32768 })
+    [string]$PerformanceProfile = 'baseline'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +27,7 @@ $arguments = @(
     '--mmproj', ('"' + $mmproj + '"'), '--no-mmproj-offload',
     '--chat-template-file', ('"' + $chatTemplate + '"'),
     '--host', '127.0.0.1', '--port', '8081', '--cors-origins', 'localhost',
-    '-ngl', '99', '-c', "$ContextTokens", '-np', '1', '-b', "$BatchSize", '-ub', "$MicroBatchSize",
+    '-ngl', '99', '-c', '16384', '-np', '1', '-b', "$BatchSize", '-ub', "$MicroBatchSize",
     '--cache-type-k', 'q4_0', '--cache-type-v', 'q4_0',
     '-fa', 'on', '--jinja', '--reasoning', 'off',
     '--temp', '0.7', '--top-p', '0.8', '--top-k', '20'
@@ -109,7 +107,7 @@ if ($listener) {
 if ($NoWait) { return }
 for ($attempt = 0; $attempt -lt 120; $attempt++) {
     if (Test-BonsaiReady) {
-        Write-Host "Bonsai text + vision ready: $url/v1; model=$alias; context=$ContextTokens; KV=Q4; profile=$PerformanceProfile"
+        Write-Host "Bonsai text + vision ready: $url/v1; model=$alias; context=16384; KV=Q4; profile=$PerformanceProfile"
         return
     }
     if ($process -and $process.HasExited) { throw "Bonsai exited. Check logs in $runtime" }

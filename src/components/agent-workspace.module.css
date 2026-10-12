@@ -52,8 +52,8 @@
 .tabs button:focus-visible { outline: 2px solid #256043; outline-offset: 2px; }
 .iconButton { width: 36px; height: 36px; flex-shrink: 0; display: inline-grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #666e68; }
 .iconButton:hover { background: #f0f2ef; }
-.stage { width: min(540px, calc(100% - 48px)); flex: 1; min-height: 0; margin: 0 auto; display: flex; flex-direction: column; justify-content: safe center; overflow-y: auto; padding: 32px 0 24px; }
-.workMode:not(.hasConversation) .stage { justify-content: safe center; overflow-y: auto; padding-top: 32px; padding-bottom: 24px; }
+.stage { width: min(540px, calc(100% - 48px)); flex: 1; min-height: 0; margin: 0 auto; display: flex; flex-direction: column; justify-content: center; padding: 48px 0 28px; }
+.workMode:not(.hasConversation) .stage { justify-content: center; overflow-y: auto; padding-top: 24px; padding-bottom: clamp(24px, 8vh, 90px); }
 .imageMode .stage { width: min(720px, calc(100% - 48px)); justify-content: flex-start; overflow-y: auto; overflow-x: hidden; padding-top: 18px; padding-bottom: 32px; scrollbar-gutter: stable; }
 .welcome { text-align: center; padding: 0 0 30px; }
 .welcomeMark { display: none; place-items: center; width: 42px; height: 42px; border-radius: 14px; color: #28634c; background: #eef3ed; margin-bottom: 14px; }
@@ -366,13 +366,13 @@
 @media (min-width: 701px) and (max-width: 1050px) {
   .header { grid-template-columns: minmax(0, 1fr) 36px; }
   .header h1 { grid-column: 1; grid-row: 2; }
-  .tabs { grid-column: 1; grid-row: 1; width: min(440px, 100%); min-width: 0; justify-self: center; }
-  .tabs button { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 13px; }
+  .tabs { grid-column: 1; grid-row: 1; width: min(474px, 100%); min-width: 0; justify-self: center; }
+  .tabs button { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 16px; }
   .headerActions { grid-column: 2; grid-row: 1; }
   .headerActions > button:first-child span { display: none; }
 }
 @media (max-width: 700px) {
-  .root { height: calc(100dvh - 52px); min-height: 0; }
+  .root { height: calc(100dvh - 74px); min-height: 0; }
   .header { padding: 17px 15px; gap: 8px; }
   .header h1 { font-size: 14px; }
   .headerActions > button:first-child span { display: none; }

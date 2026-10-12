@@ -95,7 +95,7 @@ flowchart LR
 
 下载仓库 ZIP 并解压，先双击 **Setup-LumaFlow.cmd**，再双击 **Start-LumaFlow.cmd**。安装器从本仓库的 [完整本地模型 Release](https://github.com/williamtomallory-lgtm/lumaflow-sales-hub/releases/tag/local-bundle-20260929) 下载 Bonsai 2 27B、Muse Glimmer Q1_0 与 runtime；Qwen Image 2.1 使用独立清单从固定来源下载 GGUF 和 VAE，所有文件均校验 SHA-256。安装器同时准备 Node.js 22、Python 3.11、依赖和随仓库提供的 CowAgent 后端。首次运行默认不加载任何模型。
 
-首次下载需要网络；建议至少 65GB 可用磁盘空间（权重、下载缓存、Python/CUDA 依赖）。面向 Windows 10/11 x64；实际 RAM/显存需求高于模型文件大小。旧的约 3GB 自制图像压缩实验质量测试失败，已从默认安装路径移除；当前图片后端使用独立的 Qwen Image 2.1 GGUF Q4_K 权重，支持生成和编辑，图片分析暂不支持。Muse Q1_0 的推理质量尚未验证。Qwen Image 仅供研究/评估。微信、云日历等需要在安装电脑登录自己的账号。完整参数与验证边界见 [完整本地安装说明](docs/portable-local-bundle.md)。旧 Qwen3/Ollama 启动路径仍保留在 `scripts/bootstrap.ps1`，不再是默认双击入口。
+首次下载需要网络；建议至少 65GB 可用磁盘空间（权重、下载缓存、Python/CUDA 依赖）。面向 Windows 10/11 x64；实际 RAM/显存需求高于模型文件大小。Qwen Image 低位量化的质量测试已失败，Muse Q1_0 尚未验证，不应当作为可用业务模型。Qwen Image 仅供研究/评估。微信、云日历等需要在新电脑登录自己的账号。完整参数与验证边界见 [完整本地安装说明](docs/portable-local-bundle.md)。旧 Qwen3/Ollama 启动路径仍保留在 `scripts/bootstrap.ps1`，不再是默认双击入口。
 
 ### 开发模式（不自动启动模型）
 

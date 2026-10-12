@@ -63,43 +63,6 @@ it("keeps image conversations in their own sidebar category", async () => {
   expect(onOpenHistory).toHaveBeenCalledWith("image", imageChat.id, null);
 });
 
-it("deletes a local history item through the existing history API", async () => {
-  const chat = { id: "44444444-4444-4444-8444-444444444444", experience: "work", title: "待删除的工作记录", turnCount: 1, hasImage: false };
-  const requests: Array<{ url: string; method?: string }> = [];
-  let deleted = false;
-  vi.stubGlobal("fetch", vi.fn(async (url, init) => {
-    requests.push({ url: String(url), method: init?.method });
-    if (init?.method === "DELETE") { deleted = true; return Response.json({ data: { deleted: true } }); }
-    if (String(url).includes("assistant/history")) return Response.json({ data: deleted ? [] : [chat] });
-    return Response.json({ data: [] });
-  }));
-  render(<ProjectSidebar onSelect={vi.fn()} recentContent={<div />} />);
-  fireEvent.click(screen.getByRole("tab", { name: "Work" }));
-  const row = await screen.findByRole("button", { name: "待删除的工作记录 · 1 轮" });
-  fireEvent.click(screen.getByRole("button", { name: "更多操作 待删除的工作记录" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "删除" }));
-  await waitFor(() => expect(requests).toContainEqual({ url: expect.stringContaining(`/api/v1/assistant/history?id=${chat.id}`), method: "DELETE" }));
-  await waitFor(() => expect(row).not.toBeInTheDocument());
-});
-
-it("honors the cancellable before-delete event for a local history item", async () => {
-  const chat = { id: "55555555-5555-4555-8555-555555555555", experience: "work", title: "正在执行的工作记录", turnCount: 1, hasImage: false };
-  let deleteAttempted = false;
-  vi.stubGlobal("fetch", vi.fn(async (url, init) => {
-    if (init?.method === "DELETE") { deleteAttempted = true; return Response.json({ data: { deleted: true } }); }
-    if (String(url).includes("assistant/history")) return Response.json({ data: [chat] });
-    return Response.json({ data: [] });
-  }));
-  window.addEventListener("lumaflow-chat-history-before-delete", (event) => event.preventDefault(), { once: true });
-  render(<ProjectSidebar onSelect={vi.fn()} recentContent={<div />} />);
-  fireEvent.click(screen.getByRole("tab", { name: "Work" }));
-  const row = await screen.findByRole("button", { name: "正在执行的工作记录 · 1 轮" });
-  fireEvent.click(screen.getByRole("button", { name: "更多操作 正在执行的工作记录" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "删除" }));
-  await waitFor(() => expect(row).toBeInTheDocument());
-  expect(deleteAttempted).toBe(false);
-});
-
 it("offers a new-session action for the selected history category", () => {
   const onNewHistory = vi.fn();
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [] })));

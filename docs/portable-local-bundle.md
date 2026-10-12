@@ -5,7 +5,7 @@
 1. 从本仓库下载 ZIP 并解压，或克隆 `main`。
 2. 双击 `Setup-LumaFlow.cmd`。自动准备可携带 Node/Python、下载本仓库 Release 的权重分片、逐文件校验、安装依赖。首次需联网，建议预留至少 65GB 磁盘空间。
 3. 双击 `Start-LumaFlow.cmd`。启动网站与随仓库提供的 CowAgent 后端；默认关闭模型推理。所有文件位于工程内部，不依赖本机的 `E:` 路径。
-4. 确定显存/内存足够时，双击 `Start-LumaFlow-AI.cmd`，或在 PowerShell 中运行 `scripts/start-portable.ps1 -StartBonsai`。它显式加载 Bonsai 并为新启动的网站开启单模型切换。若网站已在运行，必须先停止属于这个工程的网站进程，再用该选项重启，使设置生效；不要只刷新网页。
+4. 确定显存/内存足够时，在 PowerShell 中运行 `scripts/start-portable.ps1 -StartBonsai`。它显式加载 Bonsai 并为新启动的网站开启单模型切换。若网站已在运行，必须先停止属于这个工程的网站进程，再用该选项重启，使设置生效；不要只刷新网页。
 
 安装配置保留已有 `.env/.env.local` 与 `.local-data/cowagent/config.json`，不会覆盖个人配置。新电脑创建的是无个人密钥的本机默认配置，微信二维码登录、云账号、PostgreSQL 与商业服务密钥需重新配置。个人聊天、微信登录状态、原件和客户资料不在公开安装包内。
 
@@ -33,16 +33,11 @@
 # 校验已安装的所有模型，不进行推理
 .\Setup-LumaFlow.cmd -VerifyOnly
 # 只启动网站和 Agent 后端，无模型加载
-# 已有生产构建时使用生产模式；没有构建时使用开发模式
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-portable.ps1
-# 开启按需切换模型，不在启动时立即加载权重
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-portable.ps1 -EnableLocalModels
 # 独立校验或从离线下载目录恢复模型
 python scripts/install-local-models.py --verify-only
 python scripts/install-local-models.py --offline --cache D:\LumaFlow-downloads
 ```
-
-`-Development` 强制使用开发模式。每台电脑可在 `.env.local` 中设置 `LUMAFLOW_BONSAI_PERFORMANCE_PROFILE`（`optimized` / `baseline`）和 `LUMAFLOW_BONSAI_CONTEXT_TOKENS`；默认保持本机已测试的 optimized / 32768，远程部署可独立使用 baseline / 16384。
 
 Muse 作为独立 GGUF 检查点发布；本次没有把未经验证的 Q1_0 接入自动启动或设为默认 Agent。若要使用，需要支持 Muse 架构的 llama.cpp 运行时，单独进行工具调用和任务质量验证；通过后才配置 Work 使用其本机端点。
 

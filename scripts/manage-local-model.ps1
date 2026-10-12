@@ -83,7 +83,17 @@ try {
         if ($Profile -eq 'configured') {
             & (Join-Path $PSScriptRoot 'start-bonsai.ps1') -NoWait
         } else {
-            & (Join-Path $PSScriptRoot 'start-qwen-image.ps1') -NoWait -Port $specs[$Profile].Port
+            $envFolder = 'qwen-image'
+            $scriptName = 'serve-qwen-image.py'
+            $python = Join-Path $projectRoot ".local-data\venvs\$envFolder\Scripts\python.exe"
+            $script = Join-Path $PSScriptRoot $scriptName
+            if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $script)) { throw 'The requested local runtime is not installed.' }
+            $logDir = Join-Path $projectRoot ".local-runtime\$envFolder"
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+            $arguments = @(('"' + $script + '"'), '--host', '127.0.0.1', '--port', "$($specs[$Profile].Port)")
+            $env:CUDA_MODULE_LOADING = 'LAZY'
+            Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "server-$stamp.out.log") -RedirectStandardError (Join-Path $logDir "server-$stamp.err.log") | Out-Null
         }
         $launched = $true
     }

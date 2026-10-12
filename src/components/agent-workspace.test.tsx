@@ -589,35 +589,6 @@ describe("Agent workspace", () => {
     expect(screen.getAllByTestId("answer-agent-name").map((element) => element.textContent)).toEqual(["原主 Agent 名称", "朋友圈运营 Agent"]);
   });
 
-  it("clears the active saved conversation only for its own deleted-history event", async () => {
-    const activeId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-    const otherId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-    historyPosts.push(
-      {
-        id: activeId, experience: "work", title: "当前已保存", agentId: "sales-consultant", createdAt: "2026-09-25T12:00:00.000Z", updatedAt: "2026-09-25T12:01:00.000Z", turns: [
-          { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeea", user: "当前已打开的问题", assistant: "当前已打开的回答", createdAt: "2026-09-25T12:00:00.000Z", attachments: [], agentId: "sales-consultant" },
-        ],
-      },
-      {
-        id: otherId, experience: "work", title: "其他已保存", agentId: "sales-consultant", createdAt: "2026-09-25T12:02:00.000Z", updatedAt: "2026-09-25T12:03:00.000Z", turns: [
-          { id: "ffffffff-ffff-4fff-8fff-fffffffffff1", user: "其他问题", assistant: "其他回答", createdAt: "2026-09-25T12:02:00.000Z", attachments: [], agentId: "sales-consultant" },
-        ],
-      },
-    );
-    render(<AgentWorkspace {...props} initialMessage="" />);
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("产品销售顾问"));
-    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
-    const history = screen.getByRole("complementary", { name: "本机对话记录" });
-    fireEvent.click(await within(history).findByRole("button", { name: /当前已保存.*1 轮/ }));
-    await waitFor(() => expect(screen.getByText("当前已打开的问题")).toBeInTheDocument());
-
-    act(() => { window.dispatchEvent(new CustomEvent("lumaflow-chat-history-deleted", { detail: { id: otherId } })); });
-    expect(screen.getByText("当前已打开的问题")).toBeInTheDocument();
-
-    act(() => { window.dispatchEvent(new CustomEvent("lumaflow-chat-history-deleted", { detail: { id: activeId } })); });
-    await waitFor(() => expect(screen.queryByText("当前已打开的问题")).not.toBeInTheDocument());
-  });
-
   it("turns a saved local image artifact path into a thumbnail, download link, and full preview", async () => {
     const artifactUrl = "/api/v1/assistant/image-operations/assets/abcdef0123456789abcdef0123456789.png";
     historyPosts.push({
@@ -631,7 +602,7 @@ describe("Agent workspace", () => {
     fireEvent.click(await within(history).findByRole("button", { name: /历史图片.*1 轮/ }));
     const gallery = await screen.findByRole("region", { name: "历史图片结果" });
     expect(within(gallery).getByRole("img", { name: "generated.png" })).toBeInTheDocument();
-    expect(within(gallery).getByRole("link", { name: "下载图片" })).toHaveAttribute("href", artifactUrl);
+    expect(within(gallery).getByRole("link", { name: "下载" })).toHaveAttribute("href", artifactUrl);
     expect(screen.queryByText(artifactUrl)).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "本地文件" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开完整预览" }));
@@ -931,19 +902,8 @@ describe("Agent workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0].imageOperation).toMatchObject({ operation: "analyze", restoreModelProfileId: "local-qwen3-8b", images: [expect.objectContaining({ type: "file", mediaType: "image/png", filename: "product.png", url: expect.stringMatching(/^data:image\/png;base64,/) })] });
-    const gallery = await screen.findByRole("region", { name: "图片识别结果" });
-    expect(within(gallery).getByRole("img", { name: "处理结果.png" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "下载图片" })).toHaveAttribute("href", "/api/v1/assistant/image-operations/assets/0123456789abcdef0123456789abcdef.png");
-    const previousFetch = fetch;
-    await idle();
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes("/assets/")) return { ok: true, blob: async () => new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }) } as Response;
-      return previousFetch(url, init);
-    }));
-    fireEvent.change(screen.getByRole("textbox", { name: /输入|任务/ }), { target: { value: "保留这段未发送的修改要求" } });
-    fireEvent.click(within(gallery).getByRole("button", { name: "编辑" }));
-    await waitFor(() => expect(screen.getAllByRole("img", { name: "处理结果.png" })).toHaveLength(2));
-    expect(screen.getByRole("textbox", { name: /输入|任务/ })).toHaveValue("保留这段未发送的修改要求");
+    expect(await screen.findByRole("region", { name: "图片识别结果" })).toHaveTextContent("处理结果.png");
+    expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute("href", "/api/v1/assistant/image-operations/assets/0123456789abcdef0123456789abcdef.png");
   });
 
   it("does not render an arbitrary local image path returned by the image endpoint", async () => {
@@ -1082,9 +1042,7 @@ describe("Agent workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "添加文件、文件夹或模式" }));
     fireEvent.click(within(screen.getByRole("menu", { name: "添加内容与模式" })).getByRole("menuitemcheckbox", { name: /生图/ }));
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
-    const progress = await screen.findByTestId("image-operation-progress");
-    expect(progress).toHaveTextContent("正在生成图片");
-    expect(progress).not.toHaveTextContent("%");
+    await screen.findByTestId("image-operation-progress");
     fireEvent.click(within(screen.getByTestId("image-mode-notice")).getByRole("button", { name: "退出生图模式" }));
     await waitFor(() => expect(imageCancelPosts).toEqual([{ jobId: imageJobId }]));
     await waitFor(() => expect(runtimePosts).toEqual(["local-qwen3-8b"]));

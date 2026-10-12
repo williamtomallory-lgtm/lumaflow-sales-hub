@@ -17,7 +17,7 @@ type StylePreset = {
   id: string;
   label: string;
   prompt: string;
-  /** Crop coordinates relative to a 230 × 289 card in the supplied sprites. */
+  /** Source crop coordinates in the supplied 1073 × 1029 sprite. */
   x: string;
   y: string;
   sprite?: string;
@@ -132,7 +132,7 @@ export function ImageStyleGallery({ onUpload, onSelect, disabled = false, catego
         <ImagePlus className={styles.uploadMark} size={15} aria-hidden="true" />
       </button>
       {visiblePresets.map((preset) => <button key={preset.id} type="button" className={styles.card} onClick={() => onSelect(preset.prompt)} disabled={disabled} aria-label={`使用${preset.label}风格`}>
-        <span className={styles.visual} style={{ "--sprite-x": preset.x, "--sprite-y": preset.y, "--sprite-url": `url(${preset.sprite || spriteUrl})`, "--sprite-width": preset.sprite ? "515.65%" : "466.52%", "--sprite-height": preset.sprite ? "426.30%" : "345.33%" } as React.CSSProperties} aria-hidden="true" />
+        <span className={styles.visual} style={{ "--sprite-x": preset.x, "--sprite-y": preset.y, "--sprite-url": `url(${preset.sprite || spriteUrl})`, "--sprite-width": preset.sprite ? "515.65%" : "466.52%", "--sprite-height": preset.sprite ? "426.30%" : "355.71%" } as React.CSSProperties} aria-hidden="true" />
         <span className={styles.cardLabel}>{preset.label}</span>
       </button>)}
     </div>
