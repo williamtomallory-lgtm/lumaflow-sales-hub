@@ -44,6 +44,8 @@ import type { Product } from "@/lib/catalog";
 import type { CrmAsset, Customer } from "@/lib/crm";
 import { projectAgentSearch } from "@/lib/client/agent-search-result";
 import { readAgentProgress, inferCollaborationMode, interruptedTeamAnswer, type AgentProgress, type CollaborationMode } from "@/lib/contracts/agent-progress";
+import { readWorkRun } from "@/lib/contracts/work-run";
+import { WorkRunProgress } from "./work-run-progress";
 import { AgentTeamActivity } from "./agent-team-activity";
 import styles from "./agent-workspace.module.css";
 import { ModelRuntimeControls } from "./model-runtime-controls";
@@ -261,7 +263,7 @@ function workTeamReferences(team: WorkTeam, roster: CowAgentProfile[], activity:
 }
 
 function turnBranches(turn: LocalChatTurn): LocalChatTurnVersion[] {
-  return turn.versions?.length ? turn.versions : [{ id: turn.id, user: turn.user, assistant: turn.assistant, createdAt: turn.createdAt, attachments: turn.attachments, parentVersionId: turn.parentVersionId, agentId: turn.agentId, collaboratorAgentIds: turn.collaboratorAgentIds, collaborationMode: turn.collaborationMode, agentActivity: turn.agentActivity }];
+  return turn.versions?.length ? turn.versions : [{ id: turn.id, user: turn.user, assistant: turn.assistant, createdAt: turn.createdAt, attachments: turn.attachments, parentVersionId: turn.parentVersionId, agentId: turn.agentId, collaboratorAgentIds: turn.collaboratorAgentIds, collaborationMode: turn.collaborationMode, agentActivity: turn.agentActivity, workRun: turn.workRun }];
 }
 
 function savedVersionAnswer(version: LocalChatTurnVersion): string {
@@ -387,6 +389,13 @@ function toolNameFromPart(part: unknown): string {
 function toolDisplayName(name: string): string {
   const labels: Record<string, string> = {
     localComputer: "本机电脑",
+    updateWorkPlan: "更新任务计划",
+    readLocalFiles: "读取本机文件",
+    createOfficeFile: "制作文档",
+    runPythonAnalysis: "运行数据分析",
+    analyzeTable: "分析表格",
+    recallMemory: "读取工作记忆",
+    saveMemory: "保存工作记忆",
     localBrowser: "网页读取",
     searchProducts: "产品搜索",
     searchKnowledge: "资料检索",
@@ -853,9 +862,9 @@ export function AgentWorkspace({
       imageModeRestoreModelRef.current = catalog.modelProfileId;
     }
   }, [catalog.loading, catalog.modelProfileId, imageOperationMode]);
-  const enabledAgents = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled && agent.type === "local" && agent.id !== "default"), [agentRoster.agents]);
+  const enabledAgents = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled && agent.type === "local"), [agentRoster.agents]);
   const availableCollaborators = useMemo(() => agentRoster.agents.filter((agent) => agent.enabled && agent.id !== "default"), [agentRoster.agents]);
-  const selectedWorkAgent = enabledAgents.find((agent) => agent.id === workAgentId);
+  const selectedWorkAgent = enabledAgents.find((agent) => agent.id === (workAgentId || agentRoster.defaultAgentId));
   const assignedKnowledgeIds = new Set(selectedWorkAgent?.knowledgeBaseIds ?? []);
   const availableKnowledgeDocuments = experience === "work" && selectedWorkAgent ? knowledgeDocuments.filter((document) => assignedKnowledgeIds.has(document.id)) : knowledgeDocuments;
   const effectiveSelectedDocumentIds = experience === "work" && selectedWorkAgent ? selectedDocumentIds.filter((id) => assignedKnowledgeIds.has(id)) : selectedDocumentIds;
@@ -912,6 +921,8 @@ export function AgentWorkspace({
     pendingTurnRef.current = null;
     const outputText = projectAgentSearch([message]).text;
     const interrupted = isAbort || isError || !outputText.trim();
+    const receivedRun = readWorkRun(message.parts);
+    const workRun = receivedRun && interrupted && receivedRun.state === "running" ? { ...receivedRun, state: "interrupted" as const } : receivedRun;
     const agentActivity = readAgentProgress(message.parts).map((record) => interrupted && record.state === "running" ? { ...record, state: "cancelled" as const } : record);
     const answer = outputText.trim() || !agentActivity.length ? outputText : interruptedTeamAnswer(agentActivity);
     const existingIndex = session.turns.findIndex((turn) => turn.id === pending.id);
@@ -919,8 +930,8 @@ export function AgentWorkspace({
     if (pending.regenerate && existingIndex >= 0) {
       const existing = nextTurns[existingIndex];
       const versions = turnBranches(existing);
-      const nextVersion: LocalChatTurnVersion = { id: crypto.randomUUID(), user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity };
-      nextTurns[existingIndex] = { ...existing, user: pending.user, assistant: answer, attachments: pending.attachments, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, versions: [...versions, nextVersion] };
+      const nextVersion: LocalChatTurnVersion = { id: crypto.randomUUID(), user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, workRun };
+      nextTurns[existingIndex] = { ...existing, user: pending.user, assistant: answer, attachments: pending.attachments, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, workRun, versions: [...versions, nextVersion] };
       setBranchSelections((current) => ({ ...current, [pending.id]: nextVersion.id }));
       // A regenerated old turn is now a saved row again. Keeping it as the
       // live row hid the branch navigator and left the old prompt on screen.
@@ -928,7 +939,7 @@ export function AgentWorkspace({
       setQuestion("");
       setQuestionImages([]);
     } else {
-      nextTurns.push({ id: pending.id, user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity });
+      nextTurns.push({ id: pending.id, user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, workRun });
     }
     const next: LocalChatSession = { ...session, updatedAt: new Date().toISOString(), turns: nextTurns };
     activeSessionRef.current = next;
@@ -1927,7 +1938,8 @@ export function AgentWorkspace({
       await sendMessage({ text: prompt, files: sendFiles }, {
         body: {
           experience,
-          ...(session.projectId ? { projectId: session.projectId, currentChatId: session.id } : {}),
+          currentChatId: session.id,
+          ...(session.projectId ? { projectId: session.projectId } : {}),
           workflowMode: requestWorkflowMode,
           ...(requestTeam ? requestTeam : { agentRoleId: DEFAULT_AGENT_ROLE_ID }),
           knowledgeDocumentIds: experience === "work" ? requestKnowledgeDocumentIds.filter((id) => requestAgent?.knowledgeBaseIds?.includes(id)) : effectiveSelectedDocumentIds,
@@ -2301,7 +2313,7 @@ export function AgentWorkspace({
         {!showLiveTurn && !pastTurns.length && !imageOperationMode && <div className={styles.welcome}>
           <span className={styles.welcomeMark}><Sparkles size={23} /></span>
           <h2>{workComposerActive ? (selectedWorkAgent ? "选一位 Agent，一起把工作做好。" : "直接开始工作，或选择 Agent。") : "随时可以开始。"}</h2>
-          <p>{workComposerActive ? "可以不选择 Agent，也可以选择一个或多个 Agent 协同完成任务。" : "选择 Chat 提问、写作和制作文件；切换 Work 可让本机 Agent 处理电脑任务。"}</p>
+          <p>{workComposerActive ? "默认使用本地 Agent 执行任务，也可选择其他 Agent 协作。" : "选择 Chat 提问、写作和制作文件；切换 Work 可让本机 Agent 处理电脑任务。"}</p>
         </div>}
 
         {(showLiveTurn || pastTurns.length > 0) && <section ref={conversationRef} className={styles.conversation} aria-label="本轮问答" data-testid="agent-output" onScroll={(event) => { const pane = event.currentTarget; followOutputRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 90; }}>
@@ -2315,6 +2327,7 @@ export function AgentWorkspace({
               <article className={styles.response}>
                 <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{answerAgentName}</strong></div>
                 <AgentTeamActivity records={version.agentActivity || []} busy={false} mode={versionWorkTeam(version).collaborationMode} />
+                <WorkRunProgress run={version.workRun} busy={false} />
                 <div className={styles.answer}><CodeAnswer text={imageOperationAnswerForDisplay(answerText)} /></div>
                 {imageArtifacts.length > 0 && <ImageArtifactGallery images={imageArtifacts} title="历史图片结果" onEdit={editGeneratedImage} />}
                 {branchControls(turn)}
@@ -2327,6 +2340,7 @@ export function AgentWorkspace({
           <article className={styles.response}>
             <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{liveAgentName}</strong><span className={styles.outputStatus}>{busy ? imageOperationBusy ? <><Clock3 size={12} /> 正在处理图片</> : <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "模型达到单次输出上限 · 内容可能不完整" : ""}</span></div>
             <AgentTeamActivity records={agentActivity.length ? agentActivity : liveSavedTurn?.agentActivity || []} busy={busy} mode={liveCollaborationMode} />
+            <WorkRunProgress run={readWorkRun(messages.filter((message) => message.role === "assistant").flatMap((message) => message.parts)) ?? liveSavedTurn?.workRun} busy={busy} />
             {imageOperationBusy && <div className={styles.imageGeneration} data-testid="image-operation-progress">
               <p role="status">正在生成图片</p>
               <div className={styles.imageGenerationCanvas}><div className={styles.imageGenerationDots} aria-hidden="true" /><span>已用 {elapsed} 秒</span></div>
@@ -2402,9 +2416,9 @@ export function AgentWorkspace({
               <div ref={agentPickerRef} className={styles.agentPicker}>
                 <button type="button" className={styles.agentPickerButton} role="combobox" aria-label="选择本地 Agent" aria-controls="work-agent-options" aria-expanded={agentPickerOpen} aria-haspopup="listbox" disabled={busy || agentLoading} onClick={() => { setMentionQuery(null); setAgentPickerOpen((open) => !open); }}>
                   {selectedWorkAgent ? <AgentAvatar agent={selectedWorkAgent} /> : <span className={styles.agentAvatar}><Sparkles size={17} /></span>}
-                  <span className={styles.agentIdentity}><strong>{selectedWorkAgent?.name || (agentLoading ? "正在读取本地 Agent…" : workAgentId ? "已保存的 Agent 不可用" : "不选择 Agent")}</strong><small>本地 Agent · 主要任务</small></span><ChevronDown size={15} />
+                  <span className={styles.agentIdentity}><strong>{selectedWorkAgent?.name || (agentLoading ? "正在读取本地 Agent…" : workAgentId ? "已保存的 Agent 不可用" : "默认本地 Agent")}</strong><small>本地 Agent · 主要任务</small></span><ChevronDown size={15} />
                 </button>
-                {agentPickerOpen && <div id="work-agent-options" className={styles.agentPickerMenu} role="listbox" aria-label="选择本地 Agent"><button type="button" role="option" aria-selected={!selectedWorkAgent} onClick={() => changeAgent("")}><span className={styles.agentAvatar}><Sparkles size={17} /></span><span className={styles.agentIdentity}><strong>不选择 Agent</strong><small>只使用对话、资料和已启用的应用</small></span></button>{enabledAgents.map((agent) => <button type="button" role="option" aria-selected={agent.id === selectedWorkAgent?.id} key={agent.id} onClick={() => changeAgent(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.description || "本地 Agent"}</small></span></button>)}</div>}
+                {agentPickerOpen && <div id="work-agent-options" className={styles.agentPickerMenu} role="listbox" aria-label="选择本地 Agent"><button type="button" role="option" aria-selected={!selectedWorkAgent} onClick={() => changeAgent("")}><span className={styles.agentAvatar}><Sparkles size={17} /></span><span className={styles.agentIdentity}><strong>默认本地 Agent</strong><small>使用已配置的本地工作区和权限</small></span></button>{enabledAgents.map((agent) => <button type="button" role="option" aria-selected={agent.id === selectedWorkAgent?.id} key={agent.id} onClick={() => changeAgent(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.description || "本地 Agent"}</small></span></button>)}</div>}
               </div>
               <label className={styles.collaborationMode}><span>协作方式</span><select aria-label="协作方式" value={displayedCollaborationMode} disabled={busy} onChange={(event) => { setCollaborationMode(event.target.value as CollaborationMode); setCollaborationModeExplicit(true); }}><option value="parallel">同时工作</option><option value="sequential">分步工作</option><option value="debate">讨论辩论</option></select></label>
               <button ref={mentionButtonRef} type="button" disabled={busy || collaboratorAgentIds.length >= 3} aria-expanded={mentionQuery !== null} aria-controls="collaborator-options" onClick={() => { setAgentPickerOpen(false); setMentionQuery((current) => current === null ? "" : null); setMentionRange(null); }}>@ 添加协作 Agent</button>

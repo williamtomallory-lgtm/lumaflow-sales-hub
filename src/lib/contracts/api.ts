@@ -258,9 +258,12 @@ export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum([
 // These are application policies, not unverified native Bonsai reasoning levels.
 export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantInferenceProfileSchema = z.enum(["light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
-export const assistantModelProfileIdSchema = z.enum([
+export const builtinModelProfileIdSchema = z.enum([
   "local-qwen3-8b", "local-qwen3-14b", "configured",
 ]);
+// A local ID is resolved through the server-owned registry, never a client URL.
+export const registeredLocalModelIdSchema = z.string().regex(/^local:[a-z0-9][a-z0-9-]{0,63}$/);
+export const assistantModelProfileIdSchema = z.union([builtinModelProfileIdSchema, registeredLocalModelIdSchema]);
 
 const assistantUiMessageSchema = z.object({
   id: idSchema,

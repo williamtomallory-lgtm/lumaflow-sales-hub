@@ -1,0 +1,11 @@
+.root { margin:10px 0; border:1px solid #dce8df; border-radius:12px; padding:12px; background:#f8fbf8; color:#355340; font-size:12px; }
+.heading { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
+.heading span,.steps small { color:#718579; font-size:11px; }
+.steps { margin:10px 0 0; padding-left:20px; }
+.steps li { padding:5px 0; }
+.steps small { margin-left:12px; }
+.steps li[data-state="completed"] { color:#367653; }
+.details { margin-top:8px; }
+.details summary { cursor:pointer; }
+.details ul { padding-left:16px; }
+.details pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; font-size:11px; }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { KnowledgeCategory } from "../business";
+import { assistantModelProfileIdSchema } from "../contracts/api";
 
 /**
  * Limits for the local knowledge archive.  These are deliberately independent
@@ -148,7 +149,7 @@ export const knowledgeListQuerySchema = z.object({
 export type KnowledgeListQuery = z.infer<typeof knowledgeListQuerySchema>;
 
 export const knowledgeClassificationRequestSchema = z.object({
-  modelProfileId: z.enum(["local-qwen3-8b", "local-qwen3-14b", "configured"]).optional(),
+  modelProfileId: assistantModelProfileIdSchema.optional(),
 }).strict();
 
 export const knowledgePatchSchema = z.object({

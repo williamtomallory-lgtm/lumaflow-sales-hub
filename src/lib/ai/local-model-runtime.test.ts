@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 
 vi.mock("server-only", () => ({}));
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
-vi.mock("./model-config", () => ({ isManagedLocalModel: (profile: string) => profile === "configured" }));
+vi.mock("./model-config", () => ({ isManagedLocalModel: (profile: string) => ["configured", "local:strata-coder"].includes(profile) }));
 
 let running = "";
 beforeEach(() => {
@@ -21,14 +21,27 @@ beforeEach(() => {
     return child as unknown as ReturnType<typeof spawn>;
   });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    const port = running === "image" ? "8084" : "8081";
+    const port = running === "image" ? "8084" : running === "strata" ? "8080" : "8081";
     if (!url.includes(`:${port}/`)) throw new Error("Connection refused");
     return Response.json(url.endsWith("/health")
-      ? { status: "ok", ...(running === "image" ? { quantization: "gguf-q4_k" } : {}) }
-      : { data: [{ id: running === "image" ? "Qwen/Qwen-Image-2.1" : "ternary-bonsai-2-27b" }] });
+      ? { status: "ok", ...(running === "image" ? { quantization: "gguf-q4_k" } : running === "strata" ? { service: "strata", loaded: true } : {}) }
+      : { data: [{ id: running === "image" ? "Qwen/Qwen-Image-2.1" : running === "strata" ? "qwen3.8-flash-next-coder-iq1_m" : "ternary-bonsai-2-27b" }] });
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it("maps a registered Strata selection and protects it until its request finishes", async () => {
+  const runtime = await import("./local-model-runtime");
+  const release = await runtime.leaseLocalModel("local:strata-coder");
+  expect(running).toBe("strata");
+  await expect(runtime.leaseLocalModel("configured")).rejects.toMatchObject({ status: 409 });
+  await runtime.ensureLocalModel("local:strata-coder");
+  release();
+  await runtime.ensureLocalModel("local:strata-coder");
+  expect(spawn).toHaveBeenCalledTimes(1);
+  await runtime.ensureLocalModel("configured");
+  expect(running).toBe("configured");
+});
 
 it("reuses the healthy selected worker and reloads it after a real disconnect", async () => {
   const runtime = await import("./local-model-runtime");

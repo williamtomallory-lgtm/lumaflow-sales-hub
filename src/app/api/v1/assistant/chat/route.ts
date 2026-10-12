@@ -16,6 +16,9 @@ import { getModelGenerationOptions } from "@/lib/ai/model-options";
 import { runLocalAgentTeam } from "@/lib/ai/agent-team";
 import { inferCollaborationMode } from "@/lib/contracts/agent-progress";
 import { requestsCodeArtifact } from "@/lib/ai/code-artifact";
+import { previousWorkRun, workRunContext } from "@/lib/ai/work-run";
+import type { WorkRun } from "@/lib/contracts/work-run";
+import { chooseWorkDomain } from "@/lib/ai/work-routing";
 import { isCurrentWeatherLookup, isSimpleBrowserLookup } from "@/lib/ai/browser-intent";
 import { InferencePolicyError, inputBudgetDetailsHeader, inputBudgetHeader, resolveInferencePolicy, withModelOutputBudget } from "@/lib/ai/inference-policy";
 
@@ -90,12 +93,15 @@ export async function POST(request: Request) {
     const basePolicy = withModelOutputBudget(policy, modelConfig.maxOutputTokens);
     const resolvedPolicy = {
       ...basePolicy,
+      // A local Work task includes several model/tool rounds. Light controls
+      // reasoning effort, but must still allow time for execution and readback.
+      timeoutMs: body.experience === "work" && body.workflowMode !== "plan" ? Math.max(basePolicy.timeoutMs, 300_000) : basePolicy.timeoutMs,
       maxOutputTokens: generationOptions.maxOutputTokens,
     };
     // The generic OpenAI-compatible backend does not advertise thinking. The
     // old Ollama path intentionally kept thinking off; current Ollama Qwen3
     // profiles use reasoning_effort to enable it without vLLM-only options.
-    const thinkingEnabled: boolean | "unknown" = modelConfig.backend === "vllm"
+    const thinkingEnabled: boolean | "unknown" = modelConfig.backend === "vllm" || modelConfig.backend === "strata"
       ? policy.thinkingEnabled
       : modelConfig.backend === "ollama" && policy.requestedProfile !== null
         ? policy.thinkingEnabled
@@ -114,7 +120,9 @@ export async function POST(request: Request) {
       }
     }
     const baseProfile = await loadSalesProfile();
-    const backendAgent = body.agentId ? await getCowAgentProfile(body.agentId) : undefined;
+    const effectiveAgentId = body.agentId || (body.experience === "work" ? (await getCowAgentRoster()).defaultAgentId : undefined);
+    const backendAgent = effectiveAgentId ? await getCowAgentProfile(effectiveAgentId) : undefined;
+    if (body.experience === "work" && !backendAgent) throw new ApiHttpError(503, "LOCAL_AGENT_REQUIRED", "请先在智能体页面配置一个已启用的本地 Agent。");
     if (body.experience === "work" && backendAgent && backendAgent.type !== "local") throw new ApiHttpError(403, "LOCAL_AGENT_REQUIRED", "微信 Agent 不支持本机文件操作，请选择本地 Agent。");
     const roster = body.collaboratorAgentIds.length ? await getCowAgentRoster() : null;
     const collaborators = body.collaboratorAgentIds.map((agentId) => {
@@ -144,6 +152,11 @@ export async function POST(request: Request) {
     const knowledgeIds = assignedKnowledgeIds && !body.knowledgeDocumentIds.length ? assignedKnowledgeIds : body.knowledgeDocumentIds;
     const projectContext = body.projectId ? await buildProjectContext(body.projectId, body.currentChatId, Math.max(0, resolvedPolicy.inputBudget.maxContextCharacters - userText.length)) : null;
     if (projectContext) profile.instructions += projectContext.instructions;
+    let priorWorkRun: WorkRun | undefined;
+    if (body.experience === "work" && backendAgent && body.currentChatId && body.workflowMode !== "plan") {
+      priorWorkRun = await previousWorkRun(body.currentChatId, backendAgent.id, body.projectId ?? null);
+      profile.instructions += workRunContext(priorWorkRun);
+    }
     const knowledge = projectContext ? { text: projectContext.text, coverage: projectContext.coverage } : await buildKnowledgeContext(knowledgeIds, Math.max(0, resolvedPolicy.inputBudget.maxContextCharacters - userText.length));
     const uiMessages = knowledge.text ? body.messages.map((message) => {
       let contextAdded = false;
@@ -168,10 +181,13 @@ export async function POST(request: Request) {
     } : undefined;
     const response = await completeAnswerResponse({
       uiMessages,
+      ...(body.experience === "work" && backendAgent && body.workflowMode !== "plan" ? { workRun: {
+        chatId: body.currentChatId ?? crypto.randomUUID(), agentId: backendAgent.id, projectId: body.projectId ?? null, model: modelConfig.model, goal: /^(?:请)?(?:继续(?:工作|任务|完成|处理)?|接着(?:做|处理)?|完成剩余(?:任务|工作))[。！!\s]*$/.test(userText.trim()) && priorWorkRun?.goal ? priorWorkRun.goal : userText, workspace: backendAgent.workspace,
+      } } : {}),
       ...(body.experience === "work" && backendAgent ? { leadProgress: { agentId: backendAgent.id, name: backendAgent.name, ...(backendAgent.avatar === "image" ? { avatarUrl: `/api/v1/cowagent/agents/${encodeURIComponent(backendAgent.id)}/avatar?v=${encodeURIComponent(backendAgent.avatarRev || "0")}` } : {}) } } : {}),
       ...(collaborators.length ? { prepare: (onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators, lead: backendAgent, model: modelConfig, userText, ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), signal, collaborationMode: body.collaborationMode ?? inferCollaborationMode(userText), planOnly: body.workflowMode === "plan", onProgress }) } : {}),
       options: { mode: policy.resolvedMode, customer, profile, modelProfileId: modelConfig.profileId, projectOnly: projectContext?.project.memoryMode === "project-only",
-        codeArtifact, browserLookup, weatherLookup, continuation: false, ...(body.workflowMode !== "plan" && body.experience === "work" && backendAgent ? { workAgentId: backendAgent.id, workAgentPermissions: backendAgent.permissions ?? { read: true, create: false, modify: false, delete: false, tools: false } } : {}) },
+        codeArtifact, browserLookup, weatherLookup, workDomain: body.experience === "work" ? await chooseWorkDomain({ text: userText, agent: backendAgent ? { id: backendAgent.id, type: backendAgent.type, agentType: backendAgent.agentType, roleIds: backendAgent.roleIds } : undefined }) : "sales", continuation: false, ...(body.workflowMode !== "plan" && body.experience === "work" && backendAgent ? { workAgentId: backendAgent.id, workAgentPermissions: backendAgent.permissions ?? { read: true, create: false, modify: false, delete: false, tools: false } } : {}) },
       abortSignal: request.signal,
       timeoutMs: Math.max(30_000, resolvedPolicy.timeoutMs - (Date.now() - startedAt)),
       transform: codeArtifact ? undefined : attachmentTextTransform(),

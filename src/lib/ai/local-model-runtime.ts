@@ -10,6 +10,7 @@ const state = runtimeGlobal.lumaflowModelRuntime ??= { queue: Promise.resolve(),
 const services: Record<string, { port: number; model: string }> = {
   configured: { port: 8081, model: "ternary-bonsai-2-27b" },
   image: { port: 8084, model: "Qwen/Qwen-Image-2.1" },
+  "local:strata-coder": { port: 8080, model: "qwen3.8-flash-next-coder-iq1_m" },
 };
 
 async function canReuseActive(profile: string) {
@@ -24,7 +25,8 @@ async function canReuseActive(profile: string) {
         catch { return false; }
       })),
     ]);
-    const settingsMatch = profile === "image" ? health?.quantization === "gguf-q4_k" : true;
+    const settingsMatch = profile === "image" ? health?.quantization === "gguf-q4_k"
+      : profile === "local:strata-coder" ? health?.service === "strata" && health?.loaded === true : true;
     return settingsMatch && health?.status === "ok" && Array.isArray(models?.data) && models.data.some((model: { id?: string }) => model.id === target.model) && !otherServices.some(Boolean);
   } catch { return false; }
 }
@@ -37,7 +39,8 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
 
 function runManager(profile: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(process.cwd(), "scripts", "manage-local-model.ps1"), "-Profile", profile], {
+    const managerProfile = profile === "local:strata-coder" ? "strata" : profile;
+    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(process.cwd(), "scripts", "manage-local-model.ps1"), "-Profile", managerProfile], {
       cwd: process.cwd(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";

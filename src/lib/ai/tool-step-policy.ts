@@ -7,11 +7,21 @@ export function prepareToolStep(input: {
   maxSteps: number;
   instructions: string;
   weatherLookup: boolean;
+  workTask?: boolean;
 }) {
   if (input.weatherLookup) {
     return {
       messages: input.messages,
       toolChoice: input.stepNumber === 0 ? { type: "tool" as const, toolName: "currentWeather" as const } : "none" as const,
+    };
+  }
+  if (input.workTask) {
+    const calls = input.messages.flatMap((message) => message.role === "assistant" && Array.isArray(message.content)
+      ? message.content.filter((part) => part.type === "tool-call").map((part) => JSON.stringify([part.toolName, part.input])) : []);
+    const recent = calls.slice(-3);
+    if (recent.length === 3 && recent.every((call) => call === recent[0])) return {
+      messages: input.messages, toolChoice: "none" as const,
+      instructions: `${input.instructions}\n同一工具参数已连续执行三次，本轮停止重复操作。依据已有回执说明已完成部分和具体阻碍；不要声称未执行的部分已经成功。`,
     };
   }
   if (input.stepNumber >= input.maxSteps - 1) {

@@ -84,11 +84,17 @@ export function listAgentRoles(): AgentRole[] {
 export function loadCowAgentRole(profile: CowAgentProfile): AgentRole {
   if (profile.type === "local") {
     const mainTask = profile.description?.trim() || "按用户说明处理当前电脑上的任务。";
+    const configuredRoleIds = (profile.roleIds ?? []).filter(
+      (roleId): roleId is AgentRoleId => agentRoleIdSchema.safeParse(roleId).success,
+    );
+    const toolNames: SalesToolName[] = configuredRoleIds.length
+      ? [...new Set(configuredRoleIds.flatMap((roleId) => loadAgentRole(roleId).toolNames))]
+      : ["searchKnowledge"];
     return {
       id: profile.id,
       name: profile.name,
       instructions: `你是本地 Agent“${profile.name}”（ID: ${profile.id}）。\n主要任务：${mainTask}\n补充设定：${profile.systemPrompt || "无"}\n本地边界：只在已授权的工作间与工具范围内工作，不声称已经绑定或操作微信。\n${commonBoundaries}`,
-      toolNames: ["searchProducts", "getProductDetails", "checkInventory", "searchKnowledge", "getProductAssets"],
+      toolNames,
     };
   }
   const configuredRoleIds = (profile.roleIds ?? []).filter((roleId) => agentRoleIdSchema.safeParse(roleId).success);

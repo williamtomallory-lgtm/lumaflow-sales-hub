@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,17 +35,17 @@ def validate_operation_permission(profile, args):
         raise ValueError("电脑操作参数无效。")
     grants = profile.permissions or {key: True for key in ("read", "create", "modify", "delete", "tools")}
     action = args.get("action")
+    workspace = Path(profile.workspace).resolve()
+    cwd = Path(args.get("cwd") or workspace).expanduser().resolve()
+    roots = (workspace, *(Path(root).resolve() for root in (profile.allowed_paths or ())))
+    if not any(cwd.is_relative_to(root) for root in roots):
+        raise ValueError("工作目录超出 Agent Workspace。")
     if action == "command":
         if not grants.get("tools"):
             raise ValueError("此本地 Agent 未获得本机工具权限。")
         return
     if action not in ("read_file", "list_files", "write_file", "edit_file", "delete_file", "create_document", "python"):
         raise ValueError("未知电脑操作。")
-    workspace = Path(profile.workspace).resolve()
-    cwd = Path(args.get("cwd") or workspace).expanduser().resolve()
-    roots = (workspace, *(Path(root).resolve() for root in (profile.allowed_paths or ())))
-    if not any(cwd.is_relative_to(root) for root in roots):
-        raise ValueError("工作目录超出 Agent Workspace。")
     if action == "python":
         if not grants.get("tools"):
             raise ValueError("此本地 Agent 未获得本机工具权限。")
@@ -161,6 +162,14 @@ def execute_local(args, workspace):
             receipt.update(path=str(file_path), deleted=True)
         else:
             raise ValueError("未知电脑操作。")
+    if operation in {"write_file", "edit_file", "create_document", "read_file"}:
+        actual = Path(receipt.get("path") or file_path).resolve()
+        if actual.is_file():
+            digest = hashlib.sha256()
+            with actual.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(block)
+            receipt["fileSha256"] = digest.hexdigest()
     receipt["durationMs"] = round((time.monotonic() - started) * 1000)
     # History stores metadata only; stdout and file content may contain private data.
     from config import get_data_root

@@ -2,6 +2,9 @@ import "server-only";
 import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, toUIMessageStream, type StreamTextTransform } from "ai";
 import { salesAgent, type SalesAgentUIMessage } from "./sales-agent";
 import { interruptedTeamAnswer, type AgentProgress } from "../contracts/agent-progress";
+import { withWorkRun } from "./work-run";
+import type { WorkRun } from "../contracts/work-run";
+import { assessWorkOutcome } from "./work-outcome";
 
 type CallOptions = NonNullable<Parameters<typeof salesAgent.stream>[0]["options"]>;
 
@@ -23,6 +26,7 @@ export async function completeAnswerResponse(input: {
   transform?: StreamTextTransform<typeof salesAgent.tools>;
   prepare?: (onProgress: (progress: AgentProgress) => void, signal: AbortSignal) => Promise<string>;
   leadProgress?: Pick<AgentProgress, "agentId" | "name" | "avatarUrl">;
+  workRun?: Pick<WorkRun, "chatId" | "agentId" | "projectId" | "model"> & { goal?: string; workspace?: string };
 }) {
   const originalPrompt = await convertToModelMessages(input.uiMessages);
   const stream = createUIMessageStream<SalesAgentUIMessage>({
@@ -40,6 +44,7 @@ export async function completeAnswerResponse(input: {
       let finishReason: "stop" | "length" | "tool-calls" | "other" | "error" | "content-filter" = "stop";
       writer.write({ type: "start", messageId: crypto.randomUUID() });
       try {
+      const execute = async () => {
       // Leave a portion of the deadline for the lead's final answer.
       const preparationSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.floor(input.timeoutMs * 0.65)))]);
       const teamNotes = input.prepare ? await input.prepare(emit, preparationSignal) : "";
@@ -84,6 +89,17 @@ export async function completeAnswerResponse(input: {
       if (finishReason === "tool-calls") throw new Error("Tool queries ended without a final answer");
       if (!fullText.trim()) throw new Error("Model returned an empty final answer");
       if (input.leadProgress) emit({ ...input.leadProgress, round: 3, state: finishReason !== "stop" ? "failed" : "completed", text: fullText.slice(0, 1600), recipientNames: ["全体成员"] });
+      };
+      if (input.workRun) await withWorkRun(input.workRun, (run) => writer.write({ type: "data-work-run", id: run.id, data: run }), execute, signal,
+        async (run) => {
+          const outcome = await assessWorkOutcome(run, fullText, input.options.modelProfileId ?? "configured", signal);
+          if (outcome.verdict !== "checked") {
+            const note = `\n\n任务验收${outcome.verdict === "partial" ? "尚未通过" : "待确认"}：${outcome.missing.join("；") || "请核对要求与实际结果"}。`;
+            fullText += note; writer.write({ type: "text-delta", id: "answer", delta: note });
+          }
+          return outcome;
+        });
+      else await execute();
       } catch (error) {
         for (const progress of activity.values()) if (progress.state === "running") emit({ ...progress, state: signal.aborted ? "cancelled" : "failed", text: publicExecutionError(signal.aborted ? signal.reason : error) });
         const fallback = fullText.trim() ? `\n\n本轮未完成：${publicExecutionError(signal.aborted ? signal.reason : error)}`

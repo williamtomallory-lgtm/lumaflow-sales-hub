@@ -43,6 +43,16 @@ describe("Agent role policies", () => {
     expect(local.instructions).not.toContain("产品销售顾问");
     expect(local.instructions).not.toContain("已启用角色");
     expect(local.instructions).toContain("已授权的工作间");
-    expect(local.toolNames).not.toContain("createQuoteDraft");
+    expect(local.toolNames).toEqual(loadAgentRole("sales-consultant").toolNames);
+  });
+
+  it("keeps an unscoped local Agent on knowledge search only", () => {
+    const local = loadCowAgentRole({ id: "file-helper", name: "文件助手", description: "整理工作间中的合同文件", enabled: true, type: "local", workspace: "agents/file-helper", knowledgeMode: "shared" });
+    expect(local.toolNames).toEqual(["searchKnowledge"]);
+  });
+
+  it("ignores invalid local role IDs instead of granting sales tools", () => {
+    const local = loadCowAgentRole({ id: "file-helper", name: "文件助手", description: "整理工作间中的合同文件", enabled: true, type: "local", workspace: "agents/file-helper", knowledgeMode: "shared", roleIds: ["unknown-role"] as never[] });
+    expect(local.toolNames).toEqual(["searchKnowledge"]);
   });
 });

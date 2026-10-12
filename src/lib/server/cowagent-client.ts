@@ -213,7 +213,7 @@ export async function getCowAgentRoster(): Promise<CowAgentRoster> {
       const parsed = parseAgent(item);
       return parsed ? [parsed] : [];
     }),
-    defaultAgentId: asString(payload.default_agent_id),
+    defaultAgentId: process.env.LUMAFLOW_WORK_AGENT_ID?.trim() || asString(payload.default_agent_id),
     revision: asString(payload.revision),
   };
 }

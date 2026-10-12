@@ -1,7 +1,8 @@
 import "server-only";
 
-import { assistantInferenceProfileSchema, assistantModelProfileIdSchema, type AssistantModelProfileId } from "../contracts/api";
+import { assistantInferenceProfileSchema, assistantModelProfileIdSchema, builtinModelProfileIdSchema, type AssistantModelProfileId } from "../contracts/api";
 import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS, type ModelBackend } from "./model-options";
+import { getLocalModelProfile, getLocalModelProfiles } from "./local-model-registry";
 
 export const QWEN_PROVIDER_NAME = "vllm";
 export const DEFAULT_MODEL_PROFILE_ID: AssistantModelProfileId = "local-qwen3-8b";
@@ -15,6 +16,8 @@ export const LOCAL_MODEL_ID = LOCAL_QWEN3_8B_MODEL_ID;
 
 export function isManagedLocalModel(profileId: string) {
   if (process.env.LOCAL_MODEL_SWITCHING !== "true" || process.platform !== "win32" || process.env.VERCEL === "1") return false;
+  const local = getLocalModelProfile(profileId);
+  if (local) return local.runtime === "strata" && local.installationStatus === "ready";
   return profileId === "configured" && process.env.LLM_MODEL?.trim() === "ternary-bonsai-2-27b"
     && process.env.LLM_BASE_URL?.trim().replace(/\/$/, "") === "http://127.0.0.1:8081/v1";
 }
@@ -22,9 +25,10 @@ export function isManagedLocalModel(profileId: string) {
 export function getDefaultModelProfileId(): AssistantModelProfileId {
   const configured = assistantModelProfileIdSchema.safeParse(process.env.LLM_DEFAULT_PROFILE?.trim());
   const visible = process.env.LLM_VISIBLE_PROFILES?.split(",").map((id) => id.trim());
-  if (configured.success && (!visible || visible.includes(configured.data))) return configured.data;
+  const known = (id: string) => builtinModelProfileIdSchema.safeParse(id).success || Boolean(getLocalModelProfile(id));
+  if (configured.success && known(configured.data) && (!visible || visible.includes(configured.data))) return configured.data;
   if (visible && !visible.includes(DEFAULT_MODEL_PROFILE_ID)) {
-    const firstReady = visible.map((id) => assistantModelProfileIdSchema.safeParse(id)).find((item) => item.success);
+    const firstReady = visible.map((id) => assistantModelProfileIdSchema.safeParse(id)).find((item) => item.success && known(item.data));
     if (firstReady?.success) return firstReady.data;
   }
   return DEFAULT_MODEL_PROFILE_ID;
@@ -95,6 +99,17 @@ function configurationError(message: string) {
 
 export function getModelConfig(profileId: AssistantModelProfileId = "configured") {
   assistantModelProfileIdSchema.parse(profileId);
+  if (profileId.startsWith("local:")) {
+    const local = getLocalModelProfile(profileId);
+    if (!local) throw configurationError("The requested local model is not registered on this computer.");
+    return {
+      profileId, label: local.label, description: local.description,
+      baseURL: local.baseURL.replace(/\/$/, ""), backend: local.backend as ModelBackend,
+      maxOutputTokens: local.maxOutputTokens,
+      apiKey: local.apiKeyEnv ? process.env[local.apiKeyEnv]?.trim() || "" : "local",
+      model: local.model, connectionKind: "live" as const, contextTokens: local.contextTokens,
+    };
+  }
   if (profileId === "local-qwen3-8b" || profileId === "local-qwen3-14b") {
     const is14b = profileId === "local-qwen3-14b";
     return {
@@ -151,7 +166,7 @@ export function assertModelConfigured(profileId?: AssistantModelProfileId) {
   if (!config.baseURL) {
     throw configurationError("The local model is not configured. Set LLM_BACKEND, LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL on the server.");
   }
-  if (remoteOpenAIKeyRequired(config.baseURL, config.backend) && !config.apiKey) {
+  if ((remoteOpenAIKeyRequired(config.baseURL, config.backend) || getLocalModelProfile(config.profileId)?.apiKeyEnv) && !config.apiKey) {
     throw configurationError("A remote OpenAI-compatible model requires LLM_API_KEY on the server.");
   }
   return { ...config, baseURL: config.baseURL };
@@ -170,7 +185,7 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
   if (!config.baseURL) {
     return { ...publicConfig, configured: false, reachable: false, latencyMs: null };
   }
-  if (remoteOpenAIKeyRequired(config.baseURL, config.backend) && !config.apiKey) {
+  if ((remoteOpenAIKeyRequired(config.baseURL, config.backend) || getLocalModelProfile(config.profileId)?.apiKeyEnv) && !config.apiKey) {
     return { ...publicConfig, configured: false, reachable: false, latencyMs: null };
   }
   const startedAt = performance.now();
@@ -185,7 +200,14 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
     const advertisedModels = payload && typeof payload === "object" && "data" in payload && Array.isArray(payload.data)
       ? payload.data.flatMap((item: unknown) => item && typeof item === "object" && "id" in item && typeof item.id === "string" ? [item.id] : [])
       : [];
-    const reachable = advertisedModels.includes(config.model);
+    let reachable = advertisedModels.includes(config.model);
+    if (reachable && config.backend === "strata") {
+      const health = await fetch(`${config.baseURL.replace(/\/v1$/, "")}/health`, {
+        cache: "no-store", signal: AbortSignal.timeout(3_000),
+      });
+      const state = health.ok ? await health.json() : null;
+      reachable = state?.service === "strata" && state?.loaded === true && state?.model === config.model;
+    }
     return { ...publicConfig, configured: true, reachable, latencyMs: Math.round(performance.now() - startedAt) };
   } catch {
     return { ...publicConfig, configured: true, reachable: false, latencyMs: null };
@@ -195,12 +217,15 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
 export async function getModelOptions() {
   const visibleSetting = process.env.LLM_VISIBLE_PROFILES?.trim();
   const requestedIds = visibleSetting ? visibleSetting.split(",").map((id) => id.trim()) : undefined;
-  const visibleIds = assistantModelProfileIdSchema.options.filter((id) => !requestedIds || requestedIds.includes(id));
+  const registered = getLocalModelProfiles();
+  const visibleIds = [...builtinModelProfileIdSchema.options, ...registered.map((entry) => entry.id)].filter((id) => !requestedIds || requestedIds.includes(id));
   if (visibleIds.length === 0) throw configurationError("LLM_VISIBLE_PROFILES must include a known model profile.");
   return Promise.all(visibleIds.map(async (id) => {
     try {
       const config = getModelConfig(id);
       const health = await getModelHealth(id);
+      const local = registered.find((entry) => entry.id === id);
+      const metadata = id === "configured" ? configuredModelMetadata() : local ?? MODEL_PROFILES[id as "local-qwen3-8b" | "local-qwen3-14b"];
       return {
         id,
         label: config.label,
@@ -210,10 +235,10 @@ export async function getModelOptions() {
         reachable: health.reachable,
         connectionKind: config.connectionKind,
         contextTokens: config.contextTokens,
-        family: id === "configured" ? configuredModelMetadata().family : MODEL_PROFILES[id].family,
-        parameterSizeB: id === "configured" ? configuredModelMetadata().parameterSizeB : MODEL_PROFILES[id].parameterSizeB,
-        supportedModes: id === "configured" ? configuredSupportedModes() : [...MODEL_PROFILES[id].supportedModes],
-        installationStatus: "ready" as const,
+        family: metadata.family,
+        parameterSizeB: metadata.parameterSizeB,
+        supportedModes: id === "configured" ? configuredSupportedModes() : local ? ["light", "medium", "ultra"] as const : [...MODEL_PROFILES[id as "local-qwen3-8b" | "local-qwen3-14b"].supportedModes],
+        installationStatus: health.reachable ? "ready" as const : local?.installationStatus ?? "ready" as const,
         runtimeManaged: isManagedLocalModel(id),
       };
     } catch (error) {

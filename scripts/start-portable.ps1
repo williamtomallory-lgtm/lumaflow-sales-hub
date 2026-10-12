@@ -14,7 +14,7 @@ $bridge = Get-Content -LiteralPath $bridgePath -Raw | ConvertFrom-Json
 if (-not $bridge.knowledgeToken -or $bridge.knowledgeToken.Length -lt 32) { throw 'Private knowledge bridge configuration is invalid.' }
 $env:LUMAFLOW_KNOWLEDGE_TOKEN = $bridge.knowledgeToken
 $env:LUMAFLOW_KNOWLEDGE_URL = "http://127.0.0.1:$Port/api/v1/knowledge/agent-library"
-if ($StartBonsai) { & (Join-Path $PSScriptRoot 'manage-local-model.ps1') -Profile configured }
+if ($StartBonsai) { & (Join-Path $PSScriptRoot 'manage-local-model.ps1') -Profile configured -Startup }
 $logDirectory = Join-Path $projectRoot '.local-data\logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'

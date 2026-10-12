@@ -1,7 +1,7 @@
 import type { AssistantReasoningMode } from "../contracts/api";
 import { INFERENCE_PROFILE_SETTINGS, isCurrentInferenceProfile, profileBudgetsForContext } from "./inference-policy";
 
-export type ModelBackend = "vllm" | "openai-compatible" | "ollama" | "vercel-ai-gateway";
+export type ModelBackend = "vllm" | "openai-compatible" | "ollama" | "vercel-ai-gateway" | "strata";
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 export const MIN_MAX_OUTPUT_TOKENS = 256;
@@ -17,6 +17,15 @@ export function getModelGenerationOptions(
 ) {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < MIN_MAX_OUTPUT_TOKENS || maxOutputTokens > MAX_MAX_OUTPUT_TOKENS) {
     throw new RangeError(`maxOutputTokens must be an integer from ${MIN_MAX_OUTPUT_TOKENS} to ${MAX_MAX_OUTPUT_TOKENS}.`);
+  }
+
+  if (backend === "strata") {
+    const effort = mode === "light" || mode === "instant" || mode === "fast" ? "none"
+      : mode === "medium" || mode === "normal" ? "medium" : "high";
+    const budget = isCurrentInferenceProfile(mode) && !codeArtifact
+      ? Math.min(profileBudgetsForContext(mode, contextTokens).maxOutputTokens, maxOutputTokens) : maxOutputTokens;
+    return { temperature: 0.7, topP: 0.95, maxOutputTokens: budget,
+      providerOptions: { vllm: { reasoningEffort: effort } } };
   }
 
   // Current named profiles are provider-aware, while the legacy branches

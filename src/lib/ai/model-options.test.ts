@@ -35,6 +35,12 @@ async function serializedRequest(backend: ModelBackend, mode: "fast" | "normal" 
 }
 
 describe("local model backend options", () => {
+  it("uses Strata's supported reasoning values without vLLM template options", async () => {
+    expect(await serializedRequest("strata", "deep")).toMatchObject({ reasoning_effort: "high" });
+    const light = await serializedRequest("strata", "fast");
+    expect(light.reasoning_effort).toBe("none");
+    expect(light).not.toHaveProperty("chat_template_kwargs");
+  });
   it("sends distinct real output limits for Bonsai Light, Medium, and Ultra", () => {
     expect(["light", "medium", "ultra"].map((mode) => getModelGenerationOptions(mode as "light" | "medium" | "ultra", "openai-compatible", 4_096).maxOutputTokens))
       .toEqual([1_024, 2_048, 3_072]);

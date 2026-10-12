@@ -86,3 +86,20 @@ def test_ambiguous_edit_does_not_change_file(tmp_path):
     with pytest.raises(ValueError, match="不唯一"):
         execute_local({"action": "edit_file", "path": "example.txt", "oldText": "same", "newText": "new"}, tmp_path)
     assert path.read_text(encoding="utf-8") == "same same"
+
+
+def test_command_cwd_cannot_escape_profile_workspace(tmp_path):
+    import pytest
+    from agent.registry import AgentProfile
+    profile = AgentProfile("commands", "Commands", str(tmp_path), permissions={key: True for key in ("read", "create", "modify", "delete", "tools")})
+    with pytest.raises(ValueError, match="Workspace"):
+        validate_operation_permission(profile, {"action": "command", "command": "echo no", "cwd": str(tmp_path.parent)})
+
+
+def test_write_and_read_receipts_prove_same_file_bytes(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setattr("config.get_data_root", lambda: str(tmp_path))
+    written = execute_local({"action": "write_file", "path": "evidence.txt", "content": "中文\nresult"}, tmp_path)
+    read = execute_local({"action": "read_file", "path": "evidence.txt"}, tmp_path)
+    actual = hashlib.sha256((tmp_path / "evidence.txt").read_bytes()).hexdigest()
+    assert written["fileSha256"] == read["fileSha256"] == actual

@@ -390,14 +390,14 @@ describe("Agent workspace", () => {
     const saved = chatSessionSchema.parse(historyPosts.at(-1));
     expect(saved.turns[0].agentActivity).toEqual(replyActivity);
   });
-  it("hides the internal default Agent from Work choices", async () => {
+  it("allows the configured default local Agent in Work choices", async () => {
     includeInternalAgent = true;
     render(<AgentWorkspace {...props} initialExperience="work" />);
     await ready();
     const selector = screen.getByRole("combobox", { name: "选择本地 Agent" });
     expect(selector).toHaveTextContent("产品销售顾问");
     fireEvent.click(selector);
-    expect(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).queryByRole("option", { name: /CowAgent/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /CowAgent/ })).toBeInTheDocument();
     expect(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /产品销售顾问/ })).toBeInTheDocument();
     fireEvent.pointerDown(screen.getByRole("heading", { name: "Chat-AI" }));
     expect(screen.queryByRole("listbox", { name: "选择本地 Agent" })).not.toBeInTheDocument();
@@ -602,7 +602,7 @@ describe("Agent workspace", () => {
     fireEvent.click(await within(history).findByRole("button", { name: /历史图片.*1 轮/ }));
     const gallery = await screen.findByRole("region", { name: "历史图片结果" });
     expect(within(gallery).getByRole("img", { name: "generated.png" })).toBeInTheDocument();
-    expect(within(gallery).getByRole("link", { name: "下载" })).toHaveAttribute("href", artifactUrl);
+    expect(within(gallery).getByRole("link", { name: "下载图片" })).toHaveAttribute("href", artifactUrl);
     expect(screen.queryByText(artifactUrl)).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "本地文件" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开完整预览" }));
@@ -746,8 +746,8 @@ describe("Agent workspace", () => {
     expect(role).toHaveTextContent("产品销售顾问");
     fireEvent.click(role);
     expect(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getAllByRole("option")).toHaveLength(4);
-    fireEvent.click(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /^不选择 Agent/ }));
-    expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("不选择 Agent");
+    fireEvent.click(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /^默认本地 Agent/ }));
+    expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("产品销售顾问");
     fireEvent.click(role);
     fireEvent.click(within(screen.getByRole("listbox", { name: "选择本地 Agent" })).getByRole("option", { name: /销售复盘 Agent/ }));
     expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("销售复盘 Agent");
@@ -902,8 +902,8 @@ describe("Agent workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0].imageOperation).toMatchObject({ operation: "analyze", restoreModelProfileId: "local-qwen3-8b", images: [expect.objectContaining({ type: "file", mediaType: "image/png", filename: "product.png", url: expect.stringMatching(/^data:image\/png;base64,/) })] });
-    expect(await screen.findByRole("region", { name: "图片识别结果" })).toHaveTextContent("处理结果.png");
-    expect(screen.getByRole("link", { name: "下载" })).toHaveAttribute("href", "/api/v1/assistant/image-operations/assets/0123456789abcdef0123456789abcdef.png");
+    expect(within(await screen.findByRole("region", { name: "图片识别结果" })).getByRole("img", { name: "处理结果.png" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "下载图片" })).toHaveAttribute("href", "/api/v1/assistant/image-operations/assets/0123456789abcdef0123456789abcdef.png");
   });
 
   it("does not render an arbitrary local image path returned by the image endpoint", async () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { agentProgressSchema, collaborationModeSchema } from "./agent-progress";
+import { workRunSchema } from "./work-run";
 
 const turnVersionSchema = z.object({
   id: z.string().uuid(),
@@ -12,6 +13,7 @@ const turnVersionSchema = z.object({
   collaboratorAgentIds: z.array(z.string().min(1).max(100)).max(3).optional(),
   collaborationMode: collaborationModeSchema.optional(),
   agentActivity: z.array(agentProgressSchema).max(16).optional(),
+  workRun: workRunSchema.optional(),
 }).strict();
 
 const turnSchema = z.object({
@@ -25,6 +27,7 @@ const turnSchema = z.object({
   collaboratorAgentIds: z.array(z.string().min(1).max(100)).max(3).optional(),
   collaborationMode: collaborationModeSchema.optional(),
   agentActivity: z.array(agentProgressSchema).max(16).optional(),
+  workRun: workRunSchema.optional(),
   // Older sessions omit this field. New generations append a paired prompt
   // and answer here so browsing a branch never needs another model request.
   versions: z.array(turnVersionSchema).max(20).optional(),
