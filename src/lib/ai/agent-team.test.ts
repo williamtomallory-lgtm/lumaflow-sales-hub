@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 
 vi.mock("ai", () => {
   const generateText = vi.fn(async ({ system }: { system: string }) => ({ text: system.includes("Reviewer") ? "检查文件内容" : "建议页面结构" }));
@@ -14,6 +15,7 @@ vi.mock("./basic-tools", () => ({ cowAgentBasicTools: (id: string) => ({ webSear
 vi.mock("./knowledge-context", () => ({ buildKnowledgeContext: vi.fn(async () => ({ text: "", coverage: [] })) }));
 vi.mock("./agent-roles", () => ({ loadCowAgentRole: (agent: { name: string }) => ({ instructions: agent.name }) }));
 vi.mock("./model-config", () => ({ QWEN_PROVIDER_NAME: "local-test" }));
+vi.mock("./work-run", () => ({ trackWorkTools: (tools: unknown) => tools }));
 
 import { generateText, streamText } from "ai";
 import { runLocalAgentTeam } from "./agent-team";

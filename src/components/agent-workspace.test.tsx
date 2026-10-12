@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentWorkspace } from "./agent-workspace";
+import { AgentWorkspace, clientTimeoutForRequest } from "./agent-workspace";
 import { chatSessionSchema } from "@/lib/contracts/chat-history";
 import type { AgentProgress } from "@/lib/contracts/agent-progress";
 import { composerDraftKey } from "@/lib/client/composer-draft";
@@ -153,6 +153,37 @@ async function idle() {
 }
 
 describe("Agent workspace", () => {
+  it("extends only non-plan Work team requests beyond the normal client deadline", () => {
+    const request = (overrides: Record<string, unknown> = {}) => JSON.stringify({ experience: "work", workflowMode: "normal", teamMode: "auto", ...overrides });
+    expect(clientTimeoutForRequest(request())).toBe(910_000);
+    expect(clientTimeoutForRequest(request({ teamMode: "manual" }))).toBe(910_000);
+    expect(clientTimeoutForRequest(request({ teamMode: "single" }))).toBe(310_000);
+    expect(clientTimeoutForRequest(request({ workflowMode: "plan" }))).toBe(310_000);
+    expect(clientTimeoutForRequest(JSON.stringify({ experience: "chat", workflowMode: "normal", teamMode: "auto" }))).toBe(310_000);
+    expect(clientTimeoutForRequest("not-json")).toBe(310_000);
+  });
+
+  it("keeps the user abort signal when using the extended Work team deadline", async () => {
+    render(<AgentWorkspace {...props} />);
+    await ready();
+    let requestSignal: AbortSignal | null | undefined;
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (!url.endsWith("/chat")) return originalFetch(url, init);
+      posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      requestSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Stopped", "AbortError")), { once: true });
+      });
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ experience: "work", workflowMode: "normal", teamMode: "auto" });
+    expect(requestSignal).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await waitFor(() => expect(requestSignal?.aborted).toBe(true));
+  });
+
   it("shows the Work summary only for an active or saved Work conversation", async () => {
     render(<AgentWorkspace {...props} />);
     expect(screen.queryByRole("complementary", { name: "Work 工作概况" })).not.toBeInTheDocument();
@@ -164,6 +195,52 @@ describe("Agent workspace", () => {
     expect(screen.getByRole("complementary", { name: "Work 工作概况" }).closest("header")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "新问题" }));
     expect(screen.queryByRole("complementary", { name: "Work 工作概况" })).not.toBeInTheDocument();
+  });
+
+  it("sends single-agent Work mode without presenting collaboration controls", async () => {
+    render(<AgentWorkspace {...props} />);
+    await ready();
+    const execution = screen.getByRole("combobox", { name: "执行方式" });
+    expect(execution).toHaveValue("auto");
+    expect(screen.queryByRole("combobox", { name: "协作方式" })).not.toBeInTheDocument();
+    fireEvent.change(execution, { target: { value: "single" } });
+    expect(execution).toHaveValue("single");
+    expect(screen.queryByRole("button", { name: "@ 添加协作 Agent" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
+    await waitFor(() => expect(historyPosts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ teamMode: "single", collaboratorAgentIds: [] });
+    expect(posts[0]).not.toHaveProperty("collaborationMode");
+    expect(chatSessionSchema.parse(historyPosts[0]).turns[0].teamMode).toBe("single");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "执行方式" })).toHaveValue("single"));
+    expect(screen.queryByRole("button", { name: "@ 添加协作 Agent" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "本轮 Agent 引用" })).getByLabelText("主 Agent：产品销售顾问")).toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "本轮 Agent 引用" })).queryByLabelText("协作 Agent：销售复盘 Agent")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await waitFor(() => expect(historyPosts).toHaveLength(2));
+    expect(posts[1]).toMatchObject({ teamMode: "single", collaboratorAgentIds: [] });
+    expect(chatSessionSchema.parse(historyPosts[1]).turns[0].versions?.at(-1)?.teamMode).toBe("single");
+
+    // The persisted turn/version must restore this mode even when the old
+    // browser-only compatibility map is unavailable.
+    localStorage.clear();
+    fireEvent.click(screen.getByRole("button", { name: "新问题" }));
+    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
+    const history = screen.getByRole("complementary", { name: "本机对话记录" });
+    fireEvent.click(await within(history).findByRole("button", { name: /客户问轨道灯库存.*1 轮/ }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "执行方式" })).toHaveValue("single"));
+    expect(screen.queryByRole("button", { name: "@ 添加协作 Agent" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an unsent Work execution mode in the composer draft", async () => {
+    render(<AgentWorkspace {...props} />);
+    await ready();
+    fireEvent.change(screen.getByRole("combobox", { name: "执行方式" }), { target: { value: "single" } });
+    await waitFor(() => expect(JSON.parse(sessionStorage.getItem(composerDraftKey("work", null, null)) || "null")).toMatchObject({ teamMode: "single" }));
+    cleanup();
+    render(<AgentWorkspace {...props} />);
+    await ready();
+    expect(screen.getByRole("combobox", { name: "执行方式" })).toHaveValue("single");
+    expect(screen.queryByRole("button", { name: "@ 添加协作 Agent" })).not.toBeInTheDocument();
   });
 
   it("accepts a Work message while busy, queues it, and starts it after the current turn", async () => {
@@ -335,37 +412,111 @@ describe("Agent workspace", () => {
     expect(screen.getByTestId("agent-output")).toHaveTextContent("已经核对了库存差异。");
   });
 
+  it("restores historical Work members and real file outputs in the summary", async () => {
+    const sessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const turnId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const runId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const receiptId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const filePath = "D:\\LumaFlow\\workspaces\\work\\work-team-report-v2-20261012.md";
+    const historicalSession = {
+      id: sessionId,
+      experience: "work",
+      title: "历史文件任务",
+      agentId: "sales-consultant",
+      createdAt: "2026-10-12T17:00:00.000Z",
+      updatedAt: "2026-10-12T17:05:00.000Z",
+      turns: [{
+        id: turnId,
+        user: "请保存并核验报告",
+        assistant: "这是文字草稿，不应作为已保存文件。",
+        createdAt: "2026-10-12T17:00:00.000Z",
+        attachments: [],
+        agentId: "sales-consultant",
+        collaboratorAgentIds: [],
+        teamMode: "auto",
+        agentActivity: [
+          { agentId: "sales-consultant", name: "产品销售顾问", round: 4, state: "completed" },
+          { agentId: "work-researcher", name: "资料研究员", round: 1, state: "completed", text: "已完成研究" },
+          { agentId: "work-verifier", name: "结果核验员", round: 4, state: "completed", text: "已读回核验" },
+        ],
+        workRun: {
+          id: runId,
+          chatId: sessionId,
+          agentId: "sales-consultant",
+          projectId: null,
+          model: "qwen3.8-flash-next-coder-iq1_m",
+          goal: "请保存并核验报告",
+          workspace: "D:\\LumaFlow\\workspaces\\work",
+          state: "answered",
+          steps: [],
+          receipts: [{
+            id: receiptId,
+            tool: "localComputer",
+            action: "write_file",
+            state: "succeeded",
+            summary: "已写入真实文件",
+            facts: [{ kind: "file-write", path: filePath, fileSha256: "a".repeat(64) }],
+          }],
+          updatedAt: "2026-10-12T17:05:00.000Z",
+        },
+      }],
+    };
+    chatSessionSchema.parse(historicalSession);
+    historyPosts.push(historicalSession);
+
+    render(<AgentWorkspace {...props} initialMessage="" />);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "选择本地 Agent" })).toHaveTextContent("产品销售顾问"));
+    fireEvent.click(screen.getByRole("button", { name: "对话记录" }));
+    const history = screen.getByRole("complementary", { name: "本机对话记录" });
+    fireEvent.click(await within(history).findByRole("button", { name: /历史文件任务.*1 轮/ }));
+
+    const summary = await screen.findByRole("complementary", { name: "Work 工作概况" });
+    await waitFor(() => expect(summary).toHaveTextContent("2 完成"));
+    expect(within(summary).getByTitle("资料研究员")).toBeInTheDocument();
+    expect(within(summary).getByTitle("结果核验员")).toBeInTheDocument();
+    expect(summary).toHaveTextContent(filePath);
+    expect(summary).toHaveTextContent("work-team-report-v2-20261012.md");
+    expect(summary).not.toHaveTextContent("暂无已生成文件");
+    expect(summary).not.toHaveTextContent("生成文件 · 预览");
+  });
+
   it("infers collaboration mode until explicitly selected and restores each version mode", async () => {
     render(<AgentWorkspace {...props} initialMessage="请大家讨论并辩论库存方案" />);
     await ready();
-    const mode = screen.getByRole("combobox", { name: "协作方式" });
-    expect(mode).toHaveValue("debate");
+    expect(screen.getByRole("combobox", { name: "执行方式" })).toHaveValue("auto");
+    expect(screen.queryByRole("combobox", { name: "协作方式" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "执行方式" }), { target: { value: "manual" } });
     fireEvent.click(screen.getByRole("button", { name: "@ 添加协作 Agent" }));
     fireEvent.click(within(screen.getByRole("listbox", { name: "选择协作 Agent" })).getByRole("option", { name: /销售复盘 Agent/ }));
+    const mode = screen.getByRole("combobox", { name: "协作方式" });
+    expect(mode).toHaveValue("debate");
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await waitFor(() => expect(historyPosts).toHaveLength(1));
+    expect(posts[0]).toHaveProperty("teamMode", "manual");
     expect(posts[0]).not.toHaveProperty("collaborationMode");
     expect(chatSessionSchema.parse(historyPosts[0]).turns[0].collaborationMode).toBe("debate");
     expect(screen.getByTestId("user-prompt")).toHaveTextContent("讨论辩论");
     expect(screen.queryByLabelText("参与协作的 Agent")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "修改提问" }));
-    expect(mode).toHaveValue("debate");
+    const editMode = screen.getByRole("combobox", { name: "协作方式" });
+    expect(editMode).toHaveValue("debate");
     expect(screen.getByLabelText("参与协作的 Agent")).toHaveTextContent("销售复盘 Agent");
-    fireEvent.change(mode, { target: { value: "sequential" } });
+    fireEvent.change(editMode, { target: { value: "sequential" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并重新生成" }));
     await waitFor(() => expect(historyPosts).toHaveLength(2));
     expect(posts[1]).toHaveProperty("collaborationMode", "sequential");
     expect(chatSessionSchema.parse(historyPosts[1]).turns[0].versions?.map((version) => version.collaborationMode)).toEqual(["debate", "sequential"]);
     expect(screen.getByTestId("user-prompt")).toHaveTextContent("分步工作");
     fireEvent.click(screen.getByRole("button", { name: "上一个分支" }));
-    expect(mode).toHaveValue("debate");
+    const previousMode = screen.getByRole("combobox", { name: "协作方式" });
+    expect(previousMode).toHaveValue("debate");
     expect(screen.queryByLabelText("参与协作的 Agent")).not.toBeInTheDocument();
-    fireEvent.change(mode, { target: { value: "parallel" } });
+    fireEvent.change(previousMode, { target: { value: "parallel" } });
     fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
     await waitFor(() => expect(historyPosts).toHaveLength(3));
     expect(posts[2]).toHaveProperty("collaborationMode", "debate");
     fireEvent.click(screen.getByRole("button", { name: "修改提问" }));
-    fireEvent.change(mode, { target: { value: "parallel" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "协作方式" }), { target: { value: "parallel" } });
     fireEvent.click(screen.getByRole("button", { name: "保存并重新生成" }));
     await waitFor(() => expect(historyPosts).toHaveLength(4));
     expect(posts[3]).toHaveProperty("collaborationMode", "parallel");
@@ -382,6 +533,10 @@ describe("Agent workspace", () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "发送问题" }));
     await idle();
+    const references = within(screen.getByTestId("user-prompt")).getByRole("group", { name: "本轮 Agent 引用" });
+    expect(within(references).getByLabelText("主 Agent：产品销售顾问")).toBeInTheDocument();
+    expect(within(references).getByLabelText("协作 Agent：资料助手")).toBeInTheDocument();
+    expect(within(references).queryByLabelText("协作 Agent：产品销售顾问")).not.toBeInTheDocument();
     const progress = screen.getByRole("region", { name: "协作 Agent 进度" });
     expect(within(progress).getByRole("status")).toHaveTextContent("0 运行中 · 2 完成");
     fireEvent.click(within(progress).getByRole("button", { name: "协作 Agent" }));

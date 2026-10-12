@@ -15,7 +15,7 @@ function displayState(record: AgentProgress, busy: boolean): DisplayState {
 
 function stateLabel(record: AgentProgress, busy: boolean, mode: CollaborationMode) {
   const state = displayState(record, busy);
-  if (state === "running") return record.round === 1 ? mode === "debate" ? "正在分析" : "正在工作" : record.round === 2 ? "正在回应" : "正在汇总与交付";
+  if (state === "running") return record.round === 1 ? mode === "debate" ? "正在分析" : "正在工作" : record.round === 2 ? "正在回应" : record.round === 4 ? "正在独立核验" : "正在汇总与交付";
   return { completed: "已完成", failed: "失败", cancelled: "已取消", stopped: "已停止" }[state];
 }
 
@@ -24,10 +24,12 @@ export function AgentTeamActivity({ records, busy, mode = "debate" }: AgentTeamA
   const panelId = useId();
   const grouped = new Map<string, Map<number, AgentProgress>>();
   for (const record of records) {
-    const rounds = grouped.get(record.agentId) ?? new Map<number, AgentProgress>();
+    const agentId = record.agentId.trim();
+    if (!agentId) continue;
+    const rounds = grouped.get(agentId) ?? new Map<number, AgentProgress>();
     const previous = rounds.get(record.round);
     rounds.set(record.round, { ...record, text: record.text ?? previous?.text, recipientNames: record.recipientNames ?? previous?.recipientNames, actions: record.actions ?? previous?.actions });
-    grouped.set(record.agentId, rounds);
+    grouped.set(agentId, rounds);
   }
   const members = [...grouped.values()].map((rounds) => {
     const history = [...rounds.values()].sort((left, right) => left.round - right.round);
@@ -35,6 +37,26 @@ export function AgentTeamActivity({ records, busy, mode = "debate" }: AgentTeamA
     return { current: { ...latest, avatarUrl: latest.avatarUrl ?? history.find((round) => round.avatarUrl)?.avatarUrl }, history };
   });
   if (!members.length) return null;
+  if (members.length === 1) {
+    const { current } = members[0];
+    const state = displayState(current, busy);
+    const stage = stateLabel(current, busy, mode);
+    return <section className={styles.root} aria-label="执行进度">
+      <header className={styles.header}>
+        <strong className={styles.singleTitle}>执行进度</strong>
+        <span className={styles.counts} role="status" aria-live="polite" aria-atomic="true">{stage}</span>
+      </header>
+      <div className={styles.singleMember}>
+        <div className={styles.memberHeading}>
+          <span className={styles.avatar} aria-hidden="true">{current.avatarUrl ? <Image src={current.avatarUrl} alt="" width={28} height={28} unoptimized /> : current.name.trim().slice(0, 2).toUpperCase()}</span>
+          <strong className={styles.name}>{current.name}</strong>
+          <span className={styles.memberState} data-state={state}>{state === "running" && <i className={styles.runningDot} aria-hidden="true" />}<span className={state === "running" ? styles.runningLabel : undefined}>{stage}</span></span>
+        </div>
+        {current.text ? <p className={styles.text}>{current.text}</p> : <p className={styles.emptyText}>{state === "running" ? "等待进度更新…" : "尚无返回内容"}</p>}
+        {!!current.actions?.length && <div className={styles.actions} aria-label={`${current.name} 实际操作`}><strong>实际操作</strong><ul>{current.actions.map((action, index) => <li key={`${index}-${action}`}>{action}</li>)}</ul></div>}
+      </div>
+    </section>;
+  }
   const counts = { running: 0, completed: 0, failed: 0, cancelled: 0, stopped: 0 };
   for (const member of members) counts[displayState(member.current, busy)] += 1;
 
@@ -58,7 +80,7 @@ export function AgentTeamActivity({ records, busy, mode = "debate" }: AgentTeamA
           <span className={styles.memberState} data-state={state}>{state === "running" && <i className={styles.runningDot} aria-hidden="true" />}<span className={state === "running" ? styles.runningLabel : undefined}>{stateLabel(current, busy, mode)}</span></span>
         </div>
         <div className={styles.rounds}>{history.map((round) => <details className={styles.round} key={round.round} open={displayState(round, busy) === "running" ? true : undefined}>
-          <summary><span>第 {round.round} 轮 · {round.round === 1 ? mode === "debate" ? "分析观点" : "处理任务" : round.round === 2 ? "相互回应" : "汇总与交付"}</span><small>{stateLabel(round, busy, mode)}</small><span className={styles.recipients}>{round.name} → {round.recipientNames?.length ? round.recipientNames.join("、") : "全体"}</span></summary>
+          <summary><span>第 {round.round} 轮 · {round.round === 1 ? mode === "debate" ? "分析观点" : "处理任务" : round.round === 2 ? "相互回应" : round.round === 4 ? "独立核验" : "汇总与交付"}</span><small>{stateLabel(round, busy, mode)}</small><span className={styles.recipients}>{round.name} → {round.recipientNames?.length ? round.recipientNames.join("、") : "全体"}</span></summary>
           {round.text ? <p className={styles.text}>{round.text}</p> : <p className={styles.emptyText}>{displayState(round, busy) === "running" ? "等待公开发言…" : "尚无返回内容"}</p>}
           {!!round.actions?.length && <div className={styles.actions} aria-label={`${round.name} 第 ${round.round} 轮实际操作`}><strong>实际操作</strong><ul>{round.actions.map((action, index) => <li key={`${index}-${action}`}>{action}</li>)}</ul></div>}
         </details>)}</div>

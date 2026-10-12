@@ -16,7 +16,7 @@
 
 ### Work
 
-Agent 选择、协作方式和添加协作 Agent 位于同一行；支持不选择 Agent、单 Agent 和多 Agent。
+Work 默认使用本机执行助手，支持自动分工、单人执行和手动协作。自动分工会调用已配置的资料研究员，并在执行后由结果核验员独立读回成果；只有真实多成员任务显示协作。配置和远程验证见 [Work 部署记录](docs/strata-work-remote-2026-10-12.md)。
 
 ![Work 工作区](docs/images/work-workspace.png)
 

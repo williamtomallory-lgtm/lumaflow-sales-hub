@@ -72,4 +72,19 @@ describe("durable Work execution", () => {
     expect(workRunContext(stored)).toContain("制作两份文件");
     expect(workRunContext(stored)).toContain("第二份文件未完成");
   });
+  it("attributes a specialist's actual file reads and preserves content for local verification", async () => {
+    const input = { chatId: randomUUID(), agentId: "lead", projectId: null, model: "local" };
+    const tools = trackWorkTools({ read: { inputSchema: z.object({}), execute: async () => ({ files: [{ action: "read_file", path: "D:/work/data.csv", content: "A,120\nB,80", fileSha256: "a".repeat(64) }] }) } }, "reviewer");
+    await withWorkRun(input, () => {}, async () => { await tools.read.execute(); }, new AbortController().signal);
+    const stored = await previousWorkRun(input.chatId, "lead", null);
+    expect(stored?.receipts[0].agentId).toBe("reviewer");
+    expect(stored?.receipts[0].facts?.[0].preview).toBe("A,120\nB,80");
+  });
+  it("persists missing requirements without falsely recording execution", async () => {
+    const input = { chatId: randomUUID(), agentId: "lead", projectId: null, model: "local", goal: "查今天去北京最快机票", pendingQuestions: ["出发城市"] };
+    await withWorkRun(input, () => {}, async () => "请补充出发城市", new AbortController().signal);
+    const stored = await previousWorkRun(input.chatId, "lead", null);
+    expect(stored?.state).toBe("needs-input"); expect(stored?.receipts).toEqual([]);
+    expect(workRunContext(stored)).toContain("出发城市");
+  });
 });

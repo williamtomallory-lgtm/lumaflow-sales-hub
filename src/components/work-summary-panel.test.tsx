@@ -5,6 +5,12 @@ import { WorkSummaryPanel } from "./work-summary-panel";
 beforeEach(() => vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: { workspace: "C:/repo", projectName: "repo", git: { branch: "main", additions: 12, deletions: 4, changedFiles: 2, untrackedFiles: 1 } } }))));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("Work summary panel", () => {
+  it("does not count the lead as its own sub-agent", async () => {
+    render(<WorkSummaryPanel agentId="lead" progress={[{ agentId: "lead", name: "执行助手", round: 3, state: "completed" }]} />);
+    await waitFor(() => expect(screen.getByText("main")).toBeInTheDocument());
+    expect(screen.getByText("0 完成")).toBeInTheDocument();
+    expect(screen.queryByTitle("执行助手")).not.toBeInTheDocument();
+  });
   it("counts the latest round of each Agent once and expands real sources and outputs", async () => {
     const open = vi.fn(), add = vi.fn();
     render(<WorkSummaryPanel agentId="agent" progress={[{ agentId: "a", name: "A", round: 1, state: "completed" }, { agentId: "a", name: "A", round: 2, state: "running" }, { agentId: "b", name: "B", round: 1, state: "completed" }]} outputs={[{ id: "file", name: "实际报告.docx", onOpen: open }]} sources={Array.from({ length: 4 }, (_, index) => ({ id: `${index}`, name: `资料${index}` }))} onAddSource={add} />);

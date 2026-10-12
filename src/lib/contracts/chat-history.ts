@@ -12,6 +12,7 @@ const turnVersionSchema = z.object({
   agentId: z.string().min(1).max(100).optional(),
   collaboratorAgentIds: z.array(z.string().min(1).max(100)).max(3).optional(),
   collaborationMode: collaborationModeSchema.optional(),
+  teamMode: z.enum(["auto", "single", "manual"]).optional(),
   agentActivity: z.array(agentProgressSchema).max(16).optional(),
   workRun: workRunSchema.optional(),
 }).strict();
@@ -26,6 +27,7 @@ const turnSchema = z.object({
   agentId: z.string().min(1).max(100).optional(),
   collaboratorAgentIds: z.array(z.string().min(1).max(100)).max(3).optional(),
   collaborationMode: collaborationModeSchema.optional(),
+  teamMode: z.enum(["auto", "single", "manual"]).optional(),
   agentActivity: z.array(agentProgressSchema).max(16).optional(),
   workRun: workRunSchema.optional(),
   // Older sessions omit this field. New generations append a paired prompt

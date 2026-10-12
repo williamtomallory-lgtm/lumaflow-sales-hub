@@ -44,7 +44,7 @@ import type { Product } from "@/lib/catalog";
 import type { CrmAsset, Customer } from "@/lib/crm";
 import { projectAgentSearch } from "@/lib/client/agent-search-result";
 import { readAgentProgress, inferCollaborationMode, interruptedTeamAnswer, type AgentProgress, type CollaborationMode } from "@/lib/contracts/agent-progress";
-import { readWorkRun } from "@/lib/contracts/work-run";
+import { readWorkRun, type WorkRun } from "@/lib/contracts/work-run";
 import { WorkRunProgress } from "./work-run-progress";
 import { AgentTeamActivity } from "./agent-team-activity";
 import styles from "./agent-workspace.module.css";
@@ -119,14 +119,36 @@ export type KnowledgeCoverage = {
 
 const agentPreferenceKey = "lumaflow.agent.id";
 const goalStorageKey = "lumaflow.chat.goal.v1";
+const workTeamModeStorageKey = "lumaflow.work.team-mode.v1";
+const DEFAULT_CLIENT_TIMEOUT_MS = 310_000;
+const WORK_TEAM_CLIENT_TIMEOUT_MS = 910_000;
 type WorkflowMode = "normal" | "goal" | "plan";
-type WorkTeam = { agentId?: string; collaboratorAgentIds?: string[]; collaborationMode?: CollaborationMode };
+type TeamMode = "auto" | "single" | "manual";
+type WorkTeam = { agentId?: string; collaboratorAgentIds?: string[]; collaborationMode?: CollaborationMode; teamMode?: TeamMode };
 const collaborationLabels: Record<CollaborationMode, string> = { parallel: "同时工作", sequential: "分步工作", debate: "讨论辩论" };
 type PromptAgentReference = { id: string; name: string; avatarUrl?: string; kind: "main" | "collaborator" };
 type SidebarHistoryCategory = "chat" | "work" | "image" | "wechat";
 const sidebarHistoryLabels: Record<SidebarHistoryCategory, string> = { chat: "Chat", work: "Work", image: "Image", wechat: "Wechat Agent" };
 type ImageGalleryTab = "hot" | "templates";
 type ImageModelStatus = "idle" | "processing" | "available" | "unavailable";
+
+export function clientTimeoutForRequest(body: BodyInit | null | undefined): number {
+  if (typeof body !== "string") return DEFAULT_CLIENT_TIMEOUT_MS;
+  let request: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return DEFAULT_CLIENT_TIMEOUT_MS;
+    request = parsed as Record<string, unknown>;
+  } catch {
+    return DEFAULT_CLIENT_TIMEOUT_MS;
+  }
+  return request.experience === "work"
+    && request.workflowMode !== "plan"
+    && (request.teamMode === "auto" || request.teamMode === "manual")
+    ? WORK_TEAM_CLIENT_TIMEOUT_MS
+    : DEFAULT_CLIENT_TIMEOUT_MS;
+}
+
 type WorkContinuation = {
   turnId: string;
   task: string;
@@ -249,7 +271,13 @@ function parseImageOperationPayload(payload: unknown, fallbackOperation: ImageOp
 }
 
 function workTeamReferences(team: WorkTeam, roster: CowAgentProfile[], activity: AgentProgress[] = []): PromptAgentReference[] {
-  const ids = [...new Set([team.agentId, ...(team.collaboratorAgentIds ?? [])].filter((id): id is string => Boolean(id)))];
+  const selectedIds = team.collaboratorAgentIds ?? [];
+  const activityIds = [...new Set(activity.map((record) => record.agentId.trim()).filter(Boolean))];
+  // Auto mode has no browser-selected collaborator list. Once the server has
+  // emitted progress, use those real participants for the prompt references;
+  // the lead remains the only `main` Agent even when it appears in activity.
+  const useActivityMembers = activityIds.length > 0 && team.teamMode !== "single" && selectedIds.length === 0;
+  const ids = [...new Set([team.agentId, ...(useActivityMembers ? activityIds : selectedIds)].filter((id): id is string => Boolean(id)))];
   return ids.map((id) => {
     const agent = roster.find((entry) => entry.id === id);
     const snapshot = activity.filter((entry) => entry.agentId === id).at(-1);
@@ -262,8 +290,32 @@ function workTeamReferences(team: WorkTeam, roster: CowAgentProfile[], activity:
   });
 }
 
+function workRunFileOutputs(run: WorkRun | undefined): WorkSummaryItem[] {
+  const seen = new Set<string>();
+  return (run?.receipts ?? []).flatMap((receipt) => {
+    if (receipt.state !== "succeeded") return [];
+    return (receipt.facts ?? []).flatMap((fact) => {
+      if (fact.kind !== "file-write" || !fact.path?.trim()) return [];
+      const path = fact.path.trim();
+      const key = path.replaceAll("\\", "/").toLowerCase();
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ id: `work-file:${key}`, name: path }];
+    });
+  });
+}
+
+function normalizeWorkTeam(team: WorkTeam): WorkTeam {
+  const collaboratorAgentIds = [...new Set((team.collaboratorAgentIds ?? []).filter((id): id is string => typeof id === "string" && Boolean(id.trim())))];
+  return {
+    ...team,
+    collaboratorAgentIds,
+    teamMode: collaboratorAgentIds.length ? "manual" : team.teamMode ?? "auto",
+  };
+}
+
 function turnBranches(turn: LocalChatTurn): LocalChatTurnVersion[] {
-  return turn.versions?.length ? turn.versions : [{ id: turn.id, user: turn.user, assistant: turn.assistant, createdAt: turn.createdAt, attachments: turn.attachments, parentVersionId: turn.parentVersionId, agentId: turn.agentId, collaboratorAgentIds: turn.collaboratorAgentIds, collaborationMode: turn.collaborationMode, agentActivity: turn.agentActivity, workRun: turn.workRun }];
+  return turn.versions?.length ? turn.versions : [{ id: turn.id, user: turn.user, assistant: turn.assistant, createdAt: turn.createdAt, attachments: turn.attachments, parentVersionId: turn.parentVersionId, agentId: turn.agentId, collaboratorAgentIds: turn.collaboratorAgentIds, collaborationMode: turn.collaborationMode, teamMode: turn.teamMode, agentActivity: turn.agentActivity, workRun: turn.workRun }];
 }
 
 function savedVersionAnswer(version: LocalChatTurnVersion): string {
@@ -525,6 +577,32 @@ function savedAgentId(): string {
   }
 }
 
+function parseTeamMode(value: unknown): TeamMode | undefined {
+  return value === "auto" || value === "single" || value === "manual" ? value : undefined;
+}
+
+function savedWorkTeamMode(versionId: string | undefined): TeamMode | undefined {
+  if (!versionId || typeof window === "undefined") return undefined;
+  try {
+    const raw = JSON.parse(localStorage.getItem(workTeamModeStorageKey) || "null") as unknown;
+    if (!raw || typeof raw !== "object") return undefined;
+    return parseTeamMode((raw as Record<string, unknown>)[versionId]);
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberWorkTeamMode(versionId: string | undefined, mode: TeamMode | undefined) {
+  if (!versionId || !mode || typeof window === "undefined") return;
+  try {
+    const raw = JSON.parse(localStorage.getItem(workTeamModeStorageKey) || "{}") as unknown;
+    const modes = raw && typeof raw === "object" ? { ...(raw as Record<string, unknown>) } : {};
+    modes[versionId] = mode;
+    const entries = Object.entries(modes).slice(-200);
+    localStorage.setItem(workTeamModeStorageKey, JSON.stringify(Object.fromEntries(entries)));
+  } catch { /* local preference is optional */ }
+}
+
 function AgentAvatar({ agent }: { agent: CowAgentProfile }) {
   const initials = agent.name.trim().slice(0, 2).toUpperCase() || "AI";
   return <span className={styles.agentAvatar} data-kind={agent.type}>
@@ -575,6 +653,7 @@ export function AgentWorkspace({
   const publicWork = useSyncExternalStore(subscribeHost, isPublicHost, () => false);
   const [workAgentId, setWorkAgentId] = useState(savedAgentId);
   const [collaboratorAgentIds, setCollaboratorAgentIds] = useState<string[]>([]);
+  const [teamMode, setTeamMode] = useState<TeamMode>("auto");
   const [submittedWorkReferences, setSubmittedWorkReferences] = useState<PromptAgentReference[]>([]);
   const [collaborationMode, setCollaborationMode] = useState<CollaborationMode>("parallel");
   const [collaborationModeExplicit, setCollaborationModeExplicit] = useState(false);
@@ -642,7 +721,7 @@ export function AgentWorkspace({
   const [queueDrainTick, setQueueDrainTick] = useState(0);
   const submitting = useRef(false);
   const activeSessionRef = useRef<LocalChatSession | null>(null);
-  const pendingTurnRef = useRef<{ id: string; user: string; createdAt: string; attachments: string[]; parentVersionId?: string; regenerate?: boolean } & WorkTeam | null>(null);
+  const pendingTurnRef = useRef<{ id: string; versionId?: string; user: string; createdAt: string; attachments: string[]; parentVersionId?: string; regenerate?: boolean } & WorkTeam | null>(null);
   const guideCurrentRef = useRef(false);
   const guideQueuedIdRef = useRef<string | null>(null);
   const queueDrainRef = useRef(false);
@@ -677,7 +756,7 @@ export function AgentWorkspace({
   const draftStorageKey = imageOperationMode ? imageComposerKey : composerKey;
 
   function composerDraftSnapshot(imageMode = imageOperationMode): ComposerDraft {
-    return { text: input, images: imageAttachments, imageOperationMode: imageMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
+    return { text: input, images: imageAttachments, imageOperationMode: imageMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, teamMode: collaboratorAgentIds.length ? "manual" : teamMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
   }
 
   function applyComposerDraft(draft: ComposerDraft | null) {
@@ -688,6 +767,7 @@ export function AgentWorkspace({
     setCustomerId(draft.customerId);
     if (draft.agentId !== undefined) setWorkAgentId(draft.agentId);
     setCollaboratorAgentIds(draft.collaboratorIds);
+    setTeamMode(draft.collaboratorIds.length ? "manual" : draft.teamMode ?? "auto");
     setCollaborationMode(draft.collaborationMode ?? "parallel");
     setWorkflowMode(draft.workflowMode ?? "normal");
     setGoal(draft.goal ?? "");
@@ -744,13 +824,20 @@ export function AgentWorkspace({
     const saved = readComposerDraft(draftStorageKey);
     queueMicrotask(() => {
       if (composerDraftHydrationTokenRef.current !== token) return;
+      const historicalVersion = activeSession?.experience === "work"
+        ? resolveChatBranches(activeSession.turns, branchSelections).at(-1)?.version
+        : undefined;
+      const historicalTeam = historicalVersion ? versionWorkTeam(historicalVersion, activeSession) : undefined;
+      const pendingTeam = pendingTurnRef.current;
       setInput(saved?.text ?? (imageOperationMode ? "" : (activeSession ? "" : (initialMessage ?? ""))));
       setImageAttachments(saved?.images ?? []);
       setSelectedDocumentIds(saved?.documentIds ?? []);
       setCustomerId(saved?.customerId ?? initialCustomer?.id ?? "");
-      if (saved?.agentId !== undefined) setWorkAgentId(saved.agentId);
-      setCollaboratorAgentIds(saved?.collaboratorIds ?? []);
-      setCollaborationMode(saved?.collaborationMode ?? "parallel");
+      if (!historicalTeam && saved?.agentId !== undefined) setWorkAgentId(saved.agentId);
+      setCollaboratorAgentIds(historicalTeam ? [] : (saved?.collaboratorIds ?? []));
+      setTeamMode(historicalTeam?.teamMode ?? pendingTeam?.teamMode ?? (saved ? (saved.collaboratorIds.length ? "manual" : saved.teamMode ?? "auto") : activeSession ? teamMode : "auto"));
+      setCollaborationMode(historicalTeam?.collaborationMode ?? pendingTeam?.collaborationMode ?? saved?.collaborationMode ?? (activeSession ? collaborationMode : "parallel"));
+      setCollaborationModeExplicit(Boolean(historicalTeam?.collaborationMode ?? pendingTeam?.collaborationMode ?? saved?.collaborationMode));
       setWorkflowMode(saved?.workflowMode ?? "normal");
       setGoal(saved?.goal ?? "");
       setSelectedCapabilityIds(saved?.capabilityIds ?? []);
@@ -789,9 +876,9 @@ export function AgentWorkspace({
 
   useEffect(() => {
     if (!composerDraftHydratedRef.current) return;
-    const draft: ComposerDraft = { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
+    const draft: ComposerDraft = { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, teamMode: collaboratorAgentIds.length ? "manual" : teamMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
     writeComposerDraft(draftStorageKey, draft);
-  }, [composerKey, draftStorageKey, input, imageAttachments, imageOperationMode, selectedDocumentIds, customerId, workAgentId, collaboratorAgentIds, collaborationMode, selectedCapabilityIds, workflowMode, goal, experience, projectId]);
+  }, [composerKey, draftStorageKey, input, imageAttachments, imageOperationMode, selectedDocumentIds, customerId, workAgentId, collaboratorAgentIds, collaborationMode, teamMode, selectedCapabilityIds, workflowMode, goal, experience, projectId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -804,14 +891,14 @@ export function AgentWorkspace({
 
   useEffect(() => {
     const preserve = () => {
-      const draft: ComposerDraft = { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
+      const draft: ComposerDraft = { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, teamMode: collaboratorAgentIds.length ? "manual" : teamMode, capabilityIds: selectedCapabilityIds, workflowMode, goal };
       writeComposerDraft(composerKey, draft);
       if (imageOperationMode) writeComposerDraft(imageComposerKey, draft);
       else writeComposerDraft(composerDraftKey(experience, projectId, null), draft);
     };
     window.addEventListener("lumaflow-new-chat", preserve);
     return () => window.removeEventListener("lumaflow-new-chat", preserve);
-  }, [composerKey, imageComposerKey, input, imageAttachments, imageOperationMode, selectedDocumentIds, customerId, workAgentId, collaboratorAgentIds, collaborationMode, selectedCapabilityIds, workflowMode, goal, experience, projectId]);
+  }, [composerKey, imageComposerKey, input, imageAttachments, imageOperationMode, selectedDocumentIds, customerId, workAgentId, collaboratorAgentIds, collaborationMode, teamMode, selectedCapabilityIds, workflowMode, goal, experience, projectId]);
 
   useEffect(() => {
     if (!contextOpen) return;
@@ -893,7 +980,7 @@ export function AgentWorkspace({
       },
     }),
     fetch: async (url, init) => {
-      const timeout = AbortSignal.timeout(310_000);
+      const timeout = AbortSignal.timeout(clientTimeoutForRequest(init?.body));
       const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
       const response = await fetch(url, { ...init, signal });
       if (!response.ok) {
@@ -930,8 +1017,8 @@ export function AgentWorkspace({
     if (pending.regenerate && existingIndex >= 0) {
       const existing = nextTurns[existingIndex];
       const versions = turnBranches(existing);
-      const nextVersion: LocalChatTurnVersion = { id: crypto.randomUUID(), user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, workRun };
-      nextTurns[existingIndex] = { ...existing, user: pending.user, assistant: answer, attachments: pending.attachments, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, workRun, versions: [...versions, nextVersion] };
+      const nextVersion: LocalChatTurnVersion = { id: pending.versionId ?? crypto.randomUUID(), user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, teamMode: pending.teamMode, agentActivity, workRun };
+      nextTurns[existingIndex] = { ...existing, user: pending.user, assistant: answer, attachments: pending.attachments, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, teamMode: pending.teamMode, agentActivity, workRun, versions: [...versions, nextVersion] };
       setBranchSelections((current) => ({ ...current, [pending.id]: nextVersion.id }));
       // A regenerated old turn is now a saved row again. Keeping it as the
       // live row hid the branch navigator and left the old prompt on screen.
@@ -939,7 +1026,7 @@ export function AgentWorkspace({
       setQuestion("");
       setQuestionImages([]);
     } else {
-      nextTurns.push({ id: pending.id, user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, agentActivity, workRun });
+      nextTurns.push({ id: pending.id, user: pending.user, assistant: answer, createdAt: pending.createdAt, attachments: pending.attachments, parentVersionId: pending.parentVersionId, agentId: pending.agentId, collaboratorAgentIds: pending.collaboratorAgentIds, collaborationMode: pending.collaborationMode, teamMode: pending.teamMode, agentActivity, workRun });
     }
     const next: LocalChatSession = { ...session, updatedAt: new Date().toISOString(), turns: nextTurns };
     activeSessionRef.current = next;
@@ -953,7 +1040,7 @@ export function AgentWorkspace({
         task: pending.user,
         assistant: answer,
         agentActivity: agentActivity.map((record) => ({ ...record })),
-        team: { agentId: pending.agentId, collaboratorAgentIds: [...(pending.collaboratorAgentIds ?? [])], collaborationMode: pending.collaborationMode },
+        team: normalizeWorkTeam({ agentId: pending.agentId, collaboratorAgentIds: [...(pending.collaboratorAgentIds ?? [])], collaborationMode: pending.collaborationMode, teamMode: pending.teamMode }),
       };
       // Every queued message is an addition to the latest completed Work turn.
       // Updating the snapshot here preserves the complete answer and Agent
@@ -1018,12 +1105,22 @@ export function AgentWorkspace({
   const displayQuestion = !busy && liveBranch ? liveBranch.version.user : question;
   const displayAnswer = !busy && liveBranch ? savedVersionAnswer(liveBranch.version) : result.text;
   const displayAnswerForRender = imageOperationAnswerForDisplay(displayAnswer);
+  const pendingWorkTeam = pendingTurnRef.current ? {
+    agentId: pendingTurnRef.current.agentId,
+    collaboratorAgentIds: [...(pendingTurnRef.current.collaboratorAgentIds ?? [])],
+    collaborationMode: pendingTurnRef.current.collaborationMode,
+    teamMode: pendingTurnRef.current.teamMode,
+  } : undefined;
   const liveWorkReferences = experience === "work" ? !busy && liveVersion
     ? workTeamReferences(versionWorkTeam(liveVersion), agentRoster.agents, liveVersion.agentActivity)
-    : submittedWorkReferences : [];
+    : pendingWorkTeam
+      ? workTeamReferences(pendingWorkTeam, agentRoster.agents, agentActivity)
+      : submittedWorkReferences : [];
   const liveAgentName = experience === "chat" ? "LumaFlow" : liveWorkReferences.find((agent) => agent.kind === "main")?.name || "本地 Agent";
   const displayedCollaborationMode = collaborationModeExplicit ? collaborationMode : inferCollaborationMode(editingTurnId ? editedPrompt : input);
   const liveCollaborationMode = !busy && liveVersion ? versionWorkTeam(liveVersion).collaborationMode : submittedCollaborationMode;
+  const selectedHistoryVersion = liveVersion ?? visibleBranches.at(-1)?.version;
+  const hasTeamMembersForMode = teamMode === "manual" && (collaboratorAgentIds.length > 0 || Boolean(pendingWorkTeam?.collaboratorAgentIds?.length) || Boolean(selectedHistoryVersion?.collaboratorAgentIds?.length));
   const htmlArtifact = extractCompleteHtml(displayAnswer);
   const documentLayout = isLongformTask(displayQuestion);
   const previewTurn = previewSource ? activeSession?.turns.find((turn) => turn.id === previewSource.turnId) : null;
@@ -1072,7 +1169,16 @@ export function AgentWorkspace({
   }
 
   function versionWorkTeam(version: LocalChatTurnVersion, session = activeSession): WorkTeam {
-    return { agentId: version.agentId ?? session?.agentId, collaboratorAgentIds: version.collaboratorAgentIds ?? [], collaborationMode: version.collaborationMode ?? inferCollaborationMode(version.user) };
+    const collaboratorAgentIds = version.collaboratorAgentIds ?? [];
+    const historicalMode = collaboratorAgentIds.length ? version.collaborationMode ?? inferCollaborationMode(version.user) : undefined;
+    const directTeamMode = parseTeamMode(version.teamMode);
+    const storedTeamMode = savedWorkTeamMode(version.id);
+    return {
+      agentId: version.agentId ?? session?.agentId,
+      collaboratorAgentIds,
+      teamMode: collaboratorAgentIds.length ? "manual" : directTeamMode ?? storedTeamMode ?? "auto",
+      ...(historicalMode ? { collaborationMode: historicalMode } : {}),
+    };
   }
 
   function restoreWorkTeam(version: LocalChatTurnVersion, session = activeSession, restoreCollaborators = false) {
@@ -1080,7 +1186,8 @@ export function AgentWorkspace({
     const team = versionWorkTeam(version, session);
     if (team.agentId) setWorkAgentId(team.agentId);
     setCollaboratorAgentIds(restoreCollaborators ? [...(team.collaboratorAgentIds ?? [])] : []);
-    setCollaborationMode(team.collaborationMode ?? "parallel"); setCollaborationModeExplicit(true);
+    setTeamMode(team.teamMode ?? "auto");
+    setCollaborationMode(team.collaborationMode ?? "parallel"); setCollaborationModeExplicit(Boolean(team.collaborationMode));
     const mainAgent = enabledAgents.find((agent) => agent.id === team.agentId);
     setSelectedDocumentIds((current) => current.filter((id) => mainAgent?.knowledgeBaseIds?.includes(id)));
     setAgentPickerOpen(false); setMentionQuery(null); setMentionRange(null);
@@ -1337,7 +1444,7 @@ export function AgentWorkspace({
     if (busy) return;
     if (queuedMessages.length) { onToast?.("还有排队消息，请先执行或删除后再打开其他对话。"); return; }
     try {
-      writeComposerDraft(composerKey, { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, capabilityIds: selectedCapabilityIds, workflowMode, goal });
+      writeComposerDraft(composerKey, { text: input, images: imageAttachments, imageOperationMode, documentIds: selectedDocumentIds, customerId, agentId: workAgentId || undefined, collaboratorIds: collaboratorAgentIds, collaborationMode, teamMode: collaboratorAgentIds.length ? "manual" : teamMode, capabilityIds: selectedCapabilityIds, workflowMode, goal });
       const session = await loadLocalChat(id);
       if (!session) { onToast?.("这条本地对话已不存在。"); return; }
       activeSessionRef.current = session;
@@ -1428,7 +1535,7 @@ export function AgentWorkspace({
     resetOutput(); clearActiveSession(); setQuestionImages([]);
     setWechatSnapshotId(null);
     setMentionQuery(null); setMentionRange(null);
-    setCollaborationMode("parallel"); setCollaborationModeExplicit(false);
+    setTeamMode("auto"); setCollaborationMode("parallel"); setCollaborationModeExplicit(false);
     setContextOpen(false); setAddMenuOpen(false); setAgentPickerOpen(false); inputRef.current?.focus();
     setEditingTurnId(null); setEditedPrompt("");
   }
@@ -1455,7 +1562,9 @@ export function AgentWorkspace({
     const nextAgent = enabledAgents.find((agent) => agent.id === value);
     setWorkAgentId(value);
     setSelectedDocumentIds((current) => nextAgent ? current.filter((id) => nextAgent.knowledgeBaseIds?.includes(id)) : []);
-    setCollaboratorAgentIds((current) => current.filter((id) => id !== value));
+    const nextCollaboratorIds = collaboratorAgentIds.filter((id) => id !== value);
+    setCollaboratorAgentIds(nextCollaboratorIds);
+    if (nextCollaboratorIds.length) setTeamMode("manual");
     try { if (value) localStorage.setItem(agentPreferenceKey, value); else localStorage.removeItem(agentPreferenceKey); } catch { /* persistence is optional */ }
     if (editingTurnId) return;
     setReceipt(null);
@@ -1466,6 +1575,16 @@ export function AgentWorkspace({
     setQuestion("");
     setCancelled(false);
     setKnowledgeCoverage([]);
+  }
+
+  function changeTeamMode(value: TeamMode) {
+    if (busy || submitting.current) return;
+    setTeamMode(value);
+    if (value !== "manual") {
+      setCollaboratorAgentIds([]);
+      setMentionQuery(null);
+      setMentionRange(null);
+    }
   }
 
   function changeWorkInput(value: string, cursor: number) {
@@ -1492,6 +1611,7 @@ export function AgentWorkspace({
 
   function addCollaborator(agentId: string) {
     if (busy || collaboratorAgentIds.includes(agentId) || agentId === selectedWorkAgent?.id || collaboratorAgentIds.length >= 3) return;
+    setTeamMode("manual");
     setCollaboratorAgentIds((current) => [...current, agentId]);
     if (mentionRange) setInput((current) => `${current.slice(0, mentionRange.start)}${current.slice(mentionRange.end)}`);
     setMentionQuery(null); setMentionRange(null);
@@ -1715,8 +1835,10 @@ export function AgentWorkspace({
     if (imageOperationModeRef.current === true) imageSessionIdRef.current = session.id;
     else imageSessionIdRef.current = null;
     const turnId = regenerateId && activeSessionRef.current?.turns.some((turn) => turn.id === regenerateId) ? regenerateId : crypto.randomUUID();
+    const versionId = regenerateId && activeSessionRef.current?.turns.some((turn) => turn.id === regenerateId) ? crypto.randomUUID() : turnId;
+    rememberWorkTeamMode(versionId, team?.teamMode);
     const answerAttachments = files.map((image) => image.filename || "图片");
-    const answerTeam = team ? { agentId: team.agentId, collaboratorAgentIds: team.collaboratorAgentIds, collaborationMode: team.collaborationMode } : {};
+    const answerTeam = team ? { agentId: team.agentId, collaboratorAgentIds: team.collaboratorAgentIds, collaborationMode: team.collaborationMode, teamMode: team.teamMode } : {};
     activeSessionRef.current = session;
     pendingTurnRef.current = null;
     setActiveSession(session);
@@ -1757,7 +1879,7 @@ export function AgentWorkspace({
       const parsed = parseImageOperationPayload(payload, intent.operation);
       setImageModelStatus("available");
       const answer = imageOperationAnswerText(parsed.text, parsed.images);
-      const nextVersion: LocalChatTurnVersion = { id: crypto.randomUUID(), user: userText, assistant: answer, createdAt: now, attachments: answerAttachments, parentVersionId: resolveChatBranches(session.turns, branchSelections).at(-1)?.version.id, ...answerTeam };
+      const nextVersion: LocalChatTurnVersion = { id: versionId, user: userText, assistant: answer, createdAt: now, attachments: answerAttachments, parentVersionId: resolveChatBranches(session.turns, branchSelections).at(-1)?.version.id, ...answerTeam };
       const existingIndex = session.turns.findIndex((turn) => turn.id === turnId);
       const nextTurns = [...session.turns];
       if (regenerateId && existingIndex >= 0) {
@@ -1802,9 +1924,24 @@ export function AgentWorkspace({
   async function submit(value = input, files: FileUIPart[] = imageAttachments, regenerateId?: string, teamOverride?: WorkTeam, queuedItem?: QueuedWorkMessage) {
     const sendFiles = queuedItem?.files ?? files;
     const cleanValue = (queuedItem?.text ?? value).trim();
-    const runningTeam = pendingTurnRef.current ? { agentId: pendingTurnRef.current.agentId, collaboratorAgentIds: [...(pendingTurnRef.current.collaboratorAgentIds ?? [])], collaborationMode: pendingTurnRef.current.collaborationMode } : undefined;
-    const requestTeam = experience === "work" ? queuedItem?.team ?? teamOverride ?? (busy && runningTeam ? runningTeam : { agentId: selectedWorkAgent?.id, collaboratorAgentIds: collaborators.map((agent) => agent.id), ...(collaborationModeExplicit ? { collaborationMode } : {}) }) : undefined;
-    const requestCollaborationMode = requestTeam ? requestTeam.collaborationMode ?? inferCollaborationMode(cleanValue) : undefined;
+    const runningTeam = pendingTurnRef.current ? {
+      agentId: pendingTurnRef.current.agentId,
+      collaboratorAgentIds: [...(pendingTurnRef.current.collaboratorAgentIds ?? [])],
+      collaborationMode: pendingTurnRef.current.collaborationMode,
+      teamMode: pendingTurnRef.current.teamMode,
+    } : undefined;
+    const currentTeamMode: TeamMode = collaboratorAgentIds.length ? "manual" : teamMode;
+    const currentTeam: WorkTeam = {
+      agentId: selectedWorkAgent?.id,
+      collaboratorAgentIds: currentTeamMode === "manual" ? collaborators.map((agent) => agent.id) : [],
+      teamMode: currentTeamMode,
+      ...(currentTeamMode === "manual" && collaboratorAgentIds.length > 0 && collaborationModeExplicit ? { collaborationMode } : {}),
+    };
+    const rawRequestTeam = experience === "work" ? queuedItem?.team ?? teamOverride ?? (busy && runningTeam ? runningTeam : currentTeam) : undefined;
+    const requestTeam = rawRequestTeam ? normalizeWorkTeam(rawRequestTeam) : undefined;
+    const requestCollaborationMode = requestTeam && requestTeam.teamMode === "manual" && (requestTeam.collaboratorAgentIds?.length ?? 0) > 0
+      ? requestTeam.collaborationMode ?? inferCollaborationMode(cleanValue)
+      : undefined;
     const requestAgent = enabledAgents.find((agent) => agent.id === requestTeam?.agentId);
     const requestWorkflowMode = queuedItem?.workflowMode ?? workflowMode;
     const requestGoal = queuedItem?.goal ?? goal;
@@ -1863,7 +2000,7 @@ export function AgentWorkspace({
         text: cleanValue || "请查看我附加的图片。",
         files: sendFiles.map((file) => ({ ...file })),
         createdAt: new Date().toISOString(),
-        team: { ...requestTeam, collaboratorAgentIds: [...(requestTeam?.collaboratorAgentIds ?? [])], collaborationMode: requestCollaborationMode },
+        team: { ...requestTeam, collaboratorAgentIds: [...(requestTeam?.collaboratorAgentIds ?? [])], ...(requestCollaborationMode ? { collaborationMode: requestCollaborationMode } : {}) },
         workflowMode: requestWorkflowMode,
         goal: requestGoal,
         customerId: requestCustomerId,
@@ -1877,7 +2014,7 @@ export function AgentWorkspace({
           task: continuationTask,
           assistant: continuationAssistant,
           agentActivity: agentActivity.map((record) => ({ ...record })),
-          team: { agentId: continuationTurn.agentId, collaboratorAgentIds: [...(continuationTurn.collaboratorAgentIds ?? [])], collaborationMode: continuationTurn.collaborationMode },
+          team: normalizeWorkTeam({ agentId: continuationTurn.agentId, collaboratorAgentIds: [...(continuationTurn.collaboratorAgentIds ?? [])], collaborationMode: continuationTurn.collaborationMode, teamMode: continuationTurn.teamMode }),
         } : undefined,
       };
       setQueuedMessages((current) => [...current, queued]);
@@ -1916,7 +2053,9 @@ export function AgentWorkspace({
     activeSessionRef.current = session;
     setActiveSession(session);
     const turnId = regenerateIndex >= 0 && regenerateId ? regenerateId : crypto.randomUUID();
-    pendingTurnRef.current = { id: turnId, user: cleanValue || "请查看我附加的图片。", createdAt: now, attachments: sendFiles.map((image) => image.filename || "图片"), parentVersionId: previous.at(-1)?.version.id, regenerate: regenerateIndex >= 0, ...requestTeam, collaborationMode: requestCollaborationMode };
+    const versionId = regenerateIndex >= 0 ? crypto.randomUUID() : turnId;
+    rememberWorkTeamMode(versionId, requestTeam?.teamMode);
+    pendingTurnRef.current = { id: turnId, versionId, user: cleanValue || "请查看我附加的图片。", createdAt: now, attachments: sendFiles.map((image) => image.filename || "图片"), parentVersionId: previous.at(-1)?.version.id, regenerate: regenerateIndex >= 0, ...requestTeam, ...(requestCollaborationMode ? { collaborationMode: requestCollaborationMode } : {}) };
     setSubmittedWorkReferences(requestTeam ? workTeamReferences(requestTeam, agentRoster.agents) : []);
     setSubmittedCollaborationMode(requestCollaborationMode);
     if (requestTeam) setCollaboratorAgentIds([]);
@@ -2066,7 +2205,12 @@ export function AgentWorkspace({
     const nextPrompt = (replacement ?? version.user).trim();
     if (!nextPrompt || nextPrompt.length > inputBudget) { onToast?.(`提示词需在 1 至 ${inputBudget} 字之间。`); return; }
     const team = session.experience === "work" ? editingTurnId === turnId
-      ? { agentId: workAgentId, collaboratorAgentIds: [...collaboratorAgentIds], collaborationMode: displayedCollaborationMode }
+      ? {
+        agentId: workAgentId,
+        collaboratorAgentIds: [...collaboratorAgentIds],
+        teamMode: collaboratorAgentIds.length ? "manual" as const : teamMode,
+        ...(collaboratorAgentIds.length ? { collaborationMode: displayedCollaborationMode } : {}),
+      }
       : versionWorkTeam(version, session) : undefined;
     if (editingTurnId !== turnId) restoreWorkTeam(version, session);
     setEditingTurnId(null); setEditedPrompt("");
@@ -2218,7 +2362,10 @@ export function AgentWorkspace({
 
   const inputLabel = experience === "chat" ? "输入问题" : role.inputLabel;
   const sideChatItem = queuedMessages.find((item) => item.id === sideChatQueueId);
-  const summaryProgress = liveVersion?.agentActivity ?? (busy ? agentActivity : []);
+  const summaryProgress = liveVersion?.agentActivity ?? (busy ? agentActivity : selectedHistoryVersion?.agentActivity ?? []);
+  const summaryWorkRun = experience === "work"
+    ? liveVersion?.workRun ?? (busy ? readWorkRun(messages.filter((message) => message.role === "assistant").flatMap((message) => message.parts)) : selectedHistoryVersion?.workRun)
+    : undefined;
   const summarySources: WorkSummaryItem[] = (() => {
     const result: WorkSummaryItem[] = [];
     const seen = new Set<string>();
@@ -2237,6 +2384,7 @@ export function AgentWorkspace({
     return result;
   })();
   const summaryOutputs: WorkSummaryItem[] = (() => {
+    if (experience === "work") return workRunFileOutputs(summaryWorkRun);
     if (!liveTurnId || busy || cancelled || exhausted || error || !displayAnswer.trim() || (!requestsGeneratedFile(displayQuestion) && !htmlArtifact)) return [];
     return [{ id: `output:${liveTurnId}`, name: `生成文件 · ${htmlArtifact ? "HTML" : requestedFileFormat(displayQuestion)?.toUpperCase() || "预览"}`, onOpen: () => openAnswerPreview({ turnId: liveTurnId, title: displayQuestion, answer: displayAnswer, kind: previewKindFor(displayQuestion, displayAnswer), images: imageOperationResult?.turnId === liveTurnId ? imageOperationResult.images : undefined }) }];
   })();
@@ -2413,6 +2561,7 @@ export function AgentWorkspace({
         <div className={styles.composerArea}>
           <div className={styles.composer}>
             {workComposerActive && <div className={styles.roleRow}>
+              <label className={styles.teamMode}><span>执行方式</span><select aria-label="执行方式" value={teamMode} disabled={busy} onChange={(event) => changeTeamMode(event.target.value as TeamMode)}><option value="auto">自动分工</option><option value="single">单人执行</option><option value="manual">手动协作</option></select></label>
               <div ref={agentPickerRef} className={styles.agentPicker}>
                 <button type="button" className={styles.agentPickerButton} role="combobox" aria-label="选择本地 Agent" aria-controls="work-agent-options" aria-expanded={agentPickerOpen} aria-haspopup="listbox" disabled={busy || agentLoading} onClick={() => { setMentionQuery(null); setAgentPickerOpen((open) => !open); }}>
                   {selectedWorkAgent ? <AgentAvatar agent={selectedWorkAgent} /> : <span className={styles.agentAvatar}><Sparkles size={17} /></span>}
@@ -2420,8 +2569,8 @@ export function AgentWorkspace({
                 </button>
                 {agentPickerOpen && <div id="work-agent-options" className={styles.agentPickerMenu} role="listbox" aria-label="选择本地 Agent"><button type="button" role="option" aria-selected={!selectedWorkAgent} onClick={() => changeAgent("")}><span className={styles.agentAvatar}><Sparkles size={17} /></span><span className={styles.agentIdentity}><strong>默认本地 Agent</strong><small>使用已配置的本地工作区和权限</small></span></button>{enabledAgents.map((agent) => <button type="button" role="option" aria-selected={agent.id === selectedWorkAgent?.id} key={agent.id} onClick={() => changeAgent(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.description || "本地 Agent"}</small></span></button>)}</div>}
               </div>
-              <label className={styles.collaborationMode}><span>协作方式</span><select aria-label="协作方式" value={displayedCollaborationMode} disabled={busy} onChange={(event) => { setCollaborationMode(event.target.value as CollaborationMode); setCollaborationModeExplicit(true); }}><option value="parallel">同时工作</option><option value="sequential">分步工作</option><option value="debate">讨论辩论</option></select></label>
-              <button ref={mentionButtonRef} type="button" disabled={busy || collaboratorAgentIds.length >= 3} aria-expanded={mentionQuery !== null} aria-controls="collaborator-options" onClick={() => { setAgentPickerOpen(false); setMentionQuery((current) => current === null ? "" : null); setMentionRange(null); }}>@ 添加协作 Agent</button>
+              {teamMode === "manual" && hasTeamMembersForMode && <label className={styles.collaborationMode}><span>协作方式</span><select aria-label="协作方式" value={displayedCollaborationMode} disabled={busy} onChange={(event) => { setCollaborationMode(event.target.value as CollaborationMode); setCollaborationModeExplicit(true); }}><option value="parallel">同时工作</option><option value="sequential">分步工作</option><option value="debate">讨论辩论</option></select></label>}
+              {teamMode !== "single" && <button ref={mentionButtonRef} type="button" disabled={busy || collaboratorAgentIds.length >= 3} aria-expanded={mentionQuery !== null} aria-controls="collaborator-options" onClick={() => { setAgentPickerOpen(false); setMentionQuery((current) => current === null ? "" : null); setMentionRange(null); }}>@ 添加协作 Agent</button>}
             </div>}
             {workComposerActive && collaborators.length > 0 && <div className={styles.agentChips} aria-label="参与协作的 Agent">{collaborators.map((agent) => <button type="button" key={agent.id} disabled={busy} onClick={() => setCollaboratorAgentIds((current) => current.filter((id) => id !== agent.id))}><AgentAvatar agent={agent} /><span>{agent.name}</span><X size={12} /></button>)}</div>}
             {workComposerActive && mentionQuery !== null && <div ref={mentionMenuRef} id="collaborator-options" className={styles.agentMentionMenu} role="listbox" aria-label="选择协作 Agent">{mentionCandidates.length ? mentionCandidates.map((agent) => <button type="button" role="option" aria-selected="false" key={agent.id} onMouseDown={(event) => event.preventDefault()} onClick={() => addCollaborator(agent.id)}><AgentAvatar agent={agent} /><span className={styles.agentIdentity}><strong>{agent.name}</strong><small>{agent.type === "wechat" ? "微信 Agent" : "本地 Agent"}{agent.description ? ` · ${agent.description}` : ""}</small></span></button>) : <span className={styles.agentMentionEmpty}>{collaboratorAgentIds.length >= 3 ? "最多添加 3 个协作 Agent" : "没有匹配的 Agent"}</span>}</div>}

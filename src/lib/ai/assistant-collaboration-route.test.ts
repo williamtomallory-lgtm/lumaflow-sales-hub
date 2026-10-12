@@ -8,14 +8,15 @@ vi.mock("@/lib/server/cowagent-client", () => ({
   getCowAgentRoster: vi.fn(),
 }));
 vi.mock("@/lib/ai/agent-team", () => ({ runLocalAgentTeam: vi.fn(async () => "协作建议") }));
-vi.mock("@/lib/ai/complete-answer-stream", () => ({ completeAnswerResponse: vi.fn(async (input: { prepare?: (emit: () => void, signal: AbortSignal) => Promise<string> }) => {
+vi.mock("@/lib/ai/complete-answer-stream", () => ({ completeAnswerResponse: vi.fn(async (input: { headers?: HeadersInit; prepare?: (emit: () => void, signal: AbortSignal) => Promise<string> }) => {
   await input.prepare?.(() => {}, new AbortController().signal);
-  return new Response("ok");
+  return new Response("ok", { headers: input.headers });
 }) }));
 vi.mock("@/lib/ai/knowledge-context", () => ({ buildKnowledgeContext: vi.fn(async () => ({ text: "", coverage: [] })) }));
 
 import { getCowAgentProfile, getCowAgentRoster } from "@/lib/server/cowagent-client";
 import { runLocalAgentTeam } from "./agent-team";
+import { completeAnswerResponse } from "./complete-answer-stream";
 
 const lead: CowAgentProfile = { id: "local-lead", name: "本地执行", enabled: true, type: "local", workspace: "C:/work", knowledgeMode: "own" };
 const wechat: CowAgentProfile = { id: "wechat-helper", name: "微信助手", enabled: true, type: "wechat", agentType: "weixin_personal", workspace: "C:/wechat", knowledgeMode: "own" };
@@ -63,5 +64,19 @@ describe("Work collaboration route", () => {
     expect(response.status).toBe(422);
     expect((await response.json()).error.code).toBe("INVALID_COLLABORATOR");
     expect(runLocalAgentTeam).not.toHaveBeenCalled();
+  });
+  it("assigns a real researcher before execution and a distinct reviewer after execution", async () => {
+    const permissions = { read: true, create: false, modify: false, delete: false, tools: false };
+    const researcher = { ...lead, id: "researcher", permissions }; const reviewer = { ...lead, id: "reviewer", permissions };
+    vi.stubEnv("LUMAFLOW_WORK_RESEARCH_AGENT_ID", researcher.id); vi.stubEnv("LUMAFLOW_WORK_REVIEW_AGENT_ID", reviewer.id);
+    vi.mocked(getCowAgentRoster).mockResolvedValue({ agents: [lead, researcher, reviewer], defaultAgentId: lead.id, revision: "1" });
+    const req = request(); const body = await req.json(); body.workflowMode = "normal"; body.collaboratorAgentIds = []; body.messages[0].parts[0].text = "分析资料并生成报告";
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(new Request(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(body) }));
+    expect(response.headers.get("X-Agent-Team")).toBe("local-lead,researcher,reviewer");
+    const input = vi.mocked(completeAnswerResponse).mock.calls.at(-1)![0];
+    expect(input.workRun?.reviewerIds).toEqual(["reviewer"]);
+    expect(runLocalAgentTeam).toHaveBeenCalledWith(expect.objectContaining({ collaborators: [researcher], phase: "prepare" }));
+    expect(input.review).toBeTypeOf("function");
   });
 });

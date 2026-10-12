@@ -26,14 +26,14 @@ describe("Work requirement acceptance", () => {
   });
   it("rejects invented IDs in an otherwise positive local judgment", async () => {
     const data = run(); data.receipts = [fileReceipt("file-write", hash), fileReceipt("file-read", hash)];
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: JSON.stringify({ choice: "complete", evidenceIds: [randomUUID()], missing: [] }) } }] })));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: JSON.stringify({ choice: "complete", evidence: ["E999"], missing: [] }) } }] })));
     const result = await assessWorkOutcome(data, "已完成", "local:strata-coder", new AbortController().signal);
     expect(result.verdict).toBe("uncertain");
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe("http://127.0.0.1:8080/v1/chat/completions");
   });
   it("accepts completion only after factual gates and actual successful evidence", async () => {
     const data = run(); data.receipts = [fileReceipt("file-write", hash), fileReceipt("file-read", hash)];
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: JSON.stringify({ choice: "complete", evidenceIds: data.receipts.map((receipt) => receipt.id), missing: [] }) } }] })));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: JSON.stringify({ choice: "complete", evidence: ["E1", "E2"], missing: [] }) } }] })));
     expect((await assessWorkOutcome(data, "已完成", "local:strata-coder", new AbortController().signal)).verdict).toBe("checked");
   });
   it("preserves recovery when a missing file is then created and read successfully", () => {
@@ -53,5 +53,12 @@ describe("Work requirement acceptance", () => {
     vi.stubGlobal("fetch", vi.fn());
     expect((await assessWorkOutcome(data, "已完成", "local:strata-coder", new AbortController().signal)).verdict).toBe("uncertain");
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it("requires the independent reviewer to read every saved file", () => {
+    const data = run(); data.reviewerIds = ["reviewer"];
+    data.receipts = [fileReceipt("file-write", hash), { ...fileReceipt("file-read", hash), agentId: "lead" }];
+    expect(inspectWorkEvidence(data).find((check) => check.title.startsWith("独立核验读回"))?.state).toBe("unknown");
+    data.receipts.push({ ...fileReceipt("file-read", hash), agentId: "reviewer" });
+    expect(inspectWorkEvidence(data).every((check) => check.state === "passed")).toBe(true);
   });
 });

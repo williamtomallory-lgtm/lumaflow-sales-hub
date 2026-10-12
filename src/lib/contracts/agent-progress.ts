@@ -14,7 +14,7 @@ export const agentProgressSchema = z.object({
   agentId: z.string().min(1).max(100),
   name: z.string().min(1).max(80),
   avatarUrl: z.string().max(1000).optional(),
-  round: z.number().int().min(1).max(3),
+  round: z.number().int().min(1).max(4),
   state: z.enum(["running", "completed", "failed", "cancelled"]),
   text: z.string().max(2000).optional(),
   recipientNames: z.array(z.string().min(1).max(80)).max(4).optional(),

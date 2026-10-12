@@ -19,6 +19,7 @@ import { requestsCodeArtifact } from "@/lib/ai/code-artifact";
 import { previousWorkRun, workRunContext } from "@/lib/ai/work-run";
 import type { WorkRun } from "@/lib/contracts/work-run";
 import { chooseWorkDomain } from "@/lib/ai/work-routing";
+import { flightClarification, planWorkTeam } from "@/lib/ai/work-team-plan";
 import { isCurrentWeatherLookup, isSimpleBrowserLookup } from "@/lib/ai/browser-intent";
 import { InferencePolicyError, inputBudgetDetailsHeader, inputBudgetHeader, resolveInferencePolicy, withModelOutputBudget } from "@/lib/ai/inference-policy";
 
@@ -124,8 +125,8 @@ export async function POST(request: Request) {
     const backendAgent = effectiveAgentId ? await getCowAgentProfile(effectiveAgentId) : undefined;
     if (body.experience === "work" && !backendAgent) throw new ApiHttpError(503, "LOCAL_AGENT_REQUIRED", "请先在智能体页面配置一个已启用的本地 Agent。");
     if (body.experience === "work" && backendAgent && backendAgent.type !== "local") throw new ApiHttpError(403, "LOCAL_AGENT_REQUIRED", "微信 Agent 不支持本机文件操作，请选择本地 Agent。");
-    const roster = body.collaboratorAgentIds.length ? await getCowAgentRoster() : null;
-    const collaborators = body.collaboratorAgentIds.map((agentId) => {
+    const roster = body.experience === "work" || body.collaboratorAgentIds.length ? await getCowAgentRoster() : null;
+    const manualCollaborators = body.collaboratorAgentIds.map((agentId) => {
       const agent = roster?.agents.find((candidate) => candidate.id === agentId);
       if (!agent?.enabled || (agent.type !== "local" && agent.type !== "wechat")) throw new ApiHttpError(422, "INVALID_COLLABORATOR", "协作成员必须是已启用的本地或微信 Agent。");
       return agent;
@@ -157,6 +158,14 @@ export async function POST(request: Request) {
       priorWorkRun = await previousWorkRun(body.currentChatId, backendAgent.id, body.projectId ?? null);
       profile.instructions += workRunContext(priorWorkRun);
     }
+    const continuing = /^(?:请)?(?:继续(?:工作|任务|完成|处理)?|接着(?:做|处理)?|完成剩余(?:任务|工作))[。！!\s]*$/.test(userText.trim());
+    const effectiveGoal = priorWorkRun?.goal && (continuing || priorWorkRun.state === "needs-input")
+      ? continuing ? priorWorkRun.goal : `${priorWorkRun.goal}\n用户补充条件：${userText}` : userText;
+    const clarification = body.experience === "work" && body.workflowMode !== "plan" && priorWorkRun?.state !== "needs-input" ? flightClarification(effectiveGoal) : undefined;
+    const team = planWorkTeam({ text: effectiveGoal, lead: backendAgent, roster: roster?.agents ?? [], teamMode: clarification ? "single" : body.teamMode,
+      manual: manualCollaborators, collaborationMode: body.collaborationMode ?? inferCollaborationMode(effectiveGoal), planOnly: body.workflowMode === "plan" });
+    const collaborators = [...team.prepare, ...team.review];
+    if (collaborators.length && body.workflowMode !== "plan") resolvedPolicy.timeoutMs = Math.max(resolvedPolicy.timeoutMs, 900_000);
     const knowledge = projectContext ? { text: projectContext.text, coverage: projectContext.coverage } : await buildKnowledgeContext(knowledgeIds, Math.max(0, resolvedPolicy.inputBudget.maxContextCharacters - userText.length));
     const uiMessages = knowledge.text ? body.messages.map((message) => {
       let contextAdded = false;
@@ -182,10 +191,13 @@ export async function POST(request: Request) {
     const response = await completeAnswerResponse({
       uiMessages,
       ...(body.experience === "work" && backendAgent && body.workflowMode !== "plan" ? { workRun: {
-        chatId: body.currentChatId ?? crypto.randomUUID(), agentId: backendAgent.id, projectId: body.projectId ?? null, model: modelConfig.model, goal: /^(?:请)?(?:继续(?:工作|任务|完成|处理)?|接着(?:做|处理)?|完成剩余(?:任务|工作))[。！!\s]*$/.test(userText.trim()) && priorWorkRun?.goal ? priorWorkRun.goal : userText, workspace: backendAgent.workspace,
+        chatId: body.currentChatId ?? crypto.randomUUID(), agentId: backendAgent.id, projectId: body.projectId ?? null, model: modelConfig.model, goal: effectiveGoal, workspace: backendAgent.workspace,
+        ...(clarification ? { pendingQuestions: clarification.missing } : {}), reviewerIds: team.review.map((agent) => agent.id),
       } } : {}),
       ...(body.experience === "work" && backendAgent ? { leadProgress: { agentId: backendAgent.id, name: backendAgent.name, ...(backendAgent.avatar === "image" ? { avatarUrl: `/api/v1/cowagent/agents/${encodeURIComponent(backendAgent.id)}/avatar?v=${encodeURIComponent(backendAgent.avatarRev || "0")}` } : {}) } } : {}),
-      ...(collaborators.length ? { prepare: (onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators, lead: backendAgent, model: modelConfig, userText, ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), signal, collaborationMode: body.collaborationMode ?? inferCollaborationMode(userText), planOnly: body.workflowMode === "plan", onProgress }) } : {}),
+      ...(clarification ? { clarification } : {}),
+      ...(team.prepare.length ? { prepare: (onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators: team.prepare, lead: backendAgent, model: modelConfig, userText, ...(body.teamMode === "auto" && !manualCollaborators.length ? { phase: "prepare" as const, executionContext: JSON.stringify({ workspace: backendAgent?.workspace }) } : {}), ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), signal, collaborationMode: team.mode, planOnly: body.workflowMode === "plan", onProgress }) } : {}),
+      ...(team.review.length ? { review: (answer: string, run: WorkRun, onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators: team.review, lead: backendAgent, model: modelConfig, userText: run.goal, signal, collaborationMode: "sequential", phase: "review", executionContext: JSON.stringify({ workspace: run.workspace, answer: answer.slice(-1600), receipts: run.receipts.slice(-12).map((receipt) => ({ agentId: receipt.agentId, action: receipt.action, state: receipt.state, facts: receipt.facts })) }).slice(0, 9000), ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), onProgress }) } : {}),
       options: { mode: policy.resolvedMode, customer, profile, modelProfileId: modelConfig.profileId, projectOnly: projectContext?.project.memoryMode === "project-only",
         codeArtifact, browserLookup, weatherLookup, workDomain: body.experience === "work" ? await chooseWorkDomain({ text: userText, agent: backendAgent ? { id: backendAgent.id, type: backendAgent.type, agentType: backendAgent.agentType, roleIds: backendAgent.roleIds } : undefined }) : "sales", continuation: false, ...(body.workflowMode !== "plan" && body.experience === "work" && backendAgent ? { workAgentId: backendAgent.id, workAgentPermissions: backendAgent.permissions ?? { read: true, create: false, modify: false, delete: false, tools: false } } : {}) },
       abortSignal: request.signal,

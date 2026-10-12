@@ -26,9 +26,9 @@ export function WorkSummaryPanel({ agentId, workspace, busy = false, progress = 
   const error = errorCandidate && errorCandidate.agentId === agentId ? errorCandidate.message : "";
   const members = useMemo(() => {
     const latest = new Map<string, AgentProgress>();
-    for (const record of progress) if (!latest.has(record.agentId) || latest.get(record.agentId)!.round <= record.round) latest.set(record.agentId, record);
+    for (const record of progress) if (record.agentId !== agentId && (!latest.has(record.agentId) || latest.get(record.agentId)!.round <= record.round)) latest.set(record.agentId, record);
     return [...latest.values()];
-  }, [progress]);
+  }, [progress, agentId]);
   const counts = { running: members.filter(member => member.state === "running").length, completed: members.filter(member => member.state === "completed").length, failed: members.filter(member => member.state === "failed" || member.state === "cancelled").length };
 
   useEffect(() => {

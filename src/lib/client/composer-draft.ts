@@ -10,6 +10,7 @@ export type ComposerDraft = {
   agentId?: string;
   collaboratorIds: string[];
   collaborationMode?: CollaborationMode;
+  teamMode?: "auto" | "single" | "manual";
   capabilityIds: string[];
   workflowMode: "normal" | "goal" | "plan";
   goal: string;
@@ -48,6 +49,7 @@ export function readComposerDraft(key: string): ComposerDraft | null {
       agentId: typeof value.agentId === "string" ? value.agentId : undefined,
       collaboratorIds: strings(value.collaboratorIds),
       collaborationMode,
+      teamMode: value.teamMode === "single" || value.teamMode === "manual" ? value.teamMode : "auto",
       capabilityIds: strings(value.capabilityIds),
       workflowMode,
       goal: typeof value.goal === "string" ? value.goal.slice(0, 500) : "",

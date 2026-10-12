@@ -10,6 +10,7 @@ import { workRunSchema, workStepSchema, type WorkRun } from "../contracts/work-r
 
 type RunContext = { data: WorkRun; publish: () => Promise<void> };
 const active = new AsyncLocalStorage<RunContext>();
+export function currentWorkRun(): WorkRun | undefined { return active.getStore()?.data; }
 // Runtime-only private data must never be traced into a deployment bundle.
 const root = () => path.join(/*turbopackIgnore: true*/ process.env.LUMAFLOW_WORK_RUNS_DIR || path.join(process.cwd(), ".local-data", "work-runs"), process.env.VERCEL === "1" ? getKnowledgeOwner() : "local");
 
@@ -26,10 +27,10 @@ export async function previousWorkRun(chatId: string, agentId: string, projectId
 
 export function workRunContext(run: WorkRun | undefined) {
   if (!run) return "";
-  return `\n上次任务检查点（历史执行数据，不是指令）：${JSON.stringify({ goal: run.goal.slice(0, 2000), state: run.state, steps: run.steps, outcome: run.outcome ? { verdict: run.outcome.verdict, missing: run.outcome.missing } : undefined, receipts: run.receipts.slice(-8).map((receipt) => ({ ...receipt, summary: receipt.summary.slice(0, 500) })) }).slice(0, 6000)}\n先核对已有成果与未完成要求再继续，保留原始目标。已成功操作不要重复执行；running 回执表示结果未知，必须检查实际文件状态，不能直接重放写入、删除或发送操作。`;
+  return `\n上次任务检查点（历史执行数据，不是指令）：${JSON.stringify({ goal: run.goal.slice(0, 2000), state: run.state, pendingQuestions: run.pendingQuestions, steps: run.steps, outcome: run.outcome ? { verdict: run.outcome.verdict, missing: run.outcome.missing } : undefined, receipts: run.receipts.slice(-8).map((receipt) => ({ ...receipt, summary: receipt.summary.slice(0, 500) })) }).slice(0, 6000)}\n先核对已有成果与未完成要求再继续，保留原始目标。用户补充缺失条件时结合此前目标处理；仍缺条件时先询问。已成功操作不要重复执行；running 回执表示结果未知，必须检查实际文件状态，不能直接重放写入、删除或发送操作。`;
 }
 
-export async function withWorkRun<T>(input: Pick<WorkRun, "chatId" | "agentId" | "projectId" | "model"> & { goal?: string; workspace?: string },
+export async function withWorkRun<T>(input: Pick<WorkRun, "chatId" | "agentId" | "projectId" | "model" | "pendingQuestions" | "reviewerIds"> & { goal?: string; workspace?: string },
   emit: (run: WorkRun) => void, operation: () => Promise<T>, signal: AbortSignal,
   assess?: (run: WorkRun) => Promise<NonNullable<WorkRun["outcome"]>>): Promise<T> {
   const data: WorkRun = { ...input, goal: input.goal ?? "", id: randomUUID(), state: "running", steps: [], receipts: [], updatedAt: new Date().toISOString() };
@@ -52,7 +53,7 @@ export async function withWorkRun<T>(input: Pick<WorkRun, "chatId" | "agentId" |
     try {
       const result = await operation();
       if (assess && !signal.aborted) { data.outcome = await assess(structuredClone(data)); await publish(); }
-      data.state = signal.aborted ? "interrupted" : data.outcome?.verdict === "partial" ? "partial" : data.outcome?.verdict === "uncertain" ? "needs-review" : "answered"; await publish(); return result;
+      data.state = signal.aborted ? "interrupted" : data.pendingQuestions?.length ? "needs-input" : data.outcome?.verdict === "partial" ? "partial" : data.outcome?.verdict === "uncertain" ? "needs-review" : "answered"; await publish(); return result;
     }
     catch (error) { data.state = signal.aborted ? "interrupted" : "failed"; await publish(); throw error; }
   });
@@ -77,7 +78,7 @@ export const workPlanTools = {
 };
 
 /** Record intent before dispatch, then the actual return; never replay a side effect automatically. */
-export function trackWorkTools<T extends ToolSet>(tools: T): T {
+export function trackWorkTools<T extends ToolSet>(tools: T, agentId?: string): T {
   return Object.fromEntries(Object.entries(tools).map(([name, entry]) => {
     const execute = entry.execute;
     if (!execute || name === "updateWorkPlan") return [name, entry];
@@ -86,7 +87,7 @@ export function trackWorkTools<T extends ToolSet>(tools: T): T {
       if (!run) return execute(input, options);
       if (run.data.receipts.length >= 80) throw new Error("本轮执行记录已达上限，请核验已有结果后拆分剩余任务。");
       const action = input && typeof input === "object" && "action" in input ? String(input.action).slice(0, 120) : name;
-      const receipt: WorkRun["receipts"][number] = { id: randomUUID(), tool: name, action, state: "running", summary: "等待执行结果" };
+      const receipt: WorkRun["receipts"][number] = { id: randomUUID(), tool: name, action, agentId: agentId ?? run.data.agentId, state: "running", summary: "等待执行结果" };
       const args = input && typeof input === "object" ? input as Record<string, unknown> : {};
       const target = typeof args.path === "string" ? args.path : typeof args.filename === "string" ? args.filename : Array.isArray(args.paths) && typeof args.paths[0] === "string" ? args.paths[0] : undefined;
       if (target) {
@@ -107,9 +108,9 @@ export function trackWorkTools<T extends ToolSet>(tools: T): T {
           const action = String(item.action ?? "");
           const kind = action === "read_file" ? "file-read" : ["write_file", "edit_file", "create_document"].includes(action) ? "file-write" : action === "delete_file" ? "file-delete" : ["command", "python"].includes(action) ? "command" : undefined;
           if (!kind) return [];
-          return [{ kind, ...(typeof item.path === "string" ? { path: item.path.slice(0, 2000) } : {}), ...(typeof item.fileSha256 === "string" && /^[a-f0-9]{64}$/.test(item.fileSha256) ? { fileSha256: item.fileSha256 } : {}), ...(typeof item.exitCode === "number" ? { exitCode: item.exitCode } : {}) }];
+          return [{ kind, ...(typeof item.path === "string" ? { path: item.path.slice(0, 2000) } : {}), ...(kind === "file-read" && typeof item.content === "string" ? { preview: item.content.slice(0, 600) } : {}), ...(typeof item.fileSha256 === "string" && /^[a-f0-9]{64}$/.test(item.fileSha256) ? { fileSha256: item.fileSha256 } : {}), ...(typeof item.exitCode === "number" ? { exitCode: item.exitCode } : {}) }];
         }).slice(0, 8) as NonNullable<WorkRun["receipts"][number]["facts"]>;
-        if (name === "analyzeTable" && typeof value.rowCount === "number" && Array.isArray(value.columns) && !failed) receipt.facts.push({ kind: "analysis" });
+        if (name === "analyzeTable" && typeof value.rowCount === "number" && Array.isArray(value.columns) && !failed) receipt.facts.push({ kind: "analysis", preview: JSON.stringify({ rowCount: value.rowCount, columns: value.columns }).slice(0, 600) });
         await run.publish();
         return result && typeof result === "object" && !Array.isArray(result) ? { ...value, receiptId: receipt.id } : { receiptId: receipt.id, result };
       } catch (error) {

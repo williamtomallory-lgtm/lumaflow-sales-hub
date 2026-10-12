@@ -301,6 +301,7 @@ export const assistantRequestSchema = z.object({
   agentId: cowAgentIdSchema.optional(),
   collaboratorAgentIds: z.array(cowAgentIdSchema).max(3).refine((ids) => new Set(ids).size === ids.length, "Duplicate Agent IDs").default([]),
   collaborationMode: collaborationModeSchema.optional(),
+  teamMode: z.enum(["auto", "single", "manual"]).default("auto"),
   // Kept for the generic Chat experience and backward-compatible callers.
   agentRoleId: z.enum(["sales-consultant", "wechat-service", "sales-review", "moments-operator"]).optional(),
   knowledgeDocumentIds: z.array(z.string().uuid()).max(50).refine((ids) => new Set(ids).size === ids.length, "Duplicate document IDs").default([]),
