@@ -4,6 +4,7 @@ import argparse
 import json
 import shutil
 import subprocess
+import sys
 import urllib.parse
 from pathlib import Path
 import zipfile
@@ -79,9 +80,22 @@ def install(bundle, manifest, root, cache, offline=False, verify_only=False):
     print(f"Installed and verified: {bundle['id']} (model not started)", flush=True)
 
 
+def install_image(root, cache, offline=False, verify_only=False):
+    """Delegate the image profile to its pinned GGUF installer."""
+    installer = Path(__file__).with_name('install-qwen-image-gguf.py')
+    if not installer.is_file():
+        raise RuntimeError(f'Qwen Image installer is missing: {installer}')
+    command = [sys.executable, str(installer), '--project-root', str(root), '--cache', str(cache)]
+    if offline:
+        command.append('--offline')
+    if verify_only:
+        command.append('--verify-only')
+    subprocess.run(command, check=True)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--models', nargs='+', choices=['all', 'bonsai', 'image', 'naive', 'muse', 'bonsai-runtime'], default=['all'])
+    p.add_argument('--models', nargs='+', choices=['all', 'bonsai', 'image', 'muse', 'bonsai-runtime'], default=['all'])
     p.add_argument('--root', type=Path, default=ROOT)
     p.add_argument('--cache', type=Path)
     p.add_argument('--manifest', type=Path, default=ROOT / 'config/local-model-bundle.json')
@@ -96,6 +110,8 @@ def main():
     chosen = set(a.models)
     if 'bonsai' in chosen:
         chosen.add('bonsai-runtime')
+    if 'all' in chosen or 'image' in chosen:
+        install_image(a.root.resolve(), cache.resolve(), a.offline, a.verify_only)
     for bundle in manifest['bundles']:
         if 'all' in chosen or bundle['id'] in chosen:
             install(bundle, manifest, a.root.resolve(), cache.resolve(), a.offline, a.verify_only)

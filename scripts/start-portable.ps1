@@ -1,13 +1,13 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([switch]$NoBrowser, [switch]$StartBonsai, [int]$Port = 3000)
+param([switch]$NoBrowser, [switch]$StartBonsai, [switch]$EnableLocalModels, [switch]$Development, [int]$Port = 3000)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'bootstrap.ps1')
 Initialize-LumaFlowLog | Out-Null
 $node = Resolve-LumaFlowNode -Root $projectRoot
 $env:PATH = (Split-Path -Parent $node.NodePath) + [IO.Path]::PathSeparator + $env:PATH
-$env:LOCAL_MODEL_SWITCHING = if ($StartBonsai) { 'true' } else { 'false' }
+$env:LOCAL_MODEL_SWITCHING = if ($StartBonsai -or $EnableLocalModels) { 'true' } else { 'false' }
 $bridgePath = Join-Path $projectRoot '.local-data\agent-bridge.json'
 if (-not (Test-Path -LiteralPath $bridgePath)) { throw 'Run Setup-LumaFlow.cmd first to initialize the private knowledge bridge.' }
 $bridge = Get-Content -LiteralPath $bridgePath -Raw | ConvertFrom-Json
@@ -36,7 +36,8 @@ if (-not (Test-Service 'http://127.0.0.1:9876/api/health')) {
 if (-not (Test-Service "http://127.0.0.1:$Port/api/v1/health")) {
     if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) { throw "Website port $Port is occupied by another service." }
     Ensure-LumaFlowDependencies -Node $node -Root $projectRoot
-    $argsString = @('--env-file-if-exists=.env.local', 'node_modules/next/dist/bin/next', 'dev', '--hostname', '127.0.0.1', '--port', "$Port") -join ' '
+    $webMode = if (-not $Development -and (Test-Path -LiteralPath (Join-Path $projectRoot '.next\BUILD_ID'))) { 'start' } else { 'dev' }
+    $argsString = @('--env-file-if-exists=.env.local', 'node_modules/next/dist/bin/next', $webMode, '--hostname', '127.0.0.1', '--port', "$Port") -join ' '
     Start-Process -FilePath $node.NodePath -ArgumentList $argsString -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory "website-$stamp.out.log") -RedirectStandardError (Join-Path $logDirectory "website-$stamp.err.log") | Out-Null
 }
 foreach ($service in @('http://127.0.0.1:9876/api/health', "http://127.0.0.1:$Port/api/v1/health")) {
@@ -48,4 +49,4 @@ foreach ($service in @('http://127.0.0.1:9876/api/health', "http://127.0.0.1:$Po
     if (-not $ready) { throw "Service did not become ready: $service. See .local-data/logs." }
 }
 if (-not $NoBrowser) { Start-Process "http://127.0.0.1:$Port/" }
-Write-Host "LumaFlow ready at http://127.0.0.1:$Port/. Model inference is $(if ($StartBonsai) { 'enabled for Bonsai' } else { 'disabled' })."
+Write-Host "LumaFlow ready at http://127.0.0.1:$Port/. Local model switching is $(if ($StartBonsai -or $EnableLocalModels) { 'enabled' } else { 'disabled' })."

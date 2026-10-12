@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
 import { z } from "zod";
 import { assistantModelProfileIdSchema } from "@/lib/contracts/api";
 import { ensureLocalModel, leaseLocalModel } from "@/lib/ai/local-model-runtime";
@@ -36,10 +34,12 @@ export async function POST(request: Request) {
       throw new ApiHttpError(403, "LOCAL_IMAGE_ONLY", "图片处理仅在你电脑上的本机项目开放。");
     }
     const body = await readValidatedJson(request, bodySchema, 4 * 1024 * 1024);
-    const checkpoint = path.join(process.cwd(), ".local-data/models/Qwen-Image-2.1-3GB/LOCAL_IMAGE_MODEL.json");
-    if (!existsSync(checkpoint)) throw new ApiHttpError(503, "IMAGE_MODEL_NOT_INSTALLED", "Qwen-Image-2.1 本机压缩权重尚未安装完成，暂时无法生成或编辑图片。");
     restore = body.restoreModelProfileId;
     release = await leaseLocalModel("image");
+    const health = await fetch("http://127.0.0.1:8084/health", { cache: "no-store", signal: AbortSignal.timeout(3_000) }).then(async (response) => ({ response, payload: await response.json().catch(() => null) }));
+    if (!health.response.ok || health.payload?.status !== "ok" || health.payload?.quantization !== "gguf-q4_k") {
+      throw new ApiHttpError(503, "IMAGE_MODEL_NOT_INSTALLED", "Qwen-Image-2.1 GGUF 本机图片模型尚未安装完成，暂时无法生成或编辑图片。");
+    }
     const jobId = body.jobId ?? crypto.randomUUID();
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(590_000)]);
     const cancel = () => { void fetch("http://127.0.0.1:8084/v1/image-operations/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId }), signal: AbortSignal.timeout(2000) }).catch(() => undefined); };
@@ -54,7 +54,13 @@ export async function POST(request: Request) {
     } finally { signal.removeEventListener("abort", cancel); }
     const payload = await response.json();
     if (payload?.error?.code === "IMAGE_OPERATION_CANCELLED") throw new ApiHttpError(499, "IMAGE_OPERATION_CANCELLED", "图片操作已停止。");
-    if (!response.ok || !payload.data) throw new ApiHttpError(503, "IMAGE_OPERATION_FAILED", "本机图片模型处理失败，请缩小图片或稍后重试。");
+    if (!response.ok || !payload.data) {
+      if (payload?.error?.code === "IMAGE_ANALYZE_UNSUPPORTED") {
+        throw new ApiHttpError(422, "IMAGE_ANALYZE_UNSUPPORTED", "当前本机 Qwen Image 2.1 后端只支持生成和编辑，图片分析暂不支持。");
+      }
+      if (payload?.error?.code === "IMAGE_OPERATION_CANCELLED") throw new ApiHttpError(499, "IMAGE_OPERATION_CANCELLED", "图片操作已停止。");
+      throw new ApiHttpError(503, "IMAGE_OPERATION_FAILED", "本机图片模型处理失败，请缩小图片或稍后重试。");
+    }
     const images = z.array(z.object({ filename: z.string().regex(/^[a-f0-9]{32}\.png$/), width: z.number().int().positive(), height: z.number().int().positive() })).parse(payload.data.images);
     return apiJson({ data: {
       text: z.string().parse(payload.data.text), operation: body.operation, model: "Qwen/Qwen-Image-2.1",

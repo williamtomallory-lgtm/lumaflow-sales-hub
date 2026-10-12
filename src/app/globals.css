@@ -31,6 +31,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .app-shell { min-height: 100vh; }
 
+.chat-shell { --sidebar: 260px; }
+.chat-shell .sidebar { padding: 18px 12px 12px; }
+.chat-shell .nav-item { min-height: 34px; font-size: 12px; }
+.chat-shell .new-chat-button { min-height: 36px; margin-bottom: 14px; font-size: 12px; }
 .chat-shell .main-area { background: #fcfdfa; }
 .chat-shell .topbar { height: 52px; background: #fcfdfa; border-bottom: 0; }
 .chat-topbar-label { font-size: 10px; color: #a1a89c; }
@@ -286,3 +290,22 @@ kbd { padding: 3px 6px; font-family: inherit; font-size: 8px; border: 1px solid 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Compact local AI shell. */
+.chat-shell { --sidebar: 240px; }
+.chat-shell .topbar { height: 40px; padding-inline: 20px; }
+.chat-shell .brand strong { font-size: 14px; }
+.chat-shell .brand-mark { width: 28px; height: 28px; }
+.chat-shell .sidebar svg { width: 16px; height: 16px; }
+.chat-shell .nav-item, .chat-shell .new-chat-button { font-size: 11px; min-height: 32px; }
+
+/* Keep sidebar controls visible at every desktop height. */
+.chat-shell .sidebar { height: 100dvh; padding: 12px 10px 10px; overflow: hidden; }
+.chat-shell .brand { flex-shrink: 0; padding-bottom: 12px; }
+.chat-shell .new-chat-button { flex-shrink: 0; margin-bottom: 8px; }
+.chat-shell .nav-groups { overflow: hidden; gap: 8px; }
+.chat-shell .nav-group { flex-shrink: 0; }
+.chat-shell .chat-sidebar-panel:not([hidden]) { flex: 1 1 0; min-height: 0; }
+.chat-shell .nav-label { padding-bottom: 4px; }
+.chat-shell .profile-row { padding-top: 8px; }
+.chat-shell .profile-row .avatar { width: 28px; height: 28px; }

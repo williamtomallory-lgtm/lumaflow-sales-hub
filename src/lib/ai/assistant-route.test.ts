@@ -9,7 +9,7 @@ vi.mock("@/lib/server/data-repository", async () => {
 });
 
 type WireMessage = { role: string; content: string };
-type WireRequest = { model: string; max_tokens: number; reasoning_effort?: string; messages: WireMessage[]; tools: Array<{ function: { name: string } }> };
+type WireRequest = { model: string; max_tokens: number; reasoning_effort?: string; tool_choice?: string; messages: WireMessage[]; tools: Array<{ function: { name: string } }> };
 
 function completion(delta: object, finishReason: string) {
   const base = { id: "in-memory-test", object: "chat.completion.chunk", created: 1, model: "lumaflow-qwen" };
@@ -52,6 +52,37 @@ afterEach(() => {
 });
 
 describe("assistant route with an in-memory model protocol", () => {
+  it("reserves the last step for a final answer after repeated empty product searches", async () => {
+    const calls: WireRequest[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as WireRequest;
+      calls.push(body);
+      return body.tool_choice === "none"
+        ? completion({ content: "暂无匹配产品，不能确认型号或规格。" }, "stop")
+        : toolCall("searchProducts", { query: "nonexistent-fixture-product", limit: 1 });
+    }));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage]));
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    expect(calls).toHaveLength(8);
+    expect(calls.at(-1)?.tool_choice).toBe("none");
+    expect(calls.at(-1)?.messages.map((message) => message.content).join("\n")).toContain("本轮工具查询已结束");
+    expect(raw).toContain("暂无匹配产品");
+    expect(raw).toContain('"finishReason":"stop"');
+    expect(raw).not.toContain("检查连接后重试");
+  });
+
+  it("distinguishes an empty model answer from a connection failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => completion({ content: "" }, "stop")));
+    const { POST } = await import("../../app/api/v1/assistant/chat/route");
+    const response = await POST(request([userMessage]));
+    const raw = await response.text();
+    expect(raw).toContain("没有生成答复");
+    expect(raw).toContain('"finishReason":"error"');
+    expect(raw).not.toContain("检查连接后重试");
+  });
+
   it("applies a current Qwen3 profile and exposes the resolved policy without streaming reasoning", async () => {
     let upstreamBody: WireRequest | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {

@@ -49,6 +49,21 @@ export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, r
     try { await projectRequest(`/api/v1/assistant/history?id=${chatId}`, "PATCH", patch); if (id) await loadChats(id); window.dispatchEvent(new Event("lumaflow-chat-history-updated")); }
     catch (issue) { onToast?.((issue as Error).message); }
   }
+  async function deleteLocalChat(chatId: string, projectId?: string) {
+    const beforeDelete = new CustomEvent("lumaflow-chat-history-before-delete", {
+      detail: { id: chatId, projectId: projectId || null },
+      cancelable: true,
+    });
+    if (!window.dispatchEvent(beforeDelete)) return;
+    try {
+      await projectRequest(`/api/v1/assistant/history?id=${encodeURIComponent(chatId)}`, "DELETE");
+      setRecentChats((current) => current.filter((item) => item.id !== chatId));
+      setProjectChats((current) => Object.fromEntries(Object.entries(current).map(([id, chats]) => [id, chats.filter((item) => item.id !== chatId)])));
+      window.dispatchEvent(new CustomEvent("lumaflow-chat-history-deleted", { detail: { id: chatId, projectId: projectId || null } }));
+      window.dispatchEvent(new Event("lumaflow-chat-history-updated"));
+      onToast?.("对话已删除");
+    } catch (issue) { onToast?.((issue as Error).message); }
+  }
   useEffect(() => { const refreshRecent = () => { void projectRequest<LocalChatSummary[]>("/api/v1/assistant/history").then(setRecentChats).catch(() => {}); }; refreshRecent(); window.addEventListener("lumaflow-chat-history-updated", refreshRecent); return () => window.removeEventListener("lumaflow-chat-history-updated", refreshRecent); }, []);
   useEffect(() => {
     const refreshExpanded = () => { for (const id of Object.keys(expanded).filter((id) => expanded[id])) void projectRequest<{ chats: LocalChatSummary[] }>(`/api/v1/projects?id=${id}`).then((result) => setProjectChats((old) => ({ ...old, [id]: result.chats }))).catch(() => {}); };
@@ -186,6 +201,19 @@ export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, r
       onToast?.(issue instanceof Error ? issue.message : "微信对话更新失败");
     }
   }
+  async function deleteWechatConversation(id: string) {
+    try {
+      const response = await fetch("/api/v1/wechat-agent", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ action: "deleteConversation", conversationId: id }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error?.message || "微信对话删除失败");
+      setWechatChats((current) => current.filter((item) => item.id !== id));
+      setWechatSearchText((current) => { const next = { ...current }; delete next[id]; return next; });
+      window.dispatchEvent(new CustomEvent("lumaflow-wechat-agent-updated", { detail: { deletedConversationId: id } }));
+      onToast?.("微信对话已删除");
+    } catch (issue) {
+      onToast?.(issue instanceof Error ? issue.message : "微信对话删除失败");
+    }
+  }
   function close() { if (busy) return; setCreating(false); setError(""); createButton.current?.focus(); }
   async function create() {
     if (busy || !name.trim()) return;
@@ -247,9 +275,9 @@ export function ProjectSidebar({ selectedId, onSelect, onToast, recentContent, r
     <div className={styles.projectRegion}><div className={styles.projectSection} aria-label="项目"><header><strong>项目</strong><button ref={createButton} aria-label="创建项目" title="创建项目" onClick={() => setCreating(true)}><Plus size={17} /></button></header>
     {projects.length === 0 && <p className={styles.sidebarHint}>点击加号创建项目</p>}
     {[...projects].sort((a, b) => (a.sectionName || "").localeCompare(b.sectionName || "")).map((project, index, list) => <div className={styles.projectGroup} key={project.id}>{project.sectionName && (index === 0 || list[index - 1].sectionName !== project.sectionName) && <h4 className={styles.sectionHeading}>{project.sectionName}</h4>}<div className={styles.projectRow} onContextMenu={(event) => { event.preventDefault(); setProjectMenu({ project, x: event.clientX, y: event.clientY }); }}><button aria-label={`${expanded[project.id] ? "收起" : "展开"}项目 ${project.name}`} aria-expanded={Boolean(expanded[project.id])} onClick={() => { const opening = !expanded[project.id]; setExpanded((old) => ({ ...old, [project.id]: opening })); if (opening) void loadChats(project.id); }}>{expanded[project.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button><button className={selectedId === project.id ? styles.selected : ""} onClick={() => onSelect(project.id)} title={`${project.name}\n${project.instructions || "尚未设置项目规则"}\n${project.knowledgeBaseIds.length} 个文件 · ${project.sources.length} 份资料`}><FolderOpen size={16} /><span>{project.name}</span>{project.pinned && <Pin size={12} />}</button><button className={styles.previewButton} aria-label={`预览项目 ${project.name}`} title="预览项目" onClick={() => onSelect(project.id)}><Eye size={15} /></button><button aria-label={`项目更多操作 ${project.name}`} aria-haspopup="menu" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setProjectMenu({ project, x: rect.right, y: rect.bottom }); }}><MoreHorizontal size={16} /></button></div>
-    {expanded[project.id] && <div className={styles.projectChildren}>{loadingProject === project.id ? <p>正在读取…</p> : <ConversationHistoryList hideToolbar items={projectChats[project.id] || []} onSelect={(id) => { const chat = projectChats[project.id]?.find((item) => item.id === id); if (onOpenHistory && chat) onOpenHistory(chat.hasImage ? "image" : chat.experience, id, project.id); else onOpenChat?.(id, project.id); }} onRename={(id, title) => void changeChat(id, { title }, project.id)} onPin={(id, pinned) => void changeChat(id, { pinned }, project.id)} />}</div>}</div>)}
+    {expanded[project.id] && <div className={styles.projectChildren}>{loadingProject === project.id ? <p>正在读取…</p> : <ConversationHistoryList hideToolbar items={projectChats[project.id] || []} onSelect={(id) => { const chat = projectChats[project.id]?.find((item) => item.id === id); if (onOpenHistory && chat) onOpenHistory(chat.hasImage ? "image" : chat.experience, id, project.id); else onOpenChat?.(id, project.id); }} onRename={(id, title) => void changeChat(id, { title }, project.id)} onPin={(id, pinned) => void changeChat(id, { pinned }, project.id)} onDelete={(id) => void deleteLocalChat(id, project.id)} />}</div>}</div>)}
     </div></div>
-    {recentContent && <div className={styles.historySection} aria-label="对话记录"><div className={styles.historyTabs} role="tablist" aria-label="对话分类">{(Object.keys(historyCategoryLabels) as HistoryCategory[]).map((category) => <button key={category} role="tab" aria-selected={historyCategory === category} onClick={() => selectHistoryCategory(category)}>{historyCategoryLabels[category]}</button>)}</div><div className={styles.historyPanel} role="tabpanel" aria-label={`${historyCategoryLabels[historyCategory]} 对话`}><header><strong>{historyCategoryLabels[historyCategory]} 对话</strong><button type="button" aria-label={`新建${historyCategoryLabels[historyCategory]}对话`} title={`新建${historyCategoryLabels[historyCategory]}对话`} onClick={startHistory}><Plus size={15} /></button></header><div className={styles.historyContent}><div className={styles.portalHistory} hidden data-history-source={recentAvailable ? "portal" : "local"}>{renderedRecentContent}</div><ConversationHistoryList key={historyCategory} items={historyItems} onSearchChange={historySearchChange} onSelect={openHistory} onRename={(id, title) => historyCategory === "wechat" ? void updateWechatConversation(id, { title }) : void changeChat(id, { title })} onPin={(id, pinned) => historyCategory === "wechat" ? void updateWechatConversation(id, { pinned }) : void changeChat(id, { pinned })} /></div>{historyCategory === "wechat" && wechatCursor && <button type="button" className={styles.historyMore} disabled={wechatPaging} onClick={() => void loadMoreWechat()}>{wechatPaging ? "正在读取…" : "加载更多会话"}</button>}</div></div>}
+    {recentContent && <div className={styles.historySection} aria-label="对话记录"><div className={styles.historyTabs} role="tablist" aria-label="对话分类">{(Object.keys(historyCategoryLabels) as HistoryCategory[]).map((category) => <button key={category} role="tab" aria-selected={historyCategory === category} onClick={() => selectHistoryCategory(category)}>{historyCategoryLabels[category]}</button>)}</div><div className={styles.historyPanel} role="tabpanel" aria-label={`${historyCategoryLabels[historyCategory]} 对话`}><header><strong>{historyCategoryLabels[historyCategory]} 对话</strong><button type="button" aria-label={`新建${historyCategoryLabels[historyCategory]}对话`} title={`新建${historyCategoryLabels[historyCategory]}对话`} onClick={startHistory}><Plus size={15} /></button></header><div className={styles.historyContent}><div className={styles.portalHistory} hidden data-history-source={recentAvailable ? "portal" : "local"}>{renderedRecentContent}</div><ConversationHistoryList key={historyCategory} items={historyItems} onSearchChange={historySearchChange} onSelect={openHistory} onRename={(id, title) => historyCategory === "wechat" ? void updateWechatConversation(id, { title }) : void changeChat(id, { title })} onPin={(id, pinned) => historyCategory === "wechat" ? void updateWechatConversation(id, { pinned }) : void changeChat(id, { pinned })} onDelete={(id) => historyCategory === "wechat" ? void deleteWechatConversation(id) : void deleteLocalChat(id)} /></div>{historyCategory === "wechat" && wechatCursor && <button type="button" className={styles.historyMore} disabled={wechatPaging} onClick={() => void loadMoreWechat()}>{wechatPaging ? "正在读取…" : "加载更多会话"}</button>}</div></div>}
     {modal}
     {projectMenu && <ProjectContextMenu project={projectMenu.project} position={projectMenu} onClose={closeProjectMenu} onEdit={() => setEditingProject({ project: projectMenu.project, remove: false })} onRemove={() => setEditingProject({ project: projectMenu.project, remove: true })} onSection={() => setSectionProject(projectMenu.project)} onToast={onToast} />}
     {sectionProject && <ProjectSectionDialog project={sectionProject} sections={[...new Set(projects.map((project) => project.sectionName).filter(Boolean))]} onClose={() => setSectionProject(null)} />}

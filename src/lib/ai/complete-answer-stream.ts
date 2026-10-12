@@ -7,6 +7,8 @@ type CallOptions = NonNullable<Parameters<typeof salesAgent.stream>[0]["options"
 
 function publicExecutionError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  if (/Model returned an empty final answer/.test(message)) return "模型完成了查询但没有生成答复。请重新生成；若仍无结果，请缩小查询范围。";
+  if (/Tool queries ended without a final answer/.test(message)) return "本轮查询已结束，但模型未完成最终答复。请重新生成，已有查询结果已保留。";
   if (/context size|context length|available context|too many tokens/i.test(message)) return "当前任务上下文超过本机模型容量。请分页读取文件、局部编辑或拆分任务，已有结果已保留。";
   if (/^(Chrome target page|CowAgent could not open Chrome|Browser (search|open|URL))/.test(message)) return message.slice(0, 250);
   if (/^(App|Click|Type|Move|Shortcut|WaitFor) requires /.test(message)) return message.slice(0, 250);
@@ -76,9 +78,10 @@ export async function completeAnswerResponse(input: {
           }
         } finally { reader.releaseLock(); }
         finishReason = await result.finishReason;
-        if (input.options.modelProfileId === "naive-n05-flash-int4-experimental" || finishReason !== "length" || !await result.text) break;
+        if (finishReason !== "length" || !await result.text) break;
       }
       signal.throwIfAborted();
+      if (finishReason === "tool-calls") throw new Error("Tool queries ended without a final answer");
       if (!fullText.trim()) throw new Error("Model returned an empty final answer");
       if (input.leadProgress) emit({ ...input.leadProgress, round: 3, state: finishReason !== "stop" ? "failed" : "completed", text: fullText.slice(0, 1600), recipientNames: ["全体成员"] });
       } catch (error) {

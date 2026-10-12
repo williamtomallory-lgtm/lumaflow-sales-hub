@@ -98,13 +98,13 @@ def main():
     parser.add_argument('--bundles', nargs='+', default=['all'])
     parser.add_argument('--verify-manifest', action='store_true')
     args = parser.parse_args()
+    if 'image' in args.bundles:
+        parser.error('The Image profile uses config/qwen-image-gguf-manifest.json and scripts/install-qwen-image-gguf.py; it is not a local ZIP bundle.')
     args.output.mkdir(parents=True, exist_ok=True)
     models = ROOT / '.local-data/models'
     plans = [
         ('bonsai', [(models / name, f'.local-data/models/{name}') for name in
                     ['Ternary-Bonsai-2-27B-PTQ1_0.gguf', 'Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf']]),
-        ('image', tree(models / 'Qwen-Image-2.1-3GB')),
-        ('naive', tree(models / 'Naive-N0.5-Flash-int4-48L-1E')),
         ('muse', tree(models / 'Muse-Glimmer-30B-Q1_0')),
         ('bonsai-runtime', [(ROOT / '.local-runtime/bonsai' / name,
                              f'.local-runtime/bonsai/{name}') for name in ['llama-cuda-12.4.zip', 'cudart-12.4.zip']]),

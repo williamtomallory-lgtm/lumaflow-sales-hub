@@ -1,7 +1,7 @@
 "use client";
 
 import { FolderOpen, Check, MoreHorizontal, Pencil, Pin, PinOff, Search, Share2, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./conversation-history-list.module.css";
 
@@ -72,6 +72,46 @@ export function ConversationHistoryList({ items, selectedId, onSelect, onRename,
     return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeEscape); };
   }, [menuId]);
 
+  useLayoutEffect(() => {
+    if (!menuId) return;
+
+    const reposition = () => {
+      const trigger = menuTriggerRef.current;
+      if (!trigger) return;
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const menuRect = menuRef.current?.getBoundingClientRect();
+      const menuWidth = menuRect && menuRect.width > 0 ? menuRect.width : 164;
+      const menuHeight = menuRect && menuRect.height > 0 ? menuRect.height : 160;
+      const margin = 8;
+      const gap = 4;
+      const viewportWidth = window.visualViewport?.width || window.innerWidth;
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      const maxLeft = Math.max(margin, viewportWidth - menuWidth - margin);
+      const left = Math.min(Math.max(margin, triggerRect.right - menuWidth), maxLeft);
+      const spaceBelow = viewportHeight - triggerRect.bottom - margin - gap;
+      const spaceAbove = triggerRect.top - margin - gap;
+      const openBelow = menuHeight <= spaceBelow || spaceBelow >= spaceAbove;
+      const preferredTop = openBelow ? triggerRect.bottom + gap : triggerRect.top - menuHeight - gap;
+      const maxTop = Math.max(margin, viewportHeight - menuHeight - margin);
+      const top = Math.min(Math.max(margin, preferredTop), maxTop);
+      setMenuPosition({ left, top });
+    };
+
+    reposition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", reposition);
+    viewport?.addEventListener("scroll", reposition);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      viewport?.removeEventListener("resize", reposition);
+      viewport?.removeEventListener("scroll", reposition);
+    };
+  }, [menuId]);
+
   function closeMenu() {
     setMenuId(null);
     setMenuPosition(null);
@@ -81,17 +121,15 @@ export function ConversationHistoryList({ items, selectedId, onSelect, onRename,
   function openMenu(event: React.MouseEvent<HTMLButtonElement>, id: string) {
     if (menuId === id) { closeMenu(); return; }
     menuTriggerRef.current = event.currentTarget;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const width = 164;
-    const estimatedHeight = 244;
-    const left = Math.min(Math.max(8, rect.right - width), Math.max(8, window.innerWidth - width - 8));
-    const top = rect.bottom + 4 + estimatedHeight <= window.innerHeight - 8 ? rect.bottom + 4 : Math.max(8, rect.top - estimatedHeight - 4);
-    setMenuPosition({ left, top });
+    // Render the portal first, then measure its actual height in the layout
+    // effect above. This avoids placing a short menu hundreds of pixels above
+    // the row simply because an optional action was not rendered.
+    setMenuPosition(null);
     setMenuId(id);
   }
 
   function beginRename(item: ConversationHistoryItem) {
-    setMenuId(null);
+    closeMenu();
     setEditingId(item.id);
     setEditingTitle(item.title);
   }
@@ -137,7 +175,7 @@ export function ConversationHistoryList({ items, selectedId, onSelect, onRename,
             {onPin && <button type="button" className={styles.pinAction} aria-label={item.pinned ? `取消置顶 ${item.title}` : `置顶 ${item.title}`} title={item.pinned ? "取消置顶" : "置顶"} onClick={() => onPin(item.id, !item.pinned)}><Pin size={14} /></button>}
             <div className={styles.menuWrap}>
               <button type="button" className={styles.more} aria-label={`更多操作 ${item.title}`} aria-expanded={menuOpen} aria-haspopup="menu" onClick={(event) => openMenu(event, item.id)}><MoreHorizontal size={17} /></button>
-              {menuOpen && menuPosition && typeof document !== "undefined" && createPortal(<div ref={menuRef} className={styles.menu} role="menu" style={{ left: menuPosition.left, top: menuPosition.top }} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button")); const current = buttons.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === "ArrowDown" ? (current + 1) % buttons.length : (current - 1 + buttons.length) % buttons.length; buttons[next]?.focus(); } }}>
+              {menuOpen && typeof document !== "undefined" && createPortal(<div ref={menuRef} className={styles.menu} role="menu" style={{ left: menuPosition?.left ?? 0, top: menuPosition?.top ?? 0, visibility: menuPosition ? "visible" : "hidden" }} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button")); const current = buttons.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === "ArrowDown" ? (current + 1) % buttons.length : (current - 1 + buttons.length) % buttons.length; buttons[next]?.focus(); } }}>
                 {onShare && <button ref={firstMenuItemRef} type="button" role="menuitem" onClick={() => { closeMenu(); onShare(item.id); }}><Share2 size={14} /> 分享</button>}
                 {onRename && <button ref={!onShare ? firstMenuItemRef : undefined} type="button" role="menuitem" onClick={() => { closeMenu(); beginRename(item); }}><Pencil size={14} /> 重命名</button>}
                 {onPin && <button ref={!onShare && !onRename ? firstMenuItemRef : undefined} type="button" role="menuitem" onClick={() => { closeMenu(); onPin(item.id, !item.pinned); }}>{item.pinned ? <PinOff size={14} /> : <Pin size={14} />} {item.pinned ? "取消置顶" : "置顶"}</button>}

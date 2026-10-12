@@ -88,8 +88,8 @@
   position: absolute;
   top: calc(-1 * var(--sprite-y));
   left: calc(-1 * var(--sprite-x));
-  width: 466.52%;
-  height: 355.71%;
+  width: var(--sprite-width, 466.52%);
+  height: var(--sprite-height, 345.33%);
   background-image: var(--sprite-url);
   background-position: 0 0;
   background-size: 100% 100%;

@@ -9,7 +9,6 @@ const runtimeGlobal = globalThis as typeof globalThis & { lumaflowModelRuntime?:
 const state = runtimeGlobal.lumaflowModelRuntime ??= { queue: Promise.resolve(), active: null, leases: 0 };
 const services: Record<string, { port: number; model: string }> = {
   configured: { port: 8081, model: "ternary-bonsai-2-27b" },
-  "naive-n05-flash-int4-experimental": { port: 8083, model: "naive-n0.5-flash-int4-48l-1e" },
   image: { port: 8084, model: "Qwen/Qwen-Image-2.1" },
 };
 
@@ -25,7 +24,7 @@ async function canReuseActive(profile: string) {
         catch { return false; }
       })),
     ]);
-    const settingsMatch = profile === "image" ? health?.quantization === "experimental-low-bit" : profile === "naive-n05-flash-int4-experimental" ? health?.gpu_packed_weights === true : true;
+    const settingsMatch = profile === "image" ? health?.quantization === "gguf-q4_k" : true;
     return settingsMatch && health?.status === "ok" && Array.isArray(models?.data) && models.data.some((model: { id?: string }) => model.id === target.model) && !otherServices.some(Boolean);
   } catch { return false; }
 }

@@ -259,7 +259,7 @@ export const followupListQuerySchema = listQuerySchema.extend({ status: z.enum([
 export const assistantReasoningModeSchema = z.enum(["fast", "normal", "deep", "light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantInferenceProfileSchema = z.enum(["light", "medium", "ultra", "instant", "high", "extra-high", "pro"]);
 export const assistantModelProfileIdSchema = z.enum([
-  "local-qwen3-8b", "local-qwen3-14b", "configured", "naive-n05-flash-int4-experimental",
+  "local-qwen3-8b", "local-qwen3-14b", "configured",
 ]);
 
 const assistantUiMessageSchema = z.object({

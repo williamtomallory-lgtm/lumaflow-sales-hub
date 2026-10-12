@@ -72,4 +72,25 @@ describe("ConversationHistoryList", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "删除" }));
     expect(onDelete).toHaveBeenCalledWith("one");
   });
+
+  it("keeps the portalled menu next to its row and inside the viewport", () => {
+    renderList();
+    const trigger = screen.getByRole("button", { name: "更多操作 客户资料整理" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 860,
+      y: 700,
+      top: 700,
+      right: 940,
+      bottom: 728,
+      left: 860,
+      width: 80,
+      height: 28,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(menu).toHaveStyle({ left: "776px", top: "536px" });
+    expect(within(menu).getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+  });
 });

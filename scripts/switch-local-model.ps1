@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('configured', 'naive-n05-flash-int4-experimental')]
+    [ValidateSet('configured')]
     [string]$Profile,
     [int]$TimeoutSeconds = 90,
     [switch]$NoWait,

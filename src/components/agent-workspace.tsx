@@ -33,7 +33,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { QUICK_QUESTIONS } from "@/config/ui-static";
 import { DEFAULT_AGENT_ROLE_ID, getAgentRoleOption, isAgentRoleId, type AgentRoleId } from "@/config/agent-roles";
@@ -207,14 +207,16 @@ function safeImageOperationImages(images: ImageOperationOutput[]): ImageOperatio
 }
 
 function imageOperationAnswerForDisplay(answer: string): string {
-  return extractImageOperationArtifacts(answer).reduce((current, image) => {
-    const label = image.filename.replace(/[\[\]]/g, "");
-    const segments = current.split(image.url);
-    return segments.reduce((result, segment, index) => {
-      if (index === segments.length - 1) return result + segment;
-      return result + segment + (segment.endsWith("](") ? image.url : `[${label}](${image.url})`);
-    }, "");
-  }, answer);
+  // The saved answer keeps asset references for history; cards expose downloads.
+  // Do not repeat the internal filename list in the visible conversation.
+  if (!extractImageOperationArtifacts(answer).length) return answer;
+  let inFileList = false;
+  return answer.split(/\r?\n/).filter((line) => {
+    if (/^\s*图片文件\s*[:：]/.test(line)) { inFileList = true; return false; }
+    if (inFileList && /^\s*[-*•]\s/.test(line)) return false;
+    if (inFileList) inFileList = false;
+    return !/\/api\/v1\/assistant\/image-operations\/assets\/[0-9a-f]{32}\.png/i.test(line);
+  }).join("\n").trim();
 }
 
 function imageOperationAnswerText(text: string, images: ImageOperationOutput[]) {
@@ -997,6 +999,11 @@ export function AgentWorkspace({
   const liveSavedTurn = liveBranch?.turn;
   const showLiveTurn = Boolean(question && (busy || liveSavedTurn || !activeSession?.turns.some((turn) => turn.id === liveTurnId)));
   const showWorkSummary = experience === "work" && (busy || showLiveTurn || pastTurns.length > 0);
+  // The Image gallery belongs to the empty composer state. Once a prompt is
+  // submitted, the conversation owns the stage and the composer returns to
+  // the bottom edge; keeping the gallery mounted would push that composer
+  // back up during streaming and after an image error.
+  const showImageGallery = imageOperationMode && !showLiveTurn && pastTurns.length === 0;
   const displayQuestion = !busy && liveBranch ? liveBranch.version.user : question;
   const displayAnswer = !busy && liveBranch ? savedVersionAnswer(liveBranch.version) : result.text;
   const displayAnswerForRender = imageOperationAnswerForDisplay(displayAnswer);
@@ -1010,6 +1017,33 @@ export function AgentWorkspace({
   const documentLayout = isLongformTask(displayQuestion);
   const previewTurn = previewSource ? activeSession?.turns.find((turn) => turn.id === previewSource.turnId) : null;
   const previewContent = previewSource ? previewTurn ? savedVersionAnswer(branchView(previewTurn).version) : result.text : "";
+
+  useLayoutEffect(() => {
+    const field = inputRef.current;
+    if (!field) return;
+    if (!imageOperationMode) {
+      field.style.height = "";
+      field.style.overflowY = "";
+      return;
+    }
+    const measure = () => {
+      field.style.height = "auto";
+      const computed = window.getComputedStyle(field);
+      const minHeight = Number.parseFloat(computed.minHeight) || 36;
+      const maxHeight = Math.max(Number.parseFloat(computed.maxHeight) || 180, minHeight);
+      field.style.height = `${input ? Math.min(Math.max(field.scrollHeight, minHeight), maxHeight) : minHeight}px`;
+      field.style.overflowY = input && field.scrollHeight > maxHeight ? "auto" : "hidden";
+    };
+    measure();
+    let measuredWidth = field.clientWidth;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (field.clientWidth === measuredWidth) return;
+      measuredWidth = field.clientWidth;
+      measure();
+    });
+    observer?.observe(field);
+    return () => observer?.disconnect();
+  }, [imageOperationMode, input]);
 
   function branchView(turn: LocalChatTurn) {
     return visibleBranches.find((entry) => entry.turn.id === turn.id) ?? resolveChatBranches([turn], branchSelections)[0];
@@ -1102,6 +1136,37 @@ export function AgentWorkspace({
   }, [publicWork, historyRevision]);
 
   useEffect(() => { const refresh = () => setHistoryRevision((current) => current + 1); window.addEventListener("lumaflow-chat-history-updated", refresh); return () => window.removeEventListener("lumaflow-chat-history-updated", refresh); }, []);
+
+  useEffect(() => {
+    const beforeDelete = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (id !== activeSessionRef.current?.id) return;
+      if (busy || submitting.current || queuedMessages.length) {
+        event.preventDefault();
+        onToast?.("这条对话还有执行中或排队任务，请先完成或停止任务后再删除。");
+      }
+    };
+    const deleted = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      setSessionSummaries((current) => current.filter((item) => item.id !== id));
+      if (activeSessionRef.current?.id !== id) return;
+      // Clear the identity before aborting so an in-flight reply cannot save
+      // the deleted conversation again when it settles.
+      clearActiveSession();
+      if (busy || submitting.current) stopCurrentTask();
+      resetOutput();
+      setEditingTurnId(null);
+      setEditedPrompt("");
+      setQuestionImages([]);
+    };
+    window.addEventListener("lumaflow-chat-history-before-delete", beforeDelete);
+    window.addEventListener("lumaflow-chat-history-deleted", deleted);
+    return () => {
+      window.removeEventListener("lumaflow-chat-history-before-delete", beforeDelete);
+      window.removeEventListener("lumaflow-chat-history-deleted", deleted);
+    };
+  });
 
   useEffect(() => {
     const pane = conversationRef.current;
@@ -1646,6 +1711,10 @@ export function AgentWorkspace({
     setActiveSession(session);
     setLiveTurnId(turnId);
     setQuestion(userText);
+    // Move the prompt into the conversation immediately. This keeps the
+    // Image composer compact at the bottom while the local image request is
+    // processing, including when the request later fails.
+    setInput("");
     setQuestionImages(files);
     setCancelled(false);
     setElapsed(0);
@@ -2027,6 +2096,22 @@ export function AgentWorkspace({
     if (additions.length) setImageAttachments((current) => [...current, ...additions]);
   }
 
+  async function editGeneratedImage(image: ImageOperationOutput) {
+    if (busy || modelSwitching) return;
+    if (!imageOperationMode) enterImageOperationMode(true);
+    try {
+      const url = new URL(image.url, window.location.href);
+      if (url.origin !== window.location.origin) throw new Error("只能编辑当前工作区的图片。");
+      const response = await fetch(url.href);
+      if (!response.ok) throw new Error("无法读取图片，请重试。");
+      const blob = await response.blob();
+      await addImages([new File([blob], image.filename || "generated.png", { type: blob.type || "image/png" })]);
+      inputRef.current?.focus();
+    } catch (error) {
+      onToast?.(error instanceof Error ? error.message : "无法添加图片。");
+    }
+  }
+
   function removeImage(index: number) {
     setImageAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
@@ -2191,7 +2276,7 @@ export function AgentWorkspace({
   );
 
   return (
-    <div className={cx(styles.root, Boolean(showLiveTurn || pastTurns.length) && styles.hasConversation, imageOperationMode && styles.imageMode, showWorkSummary && styles.withSummary, Boolean(previewSource || imagePreviewSource) && styles.previewOpen)} data-testid="chat-ai-workspace" data-image-mode={imageOperationMode ? "true" : "false"}>
+    <div className={cx(styles.root, workComposerActive && styles.workMode, Boolean(showLiveTurn || pastTurns.length) && styles.hasConversation, imageOperationMode && styles.imageMode, showWorkSummary && styles.withSummary, Boolean(previewSource) && styles.previewOpen)} data-testid="chat-ai-workspace" data-image-mode={imageOperationMode ? "true" : "false"} data-summary-layout={showWorkSummary ? "floating" : undefined}>
       <header className={styles.header}>
         <h1>Chat-AI</h1>
         <div className={styles.tabs} role="group" aria-label="Chat-AI 工作模式">
@@ -2210,7 +2295,7 @@ export function AgentWorkspace({
 
       <div className={styles.stage}>
         {!showLiveTurn && !pastTurns.length && imageOperationMode && <div className={styles.imageWelcome} data-testid="image-empty-state">
-          <h2>今天有什么安排?</h2>
+          <h2>随时可以开始。</h2>
         </div>}
 
         {!showLiveTurn && !pastTurns.length && !imageOperationMode && <div className={styles.welcome}>
@@ -2231,7 +2316,7 @@ export function AgentWorkspace({
                 <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{answerAgentName}</strong></div>
                 <AgentTeamActivity records={version.agentActivity || []} busy={false} mode={versionWorkTeam(version).collaborationMode} />
                 <div className={styles.answer}><CodeAnswer text={imageOperationAnswerForDisplay(answerText)} /></div>
-                {imageArtifacts.length > 0 && <ImageArtifactGallery images={imageArtifacts} title="历史图片结果" />}
+                {imageArtifacts.length > 0 && <ImageArtifactGallery images={imageArtifacts} title="历史图片结果" onEdit={editGeneratedImage} />}
                 {branchControls(turn)}
                 {generatedFileCard(turn.id, version.user, answerText, true)}
                 <div className={styles.outputActions}>{activeProjectId && <button type="button" onClick={() => void saveAnswerToProject(version.user, answerText)}>保存为项目资料</button>}<button type="button" onClick={() => void copyText(answerText, "回答已复制")}><Copy size={14} /> 复制</button><button type="button" onClick={() => openAnswerPreview({ turnId: turn.id, title: version.user, answer: answerText, kind: previewKindFor(version.user, answerText) })}><Eye size={14} /> 打开完整预览</button><button type="button" disabled={busy} onClick={() => regenerateTurn(turn.id, version.user)}><RefreshCw size={14} /> 重新生成</button></div>
@@ -2242,9 +2327,9 @@ export function AgentWorkspace({
           <article className={styles.response}>
             <div className={styles.answerHeading}><span className={styles.answerMark}><Sparkles size={16} /></span><strong data-testid="answer-agent-name">{liveAgentName}</strong><span className={styles.outputStatus}>{busy ? imageOperationBusy ? <><Clock3 size={12} /> 正在处理图片</> : <><Clock3 size={12} /> {elapsed} 秒</> : cancelled ? "已停止 · 内容可能不完整" : exhausted ? "模型达到单次输出上限 · 内容可能不完整" : ""}</span></div>
             <AgentTeamActivity records={agentActivity.length ? agentActivity : liveSavedTurn?.agentActivity || []} busy={busy} mode={liveCollaborationMode} />
-            {imageOperationBusy && <div className={cx(styles.toolActivityStatus, styles.toolActivityStatusStandalone)} data-active="true" data-testid="image-operation-progress" role="status" aria-live="polite">
-              <span className={styles.toolActivityDot} aria-hidden="true" />
-              <span className={styles.toolActivityLabel}>正在处理图片</span>
+            {imageOperationBusy && <div className={styles.imageGeneration} data-testid="image-operation-progress">
+              <p role="status">正在生成图片</p>
+              <div className={styles.imageGenerationCanvas}><div className={styles.imageGenerationDots} aria-hidden="true" /><span>已用 {elapsed} 秒</span></div>
             </div>}
             {busy && !imageOperationBusy && !agentActivity.length && toolActivitySteps.length === 0 && <div className={cx(styles.toolActivityStatus, styles.toolActivityStatusStandalone)} data-active="true" data-testid="activity-progress" role="status" aria-live="polite">
               <span className={styles.toolActivityDot} aria-hidden="true" />
@@ -2266,13 +2351,13 @@ export function AgentWorkspace({
               </div>
             </details>}
             {displayAnswer && (documentLayout ? <div className={styles.documentPanel} data-testid="document-panel"><header><span><FileText size={15} /> 文稿草稿</span><button type="button" onClick={() => liveTurnId && openAnswerPreview({ turnId: liveTurnId, title: displayQuestion, answer: displayAnswer, kind: previewKindFor(displayQuestion, displayAnswer), images: imageOperationResult?.turnId === liveTurnId ? imageOperationResult.images : undefined })}><Eye size={14} /> 打开完整预览</button></header><div className={styles.answer} data-testid="agent-answer"><CodeAnswer text={displayAnswerForRender} complete={!busy && !cancelled && !exhausted && !error} /></div></div> : <div className={styles.answer} data-testid="agent-answer"><CodeAnswer text={displayAnswerForRender} complete={!busy && !cancelled && !exhausted && !error} /></div>)}
-            {imageOperationResult && imageOperationResult.turnId === liveTurnId && <ImageOperationGallery result={imageOperationResult} />}
-            {(!imageOperationResult || imageOperationResult.turnId !== liveTurnId) && extractImageOperationArtifacts(displayAnswer).length > 0 && <ImageArtifactGallery images={extractImageOperationArtifacts(displayAnswer)} title="图片结果" />}
+            {imageOperationResult && imageOperationResult.turnId === liveTurnId && <ImageOperationGallery result={imageOperationResult} onEdit={editGeneratedImage} />}
+            {(!imageOperationResult || imageOperationResult.turnId !== liveTurnId) && extractImageOperationArtifacts(displayAnswer).length > 0 && <ImageArtifactGallery images={extractImageOperationArtifacts(displayAnswer)} title="图片结果" onEdit={editGeneratedImage} />}
             {imageOperationError && <div className={styles.errorBox} role="alert"><span>图片操作未完成：{imageOperationError}</span><button type="button" onClick={() => { setImageOperationError(""); void submit(question, questionImages); }} disabled={!imageOperationsAvailable || busy} aria-label="重试图片操作">重试</button></div>}
             {!busy && liveSavedTurn && branchControls(liveSavedTurn)}
             {liveTurnId && generatedFileCard(liveTurnId, displayQuestion, displayAnswer, !busy && !cancelled && !exhausted && !error)}
             {result.sources.some((source) => source === "json" || source === "json-fallback") && <p className={styles.muted}>本轮使用 JSON 演示数据，不能作为正式库存或报价依据。</p>}
-            {!busy && !error && !result.text && <p className={styles.muted}>{cancelled ? "本次生成已停止。" : "模型没有返回文字输出；不会使用本地规则冒充回答。"}</p>}
+            {!busy && !error && !result.text && !imageOperationResult?.images.length && <p className={styles.muted}>{cancelled ? "本次生成已停止。" : "模型没有返回文字输出；不会使用本地规则冒充回答。"}</p>}
             {exhausted && <p className={styles.errorBox} role="alert">模型未完成输出，请重试或拆分任务；不要把当前内容当作完整文件。</p>}
             {error && <div className={styles.errorBox} role="alert"><span>模型没有完成本轮任务：{error.message === "An error occurred." ? "本地推理服务出错或超时" : error.message}</span><button type="button" onClick={() => void submit(question)} disabled={!ready || busy} aria-label="重试本轮问题">重试</button></div>}
             {result.products.length > 0 && <div className={styles.productResults}>{result.products.map((record) => { const product = products.find((item) => item.id === record.id); return <div key={record.id}><button type="button" disabled={!product} onClick={() => product && onOpenProduct?.({ ...product, ...record })}><span><strong>{record.name}</strong><small>{record.sku} · {record.power}</small></span><ArrowRight size={15} /></button>{product && onAddToKit && <button type="button" className={styles.kitButton} onClick={() => onAddToKit(product.id)}><Plus size={14} /> 加入资料包</button>}</div>; })}</div>}
@@ -2381,7 +2466,7 @@ export function AgentWorkspace({
             </div>}
           </div>
           <div className={styles.composerMeta}><span className={styles.connection} title={imageOperationMode ? "Qwen Image 2.1" : selectedModelName}><i className={!imageOperationMode && health?.reachable ? styles.online : ""} />{modelSwitching && !imageOperationMode ? "正在加载所选模型…" : statusText}{!imageOperationMode && <button type="button" aria-label="刷新模型连接" disabled={busy || modelSwitching || catalog.loading} onClick={() => { void activateModel(catalog.modelProfileId); }}><RefreshCw size={12} /></button>}</span><span>Enter 发送 · Shift + Enter 换行</span></div>
-           {imageOperationMode && <div className={cx(styles.imageStyleGalleryPanel, showLiveTurn || pastTurns.length ? styles.imageStyleGalleryPanelActive : styles.imageStyleGalleryPanelEmpty)} data-testid="image-style-gallery-panel" data-gallery-tab={imageGalleryTab}>
+            {showImageGallery && <div className={cx(styles.imageStyleGalleryPanel, styles.imageStyleGalleryPanelEmpty)} data-testid="image-style-gallery-panel" data-gallery-tab={imageGalleryTab}>
             <div className={styles.imageGalleryToolbar} role="tablist" aria-label="图片模板分类">
               <button type="button" role="tab" aria-selected={imageGalleryTab === "hot"} onClick={() => setImageGalleryTab("hot")}>热门</button>
               <button type="button" role="tab" aria-selected={imageGalleryTab === "templates"} onClick={() => setImageGalleryTab("templates")}>Templates</button>
@@ -2419,25 +2504,25 @@ export function AgentWorkspace({
   );
 }
 
-function ImageArtifactGallery({ images, title, model, onPreview }: { images: ImageOperationOutput[]; title: string; model?: string; onPreview?: () => void }) {
+function ImageArtifactGallery({ images, title, model, onPreview, onEdit }: { onEdit?: (image: ImageOperationOutput) => void; images: ImageOperationOutput[]; title: string; model?: string; onPreview?: () => void }) {
   const safeImages = safeImageOperationImages(images);
   if (!safeImages.length) return null;
   return <section className={styles.imageOperationResult} aria-label={title}>
     <header><ImagePlus size={15} /><strong>{title}</strong>{model && <small>{model}</small>}{onPreview && <button type="button" onClick={onPreview}><Eye size={13} /> 打开完整预览</button>}</header>
     <div className={styles.imageOperationGallery}>
       {safeImages.map((image, index) => <figure key={`${image.url}-${index}`}>
-        <a href={image.url} target="_blank" rel="noreferrer" download={image.filename || "image"}>
+        <a href={image.url} target="_blank" rel="noreferrer" aria-label="打开图片">
           <img src={image.url} alt={image.filename || `图片结果 ${index + 1}`} width={image.width} height={image.height} loading="lazy" />
         </a>
-        <figcaption><span>{image.filename || `图片结果 ${index + 1}`}</span><a href={image.url} target="_blank" rel="noreferrer" download={image.filename || "image"}>下载</a></figcaption>
+        <div className={styles.imageCardActions}>{onEdit && <button type="button" onClick={() => onEdit(image)}>编辑</button>}<a href={image.url} download={image.filename || "image"} aria-label="下载图片"><Download size={15} /></a></div>
       </figure>)}
     </div>
   </section>;
 }
 
-function ImageOperationGallery({ result }: { result: ImageOperationResult }) {
+function ImageOperationGallery({ result, onEdit }: { result: ImageOperationResult; onEdit?: (image: ImageOperationOutput) => void }) {
   const operationLabel = result.operation === "generate" ? "生图结果" : result.operation === "edit" ? "图片编辑结果" : "图片识别结果";
-  return <ImageArtifactGallery images={result.images} title={operationLabel} model={result.model} />;
+  return <ImageArtifactGallery images={result.images} title={operationLabel} model={result.model} onEdit={onEdit} />;
 }
 
 function ImageOperationPreview({ source, onClose }: { source: ImagePreviewSource; onClose: () => void }) {

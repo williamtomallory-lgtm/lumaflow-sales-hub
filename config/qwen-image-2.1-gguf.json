@@ -1,0 +1,20 @@
+{
+  "model": "Qwen/Qwen-Image-2.1",
+  "quantization": "gguf-q4_k",
+  "sd_cli": ".local-runtime/qwen-image/bin/sd-cli.exe",
+  "diffusion_model": ".local-data/models/Qwen-Image-2.1-GGUF/qwen_image_2.1-Q4_K.gguf",
+  "vae": ".local-data/models/Qwen-Image-2.1-GGUF/qwen_image_2.1_vae_bf16.safetensors",
+  "llm": ".local-data/models/Qwen-Image-2.1-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+  "llm_vision": ".local-data/models/Qwen-Image-2.1-GGUF/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+  "defaults": {
+    "width": 512,
+    "height": 512,
+    "steps": 20,
+    "cfg_scale": 6.0,
+    "sampling_method": "euler"
+  },
+  "extra_args": [
+    "--fa"
+  ],
+  "timeout_seconds": 540
+}

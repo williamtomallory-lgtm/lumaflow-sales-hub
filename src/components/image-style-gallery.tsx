@@ -17,12 +17,14 @@ type StylePreset = {
   id: string;
   label: string;
   prompt: string;
-  /** Source crop coordinates in the supplied 1073 × 1029 sprite. */
+  /** Crop coordinates relative to a 230 × 289 card in the supplied sprites. */
   x: string;
   y: string;
+  sprite?: string;
 };
 
 const spriteUrl = "/image-style-presets/popular-style-sprite.png";
+const extendedSpriteUrl = "/image-style-presets/extended-style-sprite.png";
 
 const presets: StylePreset[] = [
   {
@@ -102,11 +104,21 @@ const presets: StylePreset[] = [
     x: "342.60%",
     y: "245.67%",
   },
+  { id: "bobblehead", label: "你的摇头娃娃", prompt: "把主体制作成一款真实的摇头娃娃收藏公仔：保留脸部身份、发型和服装特征，头部夸张放大，身体小巧，颈部连接弹簧，采用手绘树脂材质和精致底座。以真实街景为背景，浅景深产品摄影，完整展示公仔。若已上传照片，请依据原图人物制作。", x: "127.83%", y: "12.80%", sprite: extendedSpriteUrl },
+  { id: "photo-enhance", label: "增强照片", prompt: "修复并增强上传的照片：保持原有人物身份、表情、姿势、构图和真实场景，改善清晰度、曝光、色彩与对比度，减少噪点、划痕和模糊，保留自然肤质和原有年代感，不随意增添或删除对象。若未上传照片，请生成一张温暖自然的家庭庆生纪实照片，作为增强照片质感的示例。", x: "22.17%", y: "116.61%", sprite: extendedSpriteUrl },
+  { id: "night-flash", label: "夜拍闪光", prompt: "创作一张夜间直闪摄影图片：主体近距离清晰突出，使用相机直射闪光灯，呈现明亮细节、自然硬阴影，背景保留暗夜街景和远处点状灯光，带轻微胶片颗粒与抓拍感，构图活泼真实。若已上传图片，保持原图主体身份、外形和姿态，将场景转为夜拍闪光效果。", x: "233.48%", y: "116.61%", sprite: extendedSpriteUrl },
+  { id: "blueprint", label: "蓝图海报", prompt: "把主体制作成蓝图风格工程海报：使用深蓝网格纸、精细白色线稿、正视图和局部剖面，配以清楚的尺寸线、编号和中文标注，保持原图外形与结构比例，排版精确且留白合理。没有实际测量数据时，将尺寸明确标为示意，避免虚构真实规格。", x: "339.13%", y: "116.61%", sprite: extendedSpriteUrl },
+  { id: "color-analysis", label: "色彩分析", prompt: "制作一张人物穿搭色彩对照图：保持同一人物的面部身份、发型、姿势和光线，将服装与背景依次替换为冷蓝、柔紫、米白、暖棕、橄榄绿和深蓝，排列成整齐的六宫格，呈现真实布料、自然肤色与统一构图，用简洁中文标识颜色，便于比较搭配效果。若已上传照片，请以原图人物为主体。", x: "22.17%", y: "220.76%", sprite: extendedSpriteUrl },
+  { id: "comic", label: "漫画", prompt: "将主体改绘为色彩鲜明的漫画插画：保留主要轮廓、动作和可识别特征，采用黑色粗轮廓、明亮纯色、夸张表情与简洁背景，加入少量对白气泡或拟声词，画面有幽默感，构图完整、文字清楚。若已上传图片，围绕原图主体进行漫画化创作。", x: "127.83%", y: "220.76%", sprite: extendedSpriteUrl },
+  { id: "fantasy-newspaper", label: "奇幻报纸", prompt: "将主体设计成一张奇幻世界报纸头版：保留主体身份特征，以复古黑白肖像或场景作为主图，搭配有故事感的中文大标题、清楚的分栏、装饰衬线字、旧纸纹理与细边框，营造魔法世界新闻氛围。所有报道应为明显的虚构故事，排版完整、标题可读。", x: "339.13%", y: "220.76%", sprite: extendedSpriteUrl },
+  { id: "film-strip", label: "胶片条", prompt: "创作一组胶片条形式的电影画面：保留主体身份、服装和环境的一致性，用三幅相连镜头展示一个连贯动作或小故事，加入胶片边框、细颗粒、柔和高光、略带褪色的色调与自然镜头感，画面细节真实，分镜有节奏。若已上传图片，请以原图场景为第一镜延展。", x: "22.17%", y: "324.91%", sprite: extendedSpriteUrl },
+  { id: "macro-wallpaper", label: "超写实壁纸", prompt: "生成一张超写实微距壁纸：以主体的纹理、形态和材质作为视觉中心，展示细腻真实的表面结构、自然露珠或柔和高光，使用浅景深与简洁背景，色彩自然、构图有呼吸感，适合高清桌面壁纸。若已上传图片，请依据原图主体制作微距风格画面。", x: "127.83%", y: "324.91%", sprite: extendedSpriteUrl },
+  { id: "palm-map", label: "看手相", prompt: "把手部照片制作成手掌线条示意图：保留原图手掌比例和真实纹理，以细线沿可见掌纹标出位置，使用干净米色背景、简洁中文标签与清晰的信息图布局。标注说明仅为娱乐性的传统掌纹示意，不推断真实命运、健康、寿命或个人特征。若未上传手部照片，请生成一张通用手掌示意图。", x: "233.48%", y: "324.91%", sprite: extendedSpriteUrl },
 ];
 
 export function ImageStyleGallery({ onUpload, onSelect, disabled = false, category = "hot", showHeading = true }: ImageStyleGalleryProps) {
   const visiblePresets = category === "templates"
-    ? presets.filter((preset) => ["desk", "animal-infographic", "beauty-guide", "section-diagram", "app-design", "anime-comic"].includes(preset.id))
+    ? presets.filter((preset) => ["desk", "animal-infographic", "beauty-guide", "section-diagram", "app-design", "anime-comic", "photo-enhance", "blueprint", "color-analysis", "fantasy-newspaper", "film-strip", "palm-map"].includes(preset.id))
     : presets;
   return <section className={styles.root} aria-label="热门图片风格">
     {showHeading && <div className={styles.heading}>
@@ -120,7 +132,7 @@ export function ImageStyleGallery({ onUpload, onSelect, disabled = false, catego
         <ImagePlus className={styles.uploadMark} size={15} aria-hidden="true" />
       </button>
       {visiblePresets.map((preset) => <button key={preset.id} type="button" className={styles.card} onClick={() => onSelect(preset.prompt)} disabled={disabled} aria-label={`使用${preset.label}风格`}>
-        <span className={styles.visual} style={{ "--sprite-x": preset.x, "--sprite-y": preset.y, "--sprite-url": `url(${spriteUrl})` } as React.CSSProperties} aria-hidden="true" />
+        <span className={styles.visual} style={{ "--sprite-x": preset.x, "--sprite-y": preset.y, "--sprite-url": `url(${preset.sprite || spriteUrl})`, "--sprite-width": preset.sprite ? "515.65%" : "466.52%", "--sprite-height": preset.sprite ? "426.30%" : "345.33%" } as React.CSSProperties} aria-hidden="true" />
         <span className={styles.cardLabel}>{preset.label}</span>
       </button>)}
     </div>

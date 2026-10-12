@@ -12,7 +12,7 @@ $modelId = 'ternary-bonsai-2-27b'
 $selectionFile = Join-Path $projectRoot '.local-runtime\selected-local-model.json'
 if (Test-Path -LiteralPath $selectionFile) {
     $selection = Get-Content -LiteralPath $selectionFile -Raw | ConvertFrom-Json
-    if ($selection.profile -in @('image', 'naive-n05-flash-int4-experimental')) {
+    if ($selection.profile -eq 'image') {
         Write-Host 'Bonsai automatic start deferred: another local model was selected.'
         return
     }

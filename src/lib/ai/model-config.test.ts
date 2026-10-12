@@ -8,8 +8,6 @@ import {
   configuredSupportedModes,
   LOCAL_MODEL_ID,
   LOCAL_QWEN3_14B_MODEL_ID,
-  NAIVE_INT4_MODEL_ID,
-  NAIVE_INT4_PROFILE_ID,
 } from "./model-config";
 import { assistantModelsResponseSchema } from "../contracts/api";
 
@@ -65,25 +63,6 @@ describe("allowlisted model profiles", () => {
       contextTokens: 8_192,
     });
     expect(getModelConfig("local-qwen3-14b").description).toContain("CPU/GPU 混合");
-  });
-
-  it("lists the original-weight Naive prune only when explicitly visible and only reports the exact running model ready", async () => {
-    vi.stubEnv("LLM_VISIBLE_PROFILES", `configured,${NAIVE_INT4_PROFILE_ID}`);
-    vi.stubEnv("LLM_DEFAULT_PROFILE", "configured");
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json({
-      data: [{ id: url.includes("8083") ? NAIVE_INT4_MODEL_ID : "custom-model" }],
-    })));
-    expect(getModelConfig(NAIVE_INT4_PROFILE_ID)).toMatchObject({
-      model: NAIVE_INT4_MODEL_ID,
-      backend: "openai-compatible",
-      baseURL: "http://127.0.0.1:8083/v1",
-    });
-    const models = await getModelOptions();
-    expect(models.map((model) => model.id)).toEqual(["configured", NAIVE_INT4_PROFILE_ID]);
-    expect(models[1]).toMatchObject({ reachable: true, installationStatus: "ready", parameterSizeB: null });
-    expect(models[1].description).toContain("不能正常聊天");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [{ id: "some-other-model" }] })));
-    expect(await getModelHealth(NAIVE_INT4_PROFILE_ID)).toMatchObject({ configured: true, reachable: false });
   });
 
   it("configures Vercel AI Gateway without exposing or requiring a static API key", () => {

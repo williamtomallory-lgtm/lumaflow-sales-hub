@@ -12,12 +12,9 @@ export const LOCAL_QWEN3_8B_MODEL_ID = "lumaflow-qwen3-8b:latest";
 export const LOCAL_QWEN3_14B_MODEL_ID = "qwen3:14b";
 // Backwards-compatible name used by the existing verification script/tests.
 export const LOCAL_MODEL_ID = LOCAL_QWEN3_8B_MODEL_ID;
-export const NAIVE_INT4_MODEL_ID = "naive-n0.5-flash-int4-48l-1e";
-export const NAIVE_INT4_PROFILE_ID = "naive-n05-flash-int4-experimental";
 
 export function isManagedLocalModel(profileId: string) {
   if (process.env.LOCAL_MODEL_SWITCHING !== "true" || process.platform !== "win32" || process.env.VERCEL === "1") return false;
-  if (profileId === NAIVE_INT4_PROFILE_ID) return true;
   return profileId === "configured" && process.env.LLM_MODEL?.trim() === "ternary-bonsai-2-27b"
     && process.env.LLM_BASE_URL?.trim().replace(/\/$/, "") === "http://127.0.0.1:8081/v1";
 }
@@ -88,13 +85,6 @@ const MODEL_PROFILES = {
     parameterSizeB: null,
     supportedModes: ["light"] as const,
   },
-  "naive-n05-flash-int4-experimental": {
-    label: "Naive N0.5 Flash · 3.7 GB 实验版",
-    description: "源自 Naive 官方权重，保留 48 层但每层仅 1/256 个专家并量化为 INT4。仅保留最后 128 输入 token、最多生成 16 token；实测输出乱码或重复词，不能正常聊天。",
-    family: "Naive N0.5 Flash",
-    parameterSizeB: null,
-    supportedModes: ["light"] as const,
-  },
 } as const;
 
 function configurationError(message: string) {
@@ -105,20 +95,6 @@ function configurationError(message: string) {
 
 export function getModelConfig(profileId: AssistantModelProfileId = "configured") {
   assistantModelProfileIdSchema.parse(profileId);
-  if (profileId === NAIVE_INT4_PROFILE_ID) {
-    return {
-      profileId,
-      label: MODEL_PROFILES[profileId].label,
-      description: MODEL_PROFILES[profileId].description,
-      baseURL: "http://127.0.0.1:8083/v1",
-      backend: "openai-compatible" as ModelBackend,
-      maxOutputTokens: 256,
-      apiKey: "naive-local",
-      model: NAIVE_INT4_MODEL_ID,
-      connectionKind: "live" as const,
-      contextTokens: 128,
-    };
-  }
   if (profileId === "local-qwen3-8b" || profileId === "local-qwen3-14b") {
     const is14b = profileId === "local-qwen3-14b";
     return {
@@ -219,7 +195,7 @@ export async function getModelHealth(profileId?: AssistantModelProfileId) {
 export async function getModelOptions() {
   const visibleSetting = process.env.LLM_VISIBLE_PROFILES?.trim();
   const requestedIds = visibleSetting ? visibleSetting.split(",").map((id) => id.trim()) : undefined;
-  const visibleIds = assistantModelProfileIdSchema.options.filter((id) => requestedIds ? requestedIds.includes(id) : id !== NAIVE_INT4_PROFILE_ID);
+  const visibleIds = assistantModelProfileIdSchema.options.filter((id) => !requestedIds || requestedIds.includes(id));
   if (visibleIds.length === 0) throw configurationError("LLM_VISIBLE_PROFILES must include a known model profile.");
   return Promise.all(visibleIds.map(async (id) => {
     try {

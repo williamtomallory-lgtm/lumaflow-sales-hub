@@ -2,8 +2,23 @@ import "server-only";
 import { listKnowledgeRecords } from "../knowledge/store";
 
 /** Automatically uploaded/classified files are not silently published to every Agent. */
+const querySeparators = /[\s，。？！、/\\\-_:：；;（）()【】「」『』“”‘’]+/;
+const queryRuns = /[\u3400-\u9fff]+|[a-z0-9]+(?:[._][a-z0-9]+)*/gi;
+
+function queryTerms(query: string) {
+  return [...new Set(query.toLowerCase().split(querySeparators)
+    .flatMap((value) => value.match(queryRuns) ?? [])
+    .flatMap((run) => {
+      if (run.length < 2) return [];
+      if (/^[\u3400-\u9fff]+$/.test(run)) {
+        return Array.from({ length: run.length - 1 }, (_, index) => run.slice(index, index + 2));
+      }
+      return [run];
+    }))].filter((value) => value.length >= 2);
+}
+
 export async function searchConfirmedKnowledge(query: string) {
-  const terms = [...new Set(query.toLowerCase().split(/[\s，。？！、/\\\-_:：；;（）()]+/).filter((value) => value.length >= 2))];
+  const terms = queryTerms(query);
   const records = await listKnowledgeRecords();
   return records.filter((record) => record.classificationSource === "manual" && record.classificationStatus === "classified" && record.extractedText)
     .map((record) => {

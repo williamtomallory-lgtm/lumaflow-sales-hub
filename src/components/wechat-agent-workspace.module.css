@@ -127,3 +127,30 @@
 @media(max-width:740px) { .fields { grid-template-columns:1fr; } .card { padding:20px; } .feed { padding:14px; } .permissionModes { grid-template-columns:1fr; } .composer { padding:12px; } .composer footer small { max-width:170px; } .message { max-width:100%; } .modal { padding:8px; } .config { max-height:calc(100dvh - 16px); } }
 @media(min-width:701px) and (max-width:1050px) { .header { grid-template-columns:minmax(0,1fr) 36px; } .experienceTabs { grid-column:1; grid-row:1; width:min(474px,100%); min-width:0; justify-self:center; } .experienceTabs button { flex:1 1 0; min-width:0; padding:0 8px; font-size:16px; } .identity { grid-column:1; grid-row:2; } .headerActions { grid-column:1 / -1; grid-row:3; justify-content:flex-start; flex-wrap:wrap; } }
 @media(max-width:700px) { .header { grid-template-columns:minmax(0,1fr) 36px; padding:17px 15px; gap:8px; } .experienceTabs { grid-column:1; grid-row:1; width:100%; min-width:0; } .experienceTabs button { flex:1 1 0; min-width:0; padding:0 8px; font-size:14px; } .identity { grid-column:1 / -1; grid-row:2; } .headerActions { grid-column:1 / -1; grid-row:3; justify-content:flex-start; flex-wrap:wrap; } }
+
+/* Match Chat and Work density, with controls kept inside the viewport. */
+.root { height: calc(100dvh - 40px); min-height: 0; }
+.header { flex: 0 0 auto; padding: 8px 20px; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(0, 360px) minmax(0, 1fr); }
+.identity { gap: 8px; }
+.clawBotAvatar { width: 28px; height: 28px; flex-basis: 28px; border-radius: 8px; }
+.header h2 { font-size: 13px; }
+.header p { font-size: 10px; }
+.experienceTabs { width: 100%; min-width: 0; height: 30px; }
+.experienceTabs button { flex: 1 1 0; min-width: 0; height: 30px; font-size: 11px; padding: 0 8px; }
+.status { font-size: 9px; padding: 5px 7px; }
+.primary, .secondary, .danger, .icon { font-size: 11px; padding: 7px 10px; }
+.root svg { width: 16px; height: 16px; }
+.root > .card { width: min(600px, calc(100% - 40px)); margin: 24px auto; padding: 18px; overflow-y: auto; min-height: 0; }
+.cardHeading h3 { font-size: 16px; }
+.fields { gap: 8px; margin: 16px 0; }
+.fields div { padding: 10px 12px; }
+.fields dd { font-size: 11px; }
+.connectionGuide { padding: 14px; margin-top: 16px; }
+.connectionGuide h3 { font-size: 14px; }
+.feed { padding: 16px 20px; }
+.feed > * { width: min(620px, 100%); margin-inline: auto; }
+.composer, .imageComposer { width: min(620px, calc(100% - 32px)); margin-inline: auto; padding: 10px 0 14px; }
+.composer textarea { min-height: 48px; font-size: 12px; padding: 9px; }
+@media (max-width: 1050px) { .header { grid-template-columns: minmax(0, 1fr) 28px; } .experienceTabs { width: min(360px, 100%); grid-column: 1; grid-row: 1; justify-self: center; } .identity { grid-column: 1; grid-row: 2; } .headerActions { grid-column: 1 / -1; grid-row: 3; } }
+
+.root > .connectionGuide { width: min(560px, calc(100% - 40px)); margin: 24px auto; overflow-y: auto; min-height: 0; }

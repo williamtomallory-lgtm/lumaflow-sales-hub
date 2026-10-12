@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('all', 'bonsai', 'image', 'naive', 'muse')]
+    [ValidateSet('all', 'bonsai', 'image', 'muse')]
     [string]$Models = 'all',
     [switch]$SkipModels,
     [switch]$SkipPythonDependencies,
@@ -75,7 +75,7 @@ try {
         Ensure-LumaFlowDependencies -Node $node -Root $projectRoot
     }
     if (-not $SkipPythonDependencies) {
-        foreach ($name in @('cowagent', 'naive', 'qwen-image')) {
+        foreach ($name in @('cowagent', 'qwen-image')) {
             $venv = Join-Path $projectRoot ".local-data\venvs\$name"
             $venvPython = Join-Path $venv 'Scripts\python.exe'
             if (-not (Test-Path -LiteralPath $venvPython)) { Invoke-PortablePython $python @('-m', 'venv', $venv) }
@@ -83,8 +83,7 @@ try {
             if ($name -eq 'cowagent') {
                 Invoke-PortablePython $venvPython @('-m', 'pip', 'install', '-r', (Join-Path $projectRoot 'vendor\lumaflow-core\backend\requirements.txt'), 'openai>=2,<3', 'tiktoken>=0.3.2', 'fastapi', 'uvicorn', 'httpx', 'playwright==1.52.0', 'mcp')
             } else {
-                Invoke-PortablePython $venvPython @('-m', 'pip', 'install', 'torch==2.10.0', '--index-url', 'https://download.pytorch.org/whl/cu128')
-                Invoke-PortablePython $venvPython @('-m', 'pip', 'install', '-r', (Join-Path $projectRoot 'config\requirements-models.txt'))
+                Invoke-PortablePython $venvPython @('-m', 'pip', 'install', 'Pillow==12.0.0')
             }
         }
     }

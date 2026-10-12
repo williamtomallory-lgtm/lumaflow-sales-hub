@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('configured', 'naive-n05-flash-int4-experimental', 'image')]
+    [ValidateSet('configured', 'image')]
     [string]$Profile,
     [switch]$Startup,
     [ValidateRange(1, 300)]
@@ -12,7 +12,6 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $specs = @{
     configured = @{ Port = 8081; Model = 'ternary-bonsai-2-27b'; Marker = 'Ternary-Bonsai-2-27B-PTQ1_0.gguf'; Name = 'llama-server.exe' }
-    'naive-n05-flash-int4-experimental' = @{ Port = 8083; Model = 'naive-n0.5-flash-int4-48l-1e'; Marker = 'serve-naive-int4.py'; Name = 'python.exe' }
     image = @{ Port = 8084; Model = 'Qwen/Qwen-Image-2.1'; Marker = 'serve-qwen-image.py'; Name = 'python.exe' }
 }
 function Get-Services([string]$Key) {
@@ -27,7 +26,7 @@ function Test-Ready([string]$Key) {
     try {
         $health = Invoke-RestMethod "http://127.0.0.1:$($spec.Port)/health" -TimeoutSec 2
         $models = Invoke-RestMethod "http://127.0.0.1:$($spec.Port)/v1/models" -TimeoutSec 2
-        $settingsMatch = if ($Key -eq 'image') { $health.quantization -eq 'experimental-low-bit' } elseif ($Key -eq 'naive-n05-flash-int4-experimental') { $health.gpu_packed_weights -eq $true } else { $true }
+        $settingsMatch = if ($Key -eq 'image') { $health.quantization -eq 'gguf-q4_k' } else { $true }
         return $health.status -eq 'ok' -and $spec.Model -in @($models.data.id) -and $settingsMatch
     } catch { return $false }
 }
@@ -84,19 +83,7 @@ try {
         if ($Profile -eq 'configured') {
             & (Join-Path $PSScriptRoot 'start-bonsai.ps1') -NoWait
         } else {
-            $isImage = $Profile -eq 'image'
-            $envFolder = if ($isImage) { 'qwen-image' } else { 'naive' }
-            $scriptName = if ($isImage) { 'serve-qwen-image.py' } else { 'serve-naive-int4.py' }
-            $python = Join-Path $projectRoot ".local-data\venvs\$envFolder\Scripts\python.exe"
-            $script = Join-Path $PSScriptRoot $scriptName
-            if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $script)) { throw 'The requested local runtime is not installed.' }
-            $logDir = Join-Path $projectRoot ".local-runtime\$envFolder"
-            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
-            $arguments = @(('"' + $script + '"'), '--host', '127.0.0.1', '--port', "$($specs[$Profile].Port)")
-            if (-not $isImage) { $arguments += @('--device', 'cuda', '--row-block', '1024', '--gpu-weights') }
-            $env:CUDA_MODULE_LOADING = 'LAZY'
-            Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "server-$stamp.out.log") -RedirectStandardError (Join-Path $logDir "server-$stamp.err.log") | Out-Null
+            & (Join-Path $PSScriptRoot 'start-qwen-image.ps1') -NoWait -Port $specs[$Profile].Port
         }
         $launched = $true
     }

@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 
 vi.mock("server-only", () => ({}));
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
-vi.mock("./model-config", () => ({ isManagedLocalModel: (profile: string) => ["configured", "naive-n05-flash-int4-experimental"].includes(profile) }));
+vi.mock("./model-config", () => ({ isManagedLocalModel: (profile: string) => profile === "configured" }));
 
 let running = "";
 beforeEach(() => {
@@ -21,9 +21,11 @@ beforeEach(() => {
     return child as unknown as ReturnType<typeof spawn>;
   });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    const port = running === "configured" ? "8081" : "8083";
+    const port = running === "image" ? "8084" : "8081";
     if (!url.includes(`:${port}/`)) throw new Error("Connection refused");
-    return Response.json(url.endsWith("/health") ? { status: "ok", gpu_packed_weights: true } : { data: [{ id: running === "configured" ? "ternary-bonsai-2-27b" : "naive-n0.5-flash-int4-48l-1e" }] });
+    return Response.json(url.endsWith("/health")
+      ? { status: "ok", ...(running === "image" ? { quantization: "gguf-q4_k" } : {}) }
+      : { data: [{ id: running === "image" ? "Qwen/Qwen-Image-2.1" : "ternary-bonsai-2-27b" }] });
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -40,11 +42,13 @@ it("reuses the healthy selected worker and reloads it after a real disconnect", 
 
 it("keeps the model leased until streamed output ends, then permits switching", async () => {
   const runtime = await import("./local-model-runtime");
+  vi.stubEnv("LOCAL_MODEL_SWITCHING", "true");
   const release = await runtime.leaseLocalModel("configured");
-  await expect(runtime.ensureLocalModel("naive-n05-flash-int4-experimental")).rejects.toMatchObject({ status: 409 });
+  await expect(runtime.leaseLocalModel("image")).rejects.toMatchObject({ status: 409 });
   const response = runtime.releaseRuntimeWhenResponseEnds(new Response("真实输出"), release);
   expect(await response.text()).toBe("真实输出");
-  await runtime.ensureLocalModel("naive-n05-flash-int4-experimental");
+  const imageRelease = await runtime.leaseLocalModel("image");
+  imageRelease();
   expect(spawn).toHaveBeenCalledTimes(2);
 });
 
@@ -53,7 +57,9 @@ it("releases a cancelled stream and leaves unmanaged profiles alone", async () =
   const release = await runtime.leaseLocalModel("configured");
   const response = runtime.releaseRuntimeWhenResponseEnds(new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1])); } })), release);
   await response.body?.cancel();
-  await runtime.ensureLocalModel("naive-n05-flash-int4-experimental");
   expect(await runtime.ensureLocalModel("remote-service")).toBe(false);
+  vi.stubEnv("LOCAL_MODEL_SWITCHING", "true");
+  const imageRelease = await runtime.leaseLocalModel("image");
+  imageRelease();
   expect(spawn).toHaveBeenCalledTimes(2);
 });

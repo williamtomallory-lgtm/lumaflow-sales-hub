@@ -58,3 +58,14 @@
 .projectRow .previewButton { padding:6px; opacity:.35; }.projectRow:hover .previewButton,.previewButton:focus { opacity:1; }
 .projectChildren { margin-left:20px; font-size:12px; }.projectChildren p { font-size:12px; color:#839387; }
 .sectionHeading { margin:16px 6px 6px; font-size:11px; color:#829487; font-weight:600; }
+
+/* Projects use their content height; history receives the remaining space. */
+.sidebar { min-height: 0; padding: 4px 2px; }
+.projectRegion { flex: 0 1 auto; min-height: 54px; max-height: min(150px, 25%); }
+.projectSection { flex: 0 1 auto; overflow-y: auto; scrollbar-gutter: auto; }
+.projectSection header { padding: 2px 3px 4px; }
+.sidebarHint { font-size: 10px; margin: 8px 3px 12px; }
+.historySection { flex: 1 1 0; min-height: 0; }
+.sidebar .historyTabs button { font-size: 9px; white-space: normal; overflow-wrap: normal; padding: 5px 1px; line-height: 1.2; }
+.historyPanel header { font-size: 10px; padding: 3px; margin-bottom: 2px; }
+.sidebar button { font-size: 10px; }
