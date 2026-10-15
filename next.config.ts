@@ -7,6 +7,11 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/v1/assistant/*": ["./agent/**/*.json"],
   },
+  // Local engines, private state, and the downloadable knowledge archive are
+  // managed beside the website. They are not files to bundle into each route.
+  outputFileTracingExcludes: {
+    "/*": ["./.local-runtime/**/*", "./.local-data/**/*", "./release-assets/**/*"],
+  },
   async headers() {
     return [{
       source: "/(.*)",

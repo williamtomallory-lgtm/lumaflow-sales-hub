@@ -5,6 +5,7 @@ import { interruptedTeamAnswer, type AgentProgress } from "../contracts/agent-pr
 import { currentWorkRun, withWorkRun, workRunContext } from "./work-run";
 import type { WorkRun } from "../contracts/work-run";
 import { assessWorkOutcome } from "./work-outcome";
+import type { AnswerEvidence } from "./answer-evidence";
 
 type CallOptions = NonNullable<Parameters<typeof salesAgent.stream>[0]["options"]>;
 
@@ -25,6 +26,7 @@ export async function completeAnswerResponse(input: {
   uiMessages: Parameters<typeof convertToModelMessages>[0];
   options: CallOptions; abortSignal: AbortSignal; timeoutMs: number; headers: HeadersInit;
   transform?: StreamTextTransform<typeof salesAgent.tools>;
+  evidence?: AnswerEvidence;
   prepare?: (onProgress: (progress: AgentProgress) => void, signal: AbortSignal) => Promise<string>;
   review?: (answer: string, run: WorkRun, onProgress: (progress: AgentProgress) => void, signal: AbortSignal) => Promise<string>;
   clarification?: { text: string; missing: string[] };
@@ -40,6 +42,7 @@ export async function completeAnswerResponse(input: {
       let fullText = "";
       let textStarted = false;
       let leadLastPublished = 0;
+      let synthesisAttempted = false;
       const activity = new Map<string, AgentProgress>();
       const emit = (progress: AgentProgress) => {
         activity.set(`${progress.agentId}:${progress.round}`, progress);
@@ -47,9 +50,20 @@ export async function completeAnswerResponse(input: {
       };
       let finishReason: "stop" | "length" | "tool-calls" | "other" | "error" | "content-filter" = "stop";
       writer.write({ type: "start", messageId: crypto.randomUUID() });
+      // These are actual server-side retrieval results, not model claims.
+      for (const call of input.evidence?.calls ?? []) {
+        const toolCallId = `evidence_${crypto.randomUUID()}`;
+        writer.write({ type: "tool-input-available", toolCallId, toolName: call.toolName, input: call.input });
+        writer.write({ type: "tool-output-available", toolCallId, output: call.output });
+      }
       try {
       let repairPrompt: string | undefined;
       const execute = async () => {
+      if (input.evidence?.definitive && !input.workRun) {
+        textStarted = true; fullText = input.evidence.definitive;
+        writer.write({ type: "text-start", id: "answer" }); writer.write({ type: "text-delta", id: "answer", delta: fullText });
+        return;
+      }
       if (input.clarification) {
         textStarted = true; fullText = input.clarification.text;
         writer.write({ type: "text-start", id: "answer" }); writer.write({ type: "text-delta", id: "answer", delta: fullText });
@@ -93,6 +107,24 @@ export async function completeAnswerResponse(input: {
           }
         } finally { reader.releaseLock(); }
         finishReason = await result.finishReason;
+        if (!fullText.trim() && finishReason !== "length" && !signal.aborted) {
+          synthesisAttempted = true;
+          // A small local model can emit no final text after a tool round.
+          // Preserve the actual tool results; retry one synthesis call with
+          // tools disabled, so mutations and internet searches are not replayed.
+          const response = await result.response;
+          const retry = await salesAgent.stream({ prompt: [...prompt, ...response.messages, { role: "user", content: "请依据已经读到的资料立即给出完整中文答复。不能重复调用工具，不能编造缺失的参数、库存或操作成功；没有足够证据也必须清楚说明缺失内容。" }], options: { ...options, mode: "light", continuation: true }, abortSignal: signal, timeout: { totalMs: Math.max(1, deadline - Date.now()) }, experimental_transform: input.transform });
+          for await (const part of retry.textStream) {
+            if (!textStarted) { writer.write({ type: "text-start", id: "answer" }); textStarted = true; }
+            fullText += part; writer.write({ type: "text-delta", id: "answer", delta: part });
+          }
+          finishReason = await retry.finishReason;
+          if (!fullText.trim() && input.evidence?.fallback) {
+            if (!textStarted) { writer.write({ type: "text-start", id: "answer" }); textStarted = true; }
+            fullText = input.evidence.fallback; writer.write({ type: "text-delta", id: "answer", delta: fullText });
+            finishReason = "stop";
+          }
+        }
         if (finishReason !== "length" || !await result.text) break;
       }
       signal.throwIfAborted();
@@ -124,12 +156,24 @@ export async function completeAnswerResponse(input: {
         });
       else await execute();
       } catch (error) {
+        if (!input.workRun && input.evidence && !fullText.trim() && !synthesisAttempted && !signal.aborted) {
+          synthesisAttempted = true;
+          try {
+            const retry = await salesAgent.stream({ prompt: [...originalPrompt, { role: "user", content: "工具查询阶段未完成总结。服务端已读取的资料在系统上下文中，请直接据此回答原问题。缺失的实时库存、发货或参数明确说明；不要调用工具，不要编造。" }], options: { ...input.options, mode: "light", continuation: true }, abortSignal: signal, timeout: { totalMs: Math.max(1, deadline - Date.now()) }, experimental_transform: input.transform });
+            for await (const part of retry.textStream) {
+              if (!textStarted) { writer.write({ type: "text-start", id: "answer" }); textStarted = true; }
+              fullText += part; writer.write({ type: "text-delta", id: "answer", delta: part });
+            }
+          } catch { /* Actual source facts below survive inference failures. */ }
+        }
         for (const progress of activity.values()) if (progress.state === "running") emit({ ...progress, state: signal.aborted ? "cancelled" : "failed", text: publicExecutionError(signal.aborted ? signal.reason : error) });
-        const fallback = fullText.trim() ? `\n\n本轮未完成：${publicExecutionError(signal.aborted ? signal.reason : error)}`
+        const grounded = !input.workRun && input.evidence;
+        const fallback = grounded ? fullText.trim() ? "" : input.evidence!.fallback
+          : fullText.trim() ? `\n\n本轮未完成：${publicExecutionError(signal.aborted ? signal.reason : error)}`
           : activity.size ? interruptedTeamAnswer([...activity.values()]) : publicExecutionError(signal.aborted ? signal.reason : error);
         if (!textStarted) { writer.write({ type: "text-start", id: "answer" }); textStarted = true; }
         writer.write({ type: "text-delta", id: "answer", delta: fallback });
-        finishReason = "error";
+        finishReason = grounded && (fullText.trim() || fallback) ? "stop" : "error";
       }
       if (textStarted) writer.write({ type: "text-end", id: "answer" });
       writer.write({ type: "finish", finishReason });

@@ -22,6 +22,8 @@ import { chooseWorkDomain } from "@/lib/ai/work-routing";
 import { flightClarification, planWorkTeam } from "@/lib/ai/work-team-plan";
 import { isCurrentWeatherLookup, isSimpleBrowserLookup } from "@/lib/ai/browser-intent";
 import { InferencePolicyError, inputBudgetDetailsHeader, inputBudgetHeader, resolveInferencePolicy, withModelOutputBudget } from "@/lib/ai/inference-policy";
+import { chooseAnswerSource, isInternalKnowledgeQuestion } from "@/lib/ai/answer-source";
+import { collectAnswerEvidence } from "@/lib/ai/answer-evidence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
     }
     const codeArtifact = requestsCodeArtifact(userText);
     const weatherLookup = body.workflowMode === "normal" && body.collaboratorAgentIds.length === 0
-      && body.knowledgeDocumentIds.length === 0 && !body.wechatSnapshotId && isCurrentWeatherLookup(userText);
+      && body.knowledgeDocumentIds.length === 0 && !body.wechatSnapshotId && !isInternalKnowledgeQuestion(userText) && isCurrentWeatherLookup(userText);
     const browserLookup = body.experience === "work" && body.workflowMode === "normal"
       && body.collaboratorAgentIds.length === 0 && body.knowledgeDocumentIds.length === 0
       && !body.wechatSnapshotId && isSimpleBrowserLookup(userText);
@@ -167,6 +169,10 @@ export async function POST(request: Request) {
     const collaborators = [...team.prepare, ...team.review];
     if (collaborators.length && body.workflowMode !== "plan") resolvedPolicy.timeoutMs = Math.max(resolvedPolicy.timeoutMs, 900_000);
     const knowledge = projectContext ? { text: projectContext.text, coverage: projectContext.coverage } : await buildKnowledgeContext(knowledgeIds, Math.max(0, resolvedPolicy.inputBudget.maxContextCharacters - userText.length));
+    const answerSource = await chooseAnswerSource({ text: userText, selectedDocuments: knowledgeIds.length > 0, projectOnly: projectContext?.project.memoryMode === "project-only", signal: request.signal });
+    const evidence = body.workflowMode !== "plan" && !weatherLookup && !browserLookup && !codeArtifact && !body.wechatSnapshotId && profile.toolNames.length > 0
+      ? await collectAnswerEvidence({ text: userText, source: answerSource, documentIds: knowledgeIds, projectOnly: projectContext?.project.memoryMode === "project-only", contextBudget: (modelConfig.contextTokens ?? 8192) <= 8192 ? 3500 : 4500 }) : undefined;
+    if (evidence) profile.instructions += evidence.instructions;
     const uiMessages = knowledge.text ? body.messages.map((message) => {
       let contextAdded = false;
       return {
@@ -190,6 +196,7 @@ export async function POST(request: Request) {
     } : undefined;
     const response = await completeAnswerResponse({
       uiMessages,
+      ...(evidence ? { evidence } : {}),
       ...(body.experience === "work" && backendAgent && body.workflowMode !== "plan" ? { workRun: {
         chatId: body.currentChatId ?? crypto.randomUUID(), agentId: backendAgent.id, projectId: body.projectId ?? null, model: modelConfig.model, goal: effectiveGoal, workspace: backendAgent.workspace,
         ...(clarification ? { pendingQuestions: clarification.missing } : {}), reviewerIds: team.review.map((agent) => agent.id),
@@ -199,6 +206,7 @@ export async function POST(request: Request) {
       ...(team.prepare.length ? { prepare: (onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators: team.prepare, lead: backendAgent, model: modelConfig, userText, ...(body.teamMode === "auto" && !manualCollaborators.length ? { phase: "prepare" as const, executionContext: JSON.stringify({ workspace: backendAgent?.workspace }) } : {}), ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), signal, collaborationMode: team.mode, planOnly: body.workflowMode === "plan", onProgress }) } : {}),
       ...(team.review.length ? { review: (answer: string, run: WorkRun, onProgress: (progress: import("@/lib/contracts/agent-progress").AgentProgress) => void, signal: AbortSignal) => runLocalAgentTeam({ collaborators: team.review, lead: backendAgent, model: modelConfig, userText: run.goal, signal, collaborationMode: "sequential", phase: "review", executionContext: JSON.stringify({ workspace: run.workspace, answer: answer.slice(-1600), receipts: run.receipts.slice(-12).map((receipt) => ({ agentId: receipt.agentId, action: receipt.action, state: receipt.state, facts: receipt.facts })) }).slice(0, 9000), ...(projectContext ? { projectContext: { instructions: projectContext.instructions, text: projectContext.text, projectOnly: projectContext.project.memoryMode === "project-only" } } : {}), onProgress }) } : {}),
       options: { mode: policy.resolvedMode, customer, profile, modelProfileId: modelConfig.profileId, projectOnly: projectContext?.project.memoryMode === "project-only",
+        answerSource,
         codeArtifact, browserLookup, weatherLookup, workDomain: body.experience === "work" ? await chooseWorkDomain({ text: userText, agent: backendAgent ? { id: backendAgent.id, type: backendAgent.type, agentType: backendAgent.agentType, roleIds: backendAgent.roleIds } : undefined }) : "sales", continuation: false, ...(body.workflowMode !== "plan" && body.experience === "work" && backendAgent ? { workAgentId: backendAgent.id, workAgentPermissions: backendAgent.permissions ?? { read: true, create: false, modify: false, delete: false, tools: false } } : {}) },
       abortSignal: request.signal,
       timeoutMs: Math.max(30_000, resolvedPolicy.timeoutMs - (Date.now() - startedAt)),
@@ -223,6 +231,7 @@ export async function POST(request: Request) {
         "X-Agent-Role": role?.id ?? "sales-consultant",
         "X-Wechat-Source": body.wechatSnapshotId ? "desktop-readonly" : "none",
         "X-Knowledge-Coverage": encodeURIComponent(JSON.stringify(knowledge.coverage)),
+        "X-Answer-Source": answerSource,
         "X-Agent-Skills": profile.skills.map((skill) => `${skill.id}@${skill.version}`).join(","),
       },
     });

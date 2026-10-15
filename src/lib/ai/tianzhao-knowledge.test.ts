@@ -5,6 +5,12 @@ vi.mock("server-only", () => ({}));
 import { getTianzhaoKnowledgeMetadata, getTianzhaoProduct, searchTianzhaoProducts } from "./tianzhao-knowledge";
 
 describe("deployed Tianzhao product knowledge", () => {
+  it("does not replace an absent rail-light category with corridor-light bigrams", () => {
+    const result = searchTianzhaoProducts("轨道灯", 5);
+    expect(result.total).toBe(4);
+    expect(result.products.every((item) => getTianzhaoProduct(item.id)?.photoTextOcr.join(" ").includes("轨道灯"))).toBe(true);
+    expect(result.products.some((item) => item.model === "TZ-OY-507")).toBe(false);
+  });
   it("ships the complete verified product snapshot", () => {
     expect(getTianzhaoKnowledgeMetadata()).toMatchObject({
       productCount: 1887,

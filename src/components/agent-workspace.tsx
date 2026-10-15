@@ -58,6 +58,7 @@ import { CodeAnswer } from "./code-answer";
 import { GeneratedFilePanel, type GeneratedFileKind } from "./generated-file-panel";
 import { WorkSummaryPanel, type WorkSummaryItem } from "./work-summary-panel";
 import { WorkSideChat } from "./work-side-chat";
+import { WorkCapabilityCenter } from "./work-capability-center";
 import { ImageStyleGallery } from "./image-style-gallery";
 import { copyLocalChatText, listLocalChats, loadLocalChat, removeLocalChat, saveLocalChat, updateLocalChatMetadata } from "@/lib/client/chat-history";
 import type { LocalChatSession, LocalChatSummary, LocalChatTurn, LocalChatTurnVersion } from "@/lib/contracts/chat-history";
@@ -2445,7 +2446,7 @@ export function AgentWorkspace({
           <button type="button" aria-pressed={activeView === "image"} disabled={busy} onClick={() => toggleImageOperationMode(true, undefined, true)}>Image</button>
           {onOpenWechat && !activeProjectId && <button type="button" aria-pressed={false} disabled={busy || queuedMessages.length > 0} onClick={onOpenWechat}>Wechat Agent</button>}
         </div>
-        <div className={styles.headerActions}>{showWorkSummary && <div className={styles.summaryDock}><WorkSummaryPanel agentId={selectedWorkAgent?.id} workspace={selectedWorkAgent?.workspace} busy={busy} progress={summaryProgress} outputs={summaryOutputs} sources={summarySources} onAddSource={() => { setAddMenuOpen(false); setContextOpen(true); }} onCreateOutput={() => { setInput("请把当前 Work 结果整理成可下载的文件，先确认合适的文件格式。"); inputRef.current?.focus(); }} /></div>}{!historyPortalTarget && <button type="button" aria-label="对话记录" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}><History size={16} /><span>对话记录</span></button>}<button type="button" className={styles.iconButton} aria-label="新问题" title="开始新对话" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button></div>
+        <div className={styles.headerActions}>{workComposerActive && <WorkCapabilityCenter />}{showWorkSummary && <div className={styles.summaryDock}><WorkSummaryPanel agentId={selectedWorkAgent?.id} workspace={selectedWorkAgent?.workspace} busy={busy} progress={summaryProgress} outputs={summaryOutputs} sources={summarySources} onAddSource={() => { setAddMenuOpen(false); setContextOpen(true); }} onCreateOutput={() => { setInput("请把当前 Work 结果整理成可下载的文件，先确认合适的文件格式。"); inputRef.current?.focus(); }} /></div>}{!historyPortalTarget && <button type="button" aria-label="对话记录" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}><History size={16} /><span>对话记录</span></button>}<button type="button" className={styles.iconButton} aria-label="新问题" title="开始新对话" disabled={busy} onClick={newQuestion}><SquarePen size={19} /></button></div>
       </header>
 
       {sidebarHistory}

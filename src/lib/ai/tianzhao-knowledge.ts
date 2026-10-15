@@ -59,6 +59,7 @@ type TianzhaoKnowledgeBase = {
 
 const knowledgeBase = deployedKnowledgeBase as TianzhaoKnowledgeBase;
 const categoryGroups = [
+  { name: "轨道灯", terms: ["轨道灯", "导轨灯"] },
   { name: "吸顶灯", terms: ["吸顶", "顶灯"] },
   { name: "吊灯", terms: ["吊灯", "餐吊", "小吊"] },
   { name: "风扇灯", terms: ["风扇", "吊扇"] },
@@ -226,6 +227,10 @@ function productScore(product: TianzhaoProduct, query: string) {
   // wording remains score-based for recall.
   const requiredTerms = textualTerms.filter((term) => searchVocabulary.has(term));
   if (requiredTerms.length >= 2 && requiredTerms.some((term) => !text.includes(term))) return 0;
+  // A missing category must not degrade into noisy Chinese bigrams: 过道灯
+  // is not a 轨道灯. The catalogue may legitimately have no exact match.
+  const requestedCategory = categoryGroups.find((group) => group.terms.some((term) => query.includes(term)));
+  if (requestedCategory && !requestedCategory.terms.some((term) => text.includes(term))) return 0;
   let score = textualTerms.reduce((total, term) => total + (text.includes(term) ? 4 : 0), 0);
   if (normalizedQuery && text.includes(normalizedQuery)) score += 20;
   if (textualTerms.some((term) => model.includes(term) || code.includes(term))) score += 12;

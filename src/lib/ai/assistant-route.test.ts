@@ -62,7 +62,7 @@ describe("assistant route with an in-memory model protocol", () => {
         : toolCall("searchProducts", { query: "nonexistent-fixture-product", limit: 1 });
     }));
     const { POST } = await import("../../app/api/v1/assistant/chat/route");
-    const response = await POST(request([userMessage]));
+    const response = await POST(request([{ ...userMessage, parts: [{ type: "text", text: "查询不存在的产品型号的规格" }] }]));
     expect(response.status).toBe(200);
     const raw = await response.text();
     expect(calls).toHaveLength(8);
@@ -73,13 +73,15 @@ describe("assistant route with an in-memory model protocol", () => {
     expect(raw).not.toContain("检查连接后重试");
   });
 
-  it("distinguishes an empty model answer from a connection failure", async () => {
+  it("reads local evidence before generation and reports missing stock even when synthesis stays empty", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => completion({ content: "" }, "stop")));
     const { POST } = await import("../../app/api/v1/assistant/chat/route");
     const response = await POST(request([userMessage]));
     const raw = await response.text();
-    expect(raw).toContain("没有生成答复");
-    expect(raw).toContain('"finishReason":"error"');
+    expect(response.headers.get("x-answer-source")).toBe("local");
+    expect(raw).toContain("server-read-local-evidence");
+    expect(raw).toContain("不能确认今天能发货");
+    expect(raw).toContain('"finishReason":"stop"');
     expect(raw).not.toContain("检查连接后重试");
   });
 

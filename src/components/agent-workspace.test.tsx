@@ -922,6 +922,7 @@ describe("Agent workspace", () => {
     const openWechat = vi.fn();
     render(<AgentWorkspace {...props} initialExperience="chat" onOpenWechat={openWechat} />);
     await ready();
+    expect(screen.queryByRole("button", { name: "能力中心" })).not.toBeInTheDocument();
     const activeTabCount = () => screen.getAllByRole("button").filter((button) => button.getAttribute("aria-pressed") === "true").length;
     expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
     expect(activeTabCount()).toBe(1);
@@ -939,6 +940,7 @@ describe("Agent workspace", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Work" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Work" }));
     expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("button", { name: "能力中心" })).toBeInTheDocument();
     expect(activeTabCount()).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "Wechat Agent" }));
     expect(openWechat).toHaveBeenCalledTimes(1);

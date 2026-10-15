@@ -1,9 +1,9 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 [CmdletBinding()]
 param([switch]$NoBrowser, [switch]$StartBonsai, [int]$Port = 3000)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot 'bootstrap.ps1')
+. (Join-Path $PSScriptRoot 'bootstrap.ps1') -Port $Port -NoBrowser:$NoBrowser
 Initialize-LumaFlowLog | Out-Null
 $node = Resolve-LumaFlowNode -Root $projectRoot
 $env:PATH = (Split-Path -Parent $node.NodePath) + [IO.Path]::PathSeparator + $env:PATH
@@ -47,5 +47,9 @@ foreach ($service in @('http://127.0.0.1:9876/api/health', "http://127.0.0.1:$Po
     }
     if (-not $ready) { throw "Service did not become ready: $service. See .local-data/logs." }
 }
-if (-not $NoBrowser) { Start-Process "http://127.0.0.1:$Port/" }
-Write-Host "LumaFlow ready at http://127.0.0.1:$Port/. Model inference is $(if ($StartBonsai) { 'enabled for Bonsai' } else { 'disabled' })."
+if (Test-Path -LiteralPath (Join-Path $projectRoot '.local-data\octop\lumaflow.json')) {
+    & (Join-Path $PSScriptRoot 'start-octop.ps1') -NoBootstrap
+    if ($LASTEXITCODE -ne 0) { throw 'Work capability engine did not become ready. See .local-data/octop/logs.' }
+}
+if (-not $NoBrowser) { Open-LumaFlowBrowser -Uri "http://127.0.0.1:$Port/" }
+Write-Host "LumaFlow ready at http://127.0.0.1:$Port/. Model inference is $(if ($StartBonsai) { 'enabled for the selected local model' } else { 'disabled' })."

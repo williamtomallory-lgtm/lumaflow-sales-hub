@@ -18,6 +18,10 @@
 
 Work 默认使用本机执行助手，支持自动分工、单人执行和手动协作。自动分工会调用已配置的资料研究员，并在执行后由结果核验员独立读回成果；只有真实多成员任务显示协作。配置和远程验证见 [Work 部署记录](docs/strata-work-remote-2026-10-12.md)。
 
+Work 的 **能力中心** 接入独立的完整 Octop 本机引擎，提供专家与团队、长期记忆、技能、插件、知识库、定时任务、连接器、浏览器、Windows 终端、桌面、ACP 编程助手、模型、权限和备份等 18 类入口。OpenCode 默认使用原有 Bonsai 2-27B，也支持已安装并登记的其他本地模型；新增的 Qwen3.8 Flash Next Coder 已按用户要求撤下。外部邮箱、微信、OAuth 和云存储需要实际账号授权；具体配置见 [能力中心](docs/work-capabilities.md)、[Octop 运行时](docs/octop-upstream.md) 和 [编程助手](docs/work-coding-agent.md)。
+
+Chat / Work 会先判断证据来源。公司产品、库存、发货与本地文件问题先检索并读取本地证据；无关本地资料的公开时效问题查询互联网。选中的文件限制检索范围；历史截图和演示产品不能证明实时库存。模型空答复时会基于已有证据再总结一次，仍无输出则显示实际查到的资料或明确缺失项，参见 [知识与互联网分流](docs/answer-sources.md)。
+
 ![Work 工作区](docs/images/work-workspace.png)
 
 ### Image

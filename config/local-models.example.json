@@ -1,16 +1,1 @@
-[
-  {
-    "id": "local:strata-coder",
-    "label": "Qwen3.8 Flash Next Coder · Strata",
-    "model": "qwen3.8-flash-next-coder-iq1_m",
-    "baseURL": "http://127.0.0.1:8080/v1",
-    "backend": "strata",
-    "runtime": "strata",
-    "description": "本机 Coder 精简模型，按需加载；中文和通用能力有取舍。",
-    "family": "Qwen3.8 Flash Next Coder",
-    "parameterSizeB": 176.9,
-    "contextTokens": 8192,
-    "maxOutputTokens": 1536,
-    "installationStatus": "ready"
-  }
-]
+[]

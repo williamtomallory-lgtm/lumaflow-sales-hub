@@ -1,0 +1,60 @@
+.trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid #d6e3d8; border-radius: 9px; background: #f8fbf8; color: #356148; font-size: 12px; }
+.trigger:hover, .trigger:focus-visible { border-color: #8db99a; background: #eef7ef; outline: none; }
+.overlay { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: clamp(12px, 3vw, 36px); background: #16291f73; }
+.panel { display: flex; flex-direction: column; width: min(1440px, 100%); height: min(900px, 100%); min-height: 560px; overflow: hidden; border: 1px solid #dbe7dd; border-radius: 18px; background: #f7faf7; box-shadow: 0 28px 80px #182d2340; }
+.panelHeader { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex: 0 0 auto; padding: 15px 18px; border-bottom: 1px solid #dce7dd; background: #fff; }
+.panelHeader > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.panelHeader strong { color: #254734; font-size: 15px; font-weight: 700; }
+.panelHeader span { color: #829287; font-size: 11px; }
+.headerActions { display: flex; align-items: center; gap: 7px; }
+.refreshButton, .closeButton, .primaryButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; cursor: pointer; }
+.refreshButton { padding: 7px 9px; border: 1px solid #d8e4d9; background: #fff; color: #50705b; font-size: 11px; }
+.refreshButton:hover:not(:disabled), .refreshButton:focus-visible { border-color: #8db99a; background: #f0f7f0; outline: none; }
+.refreshButton:disabled { cursor: wait; opacity: .55; }
+.closeButton { width: 31px; height: 31px; padding: 0; border: 0; background: transparent; color: #6d7d71; }
+.closeButton:hover, .closeButton:focus-visible { background: #edf4ee; color: #345c43; outline: none; }
+.routingPanel { display: grid; gap: 7px; flex: 0 0 auto; padding: 12px 18px; border-bottom: 1px solid #dce7dd; background: #fbfdfb; }
+.routingForm { display: grid; gap: 7px; }
+.routingLabel { color: #345441; font-size: 12px; font-weight: 700; }
+.routingInputRow { display: flex; gap: 8px; min-width: 0; }
+.routingInput { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid #d5e2d7; border-radius: 8px; background: #fff; color: #294a35; font: inherit; font-size: 12px; outline: none; }
+.routingInput:focus { border-color: #73a583; box-shadow: 0 0 0 3px #70a27c1c; }
+.routingInput::placeholder { color: #9aa89e; }
+.routingSubmit, .routingRecommendation button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #3b7650; border-radius: 8px; background: #3d8059; color: #fff; font-size: 11px; cursor: pointer; }
+.routingSubmit { min-width: 80px; padding: 0 12px; }
+.routingSubmit:hover:not(:disabled), .routingSubmit:focus-visible, .routingRecommendation button:hover, .routingRecommendation button:focus-visible { border-color: #285d3e; background: #2f704a; outline: none; }
+.routingSubmit:disabled { cursor: wait; opacity: .55; }
+.routingMessage { margin: 0; color: #7d8d82; font-size: 11px; line-height: 1.5; }
+.routingRecommendation { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid #d7e8d9; border-radius: 8px; background: #f1f8f2; color: #3d6548; font-size: 11px; }
+.routingRecommendation button { flex: 0 0 auto; padding: 6px 9px; }
+.layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
+.navigation { display: flex; flex-direction: column; gap: 5px; min-width: 0; overflow-y: auto; padding: 14px 10px; border-right: 1px solid #dde8de; background: #f0f6f1; }
+.navigationHeading { padding: 2px 9px 8px; color: #7b8b80; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.navigationItem, .navigationItemActive { display: grid; gap: 3px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #42624d; text-align: left; font-size: 12px; cursor: pointer; }
+.navigationItem:hover:not(:disabled), .navigationItem:focus-visible, .navigationItemActive { border-color: #cfe2d2; background: #fff; outline: none; }
+.navigationItemActive { color: #24583b; box-shadow: 0 2px 7px #22482d0b; font-weight: 650; }
+.navigationItem:disabled { cursor: not-allowed; opacity: .45; }
+.navigationItem small, .navigationItemActive small { overflow: hidden; color: #8a9a8e; font-size: 10px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.navigationEmpty { padding: 10px; color: #89978d; font-size: 11px; line-height: 1.6; }
+.content { position: relative; display: flex; min-width: 0; min-height: 0; flex-direction: column; background: #fff; }
+.state { display: grid; align-content: center; justify-items: center; gap: 10px; height: 100%; padding: 30px; color: #607568; text-align: center; }
+.state svg { color: #a77e51; }
+.state strong { color: #345441; font-size: 15px; }
+.state p { max-width: 470px; margin: 0; color: #849189; font-size: 12px; line-height: 1.7; }
+.spinner { color: #4c8a62 !important; animation: spin 1s linear infinite; }
+.primaryButton { padding: 8px 13px; border: 1px solid #326b49; background: #3c8059; color: #fff; font-size: 11px; }
+.primaryButton:hover, .primaryButton:focus-visible { border-color: #285d3e; background: #2f704a; outline: none; }
+.frameShell { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.frame { display: block; width: 100%; flex: 1; min-height: 0; border: 0; background: #fff; }
+.frameStatus { flex: 0 0 auto; min-height: 25px; padding: 6px 10px; border-top: 1px solid #e3ebe4; color: #829188; font-size: 10px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) {
+  .overlay { padding: 0; }
+  .panel { width: 100%; height: 100%; min-height: 0; border-radius: 0; }
+  .layout { grid-template-columns: 150px minmax(0, 1fr); }
+  .refreshButton span { display: none; }
+  .routingInputRow { align-items: stretch; flex-direction: column; }
+  .routingSubmit { min-height: 32px; }
+  .navigation { padding: 10px 6px; }
+  .navigationItem, .navigationItemActive { padding: 8px; font-size: 11px; }
+}

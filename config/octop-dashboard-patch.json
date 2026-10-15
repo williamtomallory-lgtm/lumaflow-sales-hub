@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/TencentCloud/Octop",
+    "sourceRoot": "C:\\Users\\Willi\\AppData\\Local\\Temp\\lumaflow-octop-source-20261012",
+    "commit": "664c1fb38e354ea987041aa14b151e20d15ce71f"
+  },
+  "dashboard": {
+    "packageJson": "dashboard/package.json",
+    "packageLock": "dashboard/package-lock.json",
+    "compiledOutput": "src/octop/dashboard",
+    "buildCommand": "npm run build:docker"
+  },
+  "dependencyPatch": {
+    "package": "xlsx",
+    "previousSpec": "^0.18.5",
+    "version": "0.20.3",
+    "spec": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "resolved": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "officialSource": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "installationDocumentation": "https://docs.sheetjs.com/docs/getting-started/installation/nodejs/",
+    "tarballBytes": 2409319,
+    "tarballSha256": "8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8",
+    "integrity": "sha512-oLDq3jw7AcLqKWH2AhCpVTZl8mf6X2YReP+Neh0SJUzV/BdZYjth94tG5toiMB1PPrYtxOCfaoUCkvtuH+3AJA=="
+  },
+  "hashes": {
+    "packageJsonSha256": "8b6de354ad86d41a9960b34dc05c0ebfd9179ba090e5c34a3dae2a68b9a055d3",
+    "packageLockSha256": "50f80c89ad0ae85b4d3d2c52ccc845bb9aa70eb585745c4fdda945aa3dc6f38e"
+  },
+  "verification": {
+    "npmCi": "passed",
+    "workbookReadWrite": "passed",
+    "tableViewerApiCompatibility": "passed",
+    "buildDocker": "passed",
+    "fullUpstreamTestSuite": "not-run",
+    "remoteDeployment": "pending-parent-deployment"
+  }
+}
